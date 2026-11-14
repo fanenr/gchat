@@ -62,7 +62,7 @@ The gear at the bottom of the sidebar opens the settings page. It offers these i
 - `none` turns thinking off. It maps to `thinking.type=disabled`.
 - The client merges the model and the reasoning level into one chip at the bottom right of the input box.
 - A click on the chip opens a grouped menu.
-- Reasoning is collapsed under "Thought (x s)" (Chinese UI: 「已思考（用时 x 秒）」).
+- Reasoning expands while the model thinks and collapses when the answer starts or generation stops. You can still toggle it manually. Completed reasoning is shown under "Thought (x s)" (Chinese UI: 「已思考（用时 x 秒）」).
 
 ### Message actions
 

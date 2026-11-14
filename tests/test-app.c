@@ -1643,12 +1643,65 @@ shutdown_snapshot (gconstpointer data)
 }
 
 static void
+reasoning_visibility (void)
+{
+  if (!setup_ui ())
+    return;
+  begin_reply (FALSE);
+
+  const gchar *events =
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"first\"}}]}\n"
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" second\"}}]}\n"
+      "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n"
+      "data: [DONE]\n";
+  GInputStream *input = g_memory_input_stream_new_from_data (events, -1, NULL);
+  GDataInputStream *lines = g_data_input_stream_new (input);
+  g_object_unref (input);
+  g_data_input_stream_read_line_async (lines, G_PRIORITY_DEFAULT, app->cancel,
+                                       stream_line_cb,
+                                       g_object_ref (app->cancel));
+  while (app->reason_box == NULL)
+    g_main_context_iteration (NULL, TRUE);
+  GtkWidget *root = app->reason_box;
+  GtkWidget *content = gtk_widget_get_last_child (root);
+  GtkWidget *toggle = gtk_widget_get_first_child (root);
+  GtkWidget *chevron = g_object_get_data (G_OBJECT (toggle), "chevron");
+  g_assert_true (gtk_widget_get_visible (content));
+  g_assert_cmpstr (gtk_image_get_icon_name (GTK_IMAGE (chevron)), ==,
+                   "pan-down-symbolic");
+
+  g_signal_emit_by_name (toggle, "clicked");
+  while (g_str_equal (app->reasoning->str, "first"))
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_false (gtk_widget_get_visible (content));
+  g_signal_emit_by_name (toggle, "clicked");
+  while (app->answer->len == 0)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_false (gtk_widget_get_visible (content));
+  g_assert_cmpstr (gtk_image_get_icon_name (GTK_IMAGE (chevron)), ==,
+                   "pan-end-symbolic");
+
+  g_signal_emit_by_name (toggle, "clicked");
+  while (app->busy)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_true (gtk_widget_get_visible (content));
+  GtkWidget *history = thought_widget ("saved", 1, NULL, NULL);
+  g_assert_false (gtk_widget_get_visible (gtk_widget_get_last_child (history)));
+  g_object_ref_sink (history);
+  g_object_unref (history);
+  teardown ();
+}
+
+static void
 reasoning_stop (void)
 {
   if (!setup_ui ())
     return;
   begin_reply (TRUE);
+  GtkWidget *content = gtk_widget_get_last_child (app->reason_box);
+  set_thought_expanded (app->reason_box, TRUE);
   end_stream ();
+  g_assert_false (gtk_widget_get_visible (content));
   assert_reasoning_saved ();
   teardown ();
 }
@@ -1659,7 +1712,10 @@ reasoning_failure (void)
   if (!setup_ui ())
     return;
   begin_reply (TRUE);
+  GtkWidget *content = gtk_widget_get_last_child (app->reason_box);
+  set_thought_expanded (app->reason_box, TRUE);
   fail_stream ("模拟断网");
+  g_assert_false (gtk_widget_get_visible (content));
   assert_reasoning_saved ();
   teardown ();
 }
@@ -2254,6 +2310,7 @@ main (int    argc,
   g_test_add_data_func ("/app/shutdown/save-failure", GINT_TO_POINTER (2),
                         shutdown_snapshot);
   g_test_add_func ("/app/stream-snapshot", stream_snapshot);
+  g_test_add_func ("/app/reasoning/visibility", reasoning_visibility);
   g_test_add_func ("/app/reasoning/stop", reasoning_stop);
   g_test_add_func ("/app/reasoning/failure", reasoning_failure);
   g_test_add_func ("/app/reasoning/close", reasoning_close);

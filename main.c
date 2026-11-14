@@ -1228,6 +1228,17 @@ on_thought_toggle (GtkButton *button,
   gtk_widget_queue_resize (GTK_WIDGET (content));
 }
 
+static void
+set_thought_expanded (GtkWidget *root,
+                      gboolean   expanded)
+{
+  GtkWidget *toggle = gtk_widget_get_first_child (root);
+  GtkWidget *content = gtk_widget_get_last_child (root);
+
+  if (gtk_widget_get_visible (content) != expanded)
+    on_thought_toggle (GTK_BUTTON (toggle), content);
+}
+
 static gchar *
 thought_title (gdouble seconds)
 {
@@ -1378,8 +1389,12 @@ end_stream (void)
       app->reply_label = NULL;
     }
   if (app->reason_box != NULL)
-    set_thought_label (
-        json_object_get_double_member (app->reply_msg, "duration"));
+    {
+      set_thought_label (
+          json_object_get_double_member (app->reply_msg, "duration"));
+      if (app->answer->len == 0)
+        set_thought_expanded (app->reason_box, FALSE);
+    }
   md_render (GTK_BOX (app->reply_body), app->answer->str);
   set_copy_text (app->reply_bubble,
                  app->answer->len ? app->answer->str : app->reasoning->str);
@@ -1479,6 +1494,8 @@ stream_line_cb (GObject      *src,
                   thought_widget (app->reasoning->str, 0, &app->reason_view,
                                   &app->reason_title);
               gtk_box_prepend (GTK_BOX (app->reply_body), app->reason_box);
+              if (app->answer->len == 0)
+                set_thought_expanded (app->reason_box, TRUE);
               gtk_label_set_text (GTK_LABEL (app->reason_title),
                                   _ ("Thinking…"));
             }
@@ -1498,6 +1515,7 @@ stream_line_cb (GObject      *src,
             {
               app->thought_seconds = elapsed_seconds ();
               set_thought_label (app->thought_seconds);
+              set_thought_expanded (app->reason_box, FALSE);
             }
           g_string_append (app->answer, content);
           gchar *shown = g_strconcat (app->answer->str, "▍", NULL);
