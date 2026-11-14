@@ -1,7 +1,3 @@
-> 本文是 GTK 文档的副本：<https://github.com/GNOME/gtk/blob/main/docs/CODING-STYLE.md>
-> 版权归 GTK 项目，许可见 GTK 仓库的 `COPYING`。正文保留英文原文。
-> 文内相对链接指向 GTK 仓库，在本仓库不可达。
-
 GTK Coding Style
 -------------------------------------------------------------------------------
 
