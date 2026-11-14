@@ -350,7 +350,7 @@ begin_reply (gboolean reasoning)
     {
       g_string_append (app->reasoning, "已收到的推理");
       app->reason_box = thought_widget (app->reasoning->str, 0,
-                                        &app->reason_label, &app->reason_title);
+                                        &app->reason_view, &app->reason_title);
       gtk_box_prepend (GTK_BOX (app->reply_body), app->reason_box);
     }
 }

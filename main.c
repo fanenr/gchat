@@ -43,7 +43,7 @@ typedef struct
   GtkWidget    *model_chip, *chip_model, *chip_effort, *choice_popover;
   GtkWidget    *new_btn, *title_label, *edit_bar;
   GtkWidget    *reply_bubble, *reply_body, *reply_label;
-  GtkWidget    *reason_box, *reason_label, *reason_title;
+  GtkWidget    *reason_box, *reason_view, *reason_title;
 
   JsonObject   *reply_msg;
   GString      *answer, *reasoning;
@@ -100,7 +100,7 @@ grab_input_focus (gpointer data G_GNUC_UNUSED)
 }
 static GtkWidget *thought_widget (const gchar *reasoning,
                                   gdouble      seconds,
-                                  GtkWidget  **label_out,
+                                  GtkWidget  **view_out,
                                   GtkWidget  **title_out);
 static void refresh_choices (void);
 static gboolean save_session (void);
@@ -1240,7 +1240,7 @@ thought_title (gdouble seconds)
 static GtkWidget *
 thought_widget (const gchar *reasoning,
                 gdouble      seconds,
-                GtkWidget  **label_out,
+                GtkWidget  **view_out,
                 GtkWidget  **title_out)
 {
   GtkWidget *root = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
@@ -1262,13 +1262,17 @@ thought_widget (const gchar *reasoning,
   gtk_button_set_child (GTK_BUTTON (toggle), row);
   g_free (title);
 
-  GtkWidget *label = gtk_label_new (reasoning);
-  gtk_label_set_wrap (GTK_LABEL (label), TRUE);
-  gtk_label_set_wrap_mode (GTK_LABEL (label), PANGO_WRAP_WORD_CHAR);
-  gtk_label_set_xalign (GTK_LABEL (label), 0);
-  gtk_label_set_selectable (GTK_LABEL (label), TRUE);
-  gtk_widget_add_css_class (label, "dimmed");
-  gtk_widget_set_hexpand (label, TRUE);
+  /* GtkLabel rounds each line's selection clip separately and can leave
+     gaps at fractional line heights. GtkTextView fills between lines. */
+  GtkWidget *view = gtk_text_view_new ();
+  gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD_CHAR);
+  gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
+  gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
+  gtk_text_buffer_set_text (
+      gtk_text_view_get_buffer (GTK_TEXT_VIEW (view)), reasoning, -1);
+  gtk_widget_add_css_class (view, "thought-text");
+  gtk_widget_add_css_class (view, "dimmed");
+  gtk_widget_set_hexpand (view, TRUE);
 
   GtkWidget *bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
   gtk_widget_add_css_class (bar, "quote-bar");
@@ -1277,7 +1281,7 @@ thought_widget (const gchar *reasoning,
   GtkWidget *content = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10);
   g_object_set (content, "margin-top", 4, "margin-bottom", 6, NULL);
   gtk_box_append (GTK_BOX (content), bar);
-  gtk_box_append (GTK_BOX (content), label);
+  gtk_box_append (GTK_BOX (content), view);
   gtk_widget_set_visible (content, FALSE);
 
   g_object_set_data (G_OBJECT (toggle), "chevron", chevron);
@@ -1286,8 +1290,8 @@ thought_widget (const gchar *reasoning,
   gtk_box_append (GTK_BOX (root), toggle);
   gtk_box_append (GTK_BOX (root), content);
 
-  if (label_out != NULL)
-    *label_out = label;
+  if (view_out != NULL)
+    *view_out = view;
   if (title_out != NULL)
     *title_out = title_label;
   return root;
@@ -1318,7 +1322,7 @@ clear_stream_state (void)
   app->reply_label = NULL;
   app->reply_msg = NULL;
   app->reason_box = NULL;
-  app->reason_label = NULL;
+  app->reason_view = NULL;
   app->reason_title = NULL;
   g_string_truncate (app->answer, 0);
   g_string_truncate (app->reasoning, 0);
@@ -1472,7 +1476,7 @@ stream_line_cb (GObject      *src,
           if (app->reason_box == NULL)
             {
               app->reason_box =
-                  thought_widget (app->reasoning->str, 0, &app->reason_label,
+                  thought_widget (app->reasoning->str, 0, &app->reason_view,
                                   &app->reason_title);
               gtk_box_prepend (GTK_BOX (app->reply_body), app->reason_box);
               gtk_label_set_text (GTK_LABEL (app->reason_title),
@@ -1480,8 +1484,9 @@ stream_line_cb (GObject      *src,
             }
           else
             {
-              gtk_label_set_text (GTK_LABEL (app->reason_label),
-                                  app->reasoning->str);
+              gtk_text_buffer_set_text (
+                  gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->reason_view)),
+                  app->reasoning->str, -1);
             }
           if (app->answer->len == 0)
             gtk_label_set_text (GTK_LABEL (app->reply_label), _ ("Thinking…"));
@@ -2229,7 +2234,8 @@ load_css (void)
       ".table-card { background: alpha(@window_fg_color, .04);"
       " border: 1px solid alpha(@window_fg_color, .09); border-radius: 12px; }"
       ".table-sep { background: alpha(@window_fg_color, .09); }"
-      ".source-code, .source-code text { background: transparent; }"
+      ".source-code, .source-code text, .thought-text, .thought-text text {"
+      " background: transparent; }"
       ".source-code { font-size: 12.5px; }"
       ".thought-toggle { background: none; box-shadow: none; border: none; "
       "padding: 4px 0;"
