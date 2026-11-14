@@ -1,0 +1,347 @@
+# Simplified Chinese translations for gchat.
+msgid ""
+msgstr ""
+"Project-Id-Version: gchat\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-13 22:16+0800\n"
+"PO-Revision-Date: 2026-11-13 21:20+0800\n"
+"Last-Translator: gchat contributors\n"
+"Language-Team: Simplified Chinese\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: main.c:25
+msgid "Off"
+msgstr "关闭"
+
+#: main.c:26
+msgid "Low"
+msgstr "低"
+
+#: main.c:27
+msgid "High"
+msgstr "高"
+
+#: main.c:28
+msgid "Max"
+msgstr "最高"
+
+#: main.c:110
+msgid "Retry"
+msgstr "重试"
+
+#: main.c:357
+msgid "Copied"
+msgstr "已复制"
+
+#: main.c:398
+msgid "Copy message"
+msgstr "复制这条消息"
+
+#: main.c:398
+msgid "Copy reply"
+msgstr "复制整条回复"
+
+#: main.c:459
+msgid "Edit and resend"
+msgstr "编辑后重发"
+
+#: main.c:476 main.c:1248
+msgid "Regenerate"
+msgstr "重新生成"
+
+#: main.c:479 main.c:1250
+msgid "Delete message"
+msgstr "删除这条消息"
+
+#: main.c:538 main.c:1945
+msgid "Failed to save conversation"
+msgstr "会话保存失败"
+
+#: main.c:549
+msgid "Stop generating (Ctrl/Cmd+.)"
+msgstr "停止生成 (Ctrl/Cmd+.)"
+
+#: main.c:549 main.c:2515
+msgid "Send"
+msgstr "发送"
+
+#: main.c:571
+msgid "Earlier"
+msgstr "更早"
+
+#: main.c:575
+msgid "Today"
+msgstr "今天"
+
+#: main.c:577
+msgid "Yesterday"
+msgstr "昨天"
+
+#: main.c:613 main.c:686 main.c:908 main.c:2316
+msgid "New chat"
+msgstr "新对话"
+
+#: main.c:691
+msgid "Delete conversation"
+msgstr "删除对话"
+
+#: main.c:718
+msgid "Right-click to rename"
+msgstr "右键重命名"
+
+#: main.c:854
+msgid "Rename conversation"
+msgstr "重命名会话"
+
+#: main.c:861 main.c:911 main.c:2455
+msgid "Cancel"
+msgstr "取消"
+
+#: main.c:861 main.c:1075
+msgid "Save"
+msgstr "保存"
+
+#: main.c:907
+#, c-format
+msgid "Delete “%s” and all its messages and drafts? This cannot be undone."
+msgstr "要删除“%s”及其全部消息和草稿吗？此操作无法撤销。"
+
+#: main.c:909
+msgid "Delete conversation?"
+msgstr "删除对话？"
+
+#: main.c:911
+msgid "Delete"
+msgstr "删除"
+
+#: main.c:1009
+msgid "Model"
+msgstr "模型"
+
+#: main.c:1019
+msgid "Reasoning level"
+msgstr "推理级别"
+
+#: main.c:1045
+msgid "Failed to save API key"
+msgstr "API 密钥保存失败"
+
+#: main.c:1060 main.c:2125
+msgid "API key saved"
+msgstr "API 密钥已保存"
+
+#: main.c:1067
+#, c-format
+msgid "Your key is saved in %s for future use."
+msgstr "填写后保存在 %s，之后无需再输入。"
+
+#: main.c:1068
+msgid "DeepSeek API key required"
+msgstr "需要 DeepSeek API Key"
+
+#: main.c:1075
+msgid "Later"
+msgstr "稍后"
+
+#: main.c:1102
+msgid "Thought"
+msgstr "已思考"
+
+#: main.c:1103
+#, c-format
+msgid "Thought (%.0f s)"
+msgstr "已思考（用时 %.0f 秒）"
+
+#: main.c:1104
+#, c-format
+msgid "Thought (%.1f s)"
+msgstr "已思考（用时 %.1f 秒）"
+
+#: main.c:1232
+msgid "No response received"
+msgstr "没有收到回复"
+
+#: main.c:1302
+msgid "Connection interrupted. The response may be incomplete."
+msgstr "连接中断，回复可能不完整"
+
+#: main.c:1331 main.c:1338
+msgid "Thinking…"
+msgstr "思考中…"
+
+#: main.c:1416
+msgid "Request failed"
+msgstr "请求失败"
+
+#: main.c:1570
+msgid "Finish or cancel editing before regenerating."
+msgstr "正在编辑，发送或取消编辑后再重新生成"
+
+#: main.c:1663
+msgid "Generating. Click ■ to stop."
+msgstr "正在生成，点 ■ 可停止"
+
+#: main.c:2065
+msgid "System default"
+msgstr "跟随系统"
+
+#: main.c:2066
+msgid "Light"
+msgstr "浅色"
+
+#: main.c:2067
+msgid "Dark"
+msgstr "深色"
+
+#: main.c:2068
+msgid "System language"
+msgstr "跟随系统"
+
+#: main.c:2104
+msgid "Failed to save theme"
+msgstr "主题保存失败"
+
+#: main.c:2112
+msgid "Failed to save language"
+msgstr "语言保存失败"
+
+#: main.c:2113 main.c:2190
+msgid "Restart the app to apply language changes."
+msgstr "重启应用后语言设置生效。"
+
+#: main.c:2121
+msgid "API key cannot be empty"
+msgstr "API 密钥不能为空"
+
+#: main.c:2149
+msgid "API key"
+msgstr "API 密钥"
+
+#: main.c:2159
+msgid "DEEPSEEK_API_KEY environment variable (overrides this setting)"
+msgstr "环境变量 DEEPSEEK_API_KEY（优先级高于这里）"
+
+#: main.c:2160
+#, c-format
+msgid "Local configuration file: %s"
+msgstr "本机配置文件：%s"
+
+#: main.c:2161
+msgid "Key source"
+msgstr "密钥来源"
+
+#: main.c:2168
+msgid "Appearance"
+msgstr "外观"
+
+#: main.c:2171
+msgid "Theme"
+msgstr "主题"
+
+#: main.c:2189
+msgid "Language"
+msgstr "语言"
+
+#: main.c:2210
+msgid "About"
+msgstr "关于"
+
+#: main.c:2214
+msgid "Conversation data"
+msgstr "会话数据"
+
+#: main.c:2218 main.c:2363
+msgid "Settings"
+msgstr "设置"
+
+#: main.c:2321
+msgid "New chat (Ctrl+N)"
+msgstr "新对话 (Ctrl+N)"
+
+#: main.c:2328 main.c:2331
+msgid "Search conversations"
+msgstr "搜索对话"
+
+#: main.c:2332
+msgid "Search conversations (Ctrl/Cmd+F)"
+msgstr "搜索对话 (Ctrl/Cmd+F)"
+
+#: main.c:2338
+msgid "No conversations found"
+msgstr "未找到对话"
+
+#: main.c:2368
+msgid "Settings (Ctrl/Cmd+,)"
+msgstr "设置 (Ctrl/Cmd+,)"
+
+#: main.c:2383
+msgid "Conversations"
+msgstr "会话列表"
+
+#: main.c:2415
+msgid "Start a conversation with DeepSeek"
+msgstr "开始和 DeepSeek 对话"
+
+#: main.c:2417
+msgid "Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat"
+msgstr "Enter 发送 · Shift+Enter 换行 · Ctrl+N 新对话"
+
+#: main.c:2451
+msgid "Editing message"
+msgstr "正在编辑消息"
+
+#: main.c:2457
+msgid "Cancel editing (Esc)"
+msgstr "取消编辑 (Esc)"
+
+#: main.c:2475
+msgid "Focus input (Ctrl/Cmd+L)"
+msgstr "聚焦输入框 (Ctrl/Cmd+L)"
+
+#: main.c:2480
+msgid "Message DeepSeek. Enter to send, Shift+Enter for a new line."
+msgstr "给 DeepSeek 发消息，Enter 发送，Shift+Enter 换行"
+
+#: main.c:2487
+msgid "Message DeepSeek"
+msgstr "给 DeepSeek 发消息"
+
+#: main.c:2522
+msgid "Model and reasoning level"
+msgstr "模型与推理级别"
+
+#: main.c:2550
+msgid "AI-generated content. Please verify important information."
+msgstr "内容由 AI 生成，请仔细甄别"
+
+#: main.c:2718
+#, c-format
+msgid "Unable to load conversations; original files preserved: %s\n"
+msgstr "无法加载会话，原文件已保留：%s\n"
+
+#: md.c:251
+msgid "Code copied"
+msgstr "代码已复制"
+
+#: md.c:274
+msgid "Copy code"
+msgstr "复制代码"
+
+#: store.c:72
+#, c-format
+msgid "Cannot lock conversation file %s: %s"
+msgstr "无法锁定会话文件 %s：%s"
+
+#: store.c:241
+#, c-format
+msgid "Invalid conversation file structure: %s"
+msgstr "会话文件结构无效：%s"
+
+#: store.c:277
+#, c-format
+msgid "Neither the conversation file nor its backup is usable: %s; %s"
+msgstr "主会话和备份都不可用：%s；%s"
