@@ -12,6 +12,9 @@ config.set_quoted('LOCALEDIR', meson.current_build_dir() / 'po')
 configure_file(output: 'config.h', configuration: config)
 subdir('po')
 
+gnome = import('gnome')
+resources = gnome.compile_resources('gchat-resources', 'gchat.gresource.xml')
+
 i18n_dep = declare_dependency(
   sources: 'i18n.c',
   dependencies: dependency('glib-2.0', version: '>=2.66'),
@@ -25,7 +28,7 @@ md_deps = [
 ]
 app_deps = store_deps + md_deps + [dependency('libsoup-3.0')]
 
-executable('gchat', ['main.c', 'md.c', 'store.c'],
+executable('gchat', ['main.c', 'md.c', 'store.c', resources],
   dependencies: app_deps + [i18n_dep],
   link_depends: translations,
   install: false,
@@ -36,7 +39,8 @@ store_tests = executable('test-store', ['tests/test-store.c', 'store.c'],
   link_depends: translations,
   install: false,
 )
-app_tests = executable('test-app', ['tests/test-app.c', 'md.c', 'store.c'],
+app_tests = executable('test-app',
+  ['tests/test-app.c', 'md.c', 'store.c', resources],
   dependencies: app_deps + [i18n_dep],
   link_depends: translations,
   install: false,

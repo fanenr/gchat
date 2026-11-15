@@ -1,0 +1,158 @@
+/* SPDX-FileCopyrightText: 2026 Arthur <arthur63@163.com>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+.user-bubble {
+  background: alpha(@accent_bg_color, .16);
+  border-radius: 20px;
+  padding: 10px 16px;
+}
+
+.msg-actions-row { margin-top: 6px; }
+.compact-action { min-width: 16px; min-height: 16px; padding: 2px 3px; }
+.row-del {
+  opacity: 0;
+  transition: opacity 120ms ease;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 2px;
+}
+.navigation-sidebar row:hover .row-del, .row-del:focus { opacity: .7; }
+.row-del:hover { opacity: 1; }
+.sidebar-list row { margin: 1px 6px; border-radius: 10px; }
+.sidebar-row { min-height: 32px; }
+.sidebar-list label { font-size: 14px; }
+.sidebar-list row:selected { background: alpha(@window_fg_color, .095); }
+.sidebar-group {
+  min-height: 0;
+  padding: 10px 16px 3px 16px;
+  background: none;
+}
+.sidebar-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: alpha(@window_fg_color, .42);
+}
+.sidebar-group:hover, .sidebar-group:selected, .sidebar-group:active {
+  background: none;
+}
+.new-chat-row, .settings-row {
+  padding: 6px 8px;
+  border-radius: 10px;
+  box-shadow: none;
+  background: none;
+}
+.new-chat-row:hover, .settings-row:hover {
+  background: alpha(@window_fg_color, .07);
+}
+.new-chat-row label, .settings-row label {
+  font-size: 14px;
+  color: alpha(@window_fg_color, .8);
+}
+.code-card {
+  background: alpha(@window_fg_color, .055);
+  border: 1px solid alpha(@window_fg_color, .09);
+  border-radius: 12px;
+}
+.quote-bar { background: alpha(@window_fg_color, .22); border-radius: 2px; }
+.code-bar { border-bottom: 1px solid alpha(@window_fg_color, .07); }
+.table-card {
+  background: alpha(@window_fg_color, .04);
+  border: 1px solid alpha(@window_fg_color, .09);
+  border-radius: 12px;
+}
+.table-sep { background: alpha(@window_fg_color, .09); }
+.source-code, .source-code text, .thought-text, .thought-text text {
+  background: transparent;
+}
+.source-code { font-size: 12.5px; }
+.thought-toggle {
+  background: none;
+  box-shadow: none;
+  border: none;
+  padding: 4px 0;
+  min-height: 0;
+  min-width: 0;
+}
+.thought-toggle:hover label { color: @window_fg_color; }
+.msg-text, .chat-input { background: transparent; }
+.msg-text, .chat-input, .user-bubble {
+  font-size: 14px;
+  font-family: "PingFang SC", "Noto Sans CJK SC", sans-serif;
+}
+.user-bubble label { font-size: 14px; }
+.thought-toggle label { font-size: 13px; }
+overshoot, overshoot.top, overshoot.bottom, overshoot.left, overshoot.right,
+undershoot, undershoot.top, undershoot.bottom, undershoot.left,
+undershoot.right {
+  background-image: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+.input-frame {
+  background: alpha(@window_fg_color, .045);
+  border: none;
+  border-radius: 18px;
+  box-shadow: none;
+}
+.input-chip {
+  padding: 3px 6px;
+  min-height: 0;
+  min-width: 0;
+  border-radius: 10px;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+.input-chip > button, .input-chip > button:hover, .input-chip > button:focus,
+.input-chip > button:active {
+  background: none;
+  box-shadow: none;
+  border: none;
+  padding: 0;
+  min-height: 0;
+  min-width: 0;
+}
+.input-chip:hover { background: alpha(@window_fg_color, .05); }
+.input-chip:focus, .input-chip:focus-within {
+  background: alpha(@window_fg_color, .05);
+}
+.input-chip:focus, .input-chip:focus-visible, .input-chip > button:focus,
+.thought-toggle:focus, .thought-toggle:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.input-chip label { font-weight: normal; }
+.chat-scrollbar.vertical {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  transition: opacity 150ms;
+}
+.chat-scrollbar.vertical > range {
+  background: none;
+  border: none;
+  min-width: 0;
+}
+.chat-scrollbar.vertical > range > trough {
+  background: none;
+  border: none;
+  min-width: 0;
+  padding: 0 3px;
+}
+.chat-scrollbar.vertical > range > trough > slider {
+  background: alpha(@window_fg_color, .2);
+  border: none;
+  box-shadow: none;
+  border-radius: 3px;
+  min-width: 4px;
+  min-height: 32px;
+  margin: 0;
+}
+.chat-scrollbar.vertical > range > trough > slider:hover {
+  background: alpha(@window_fg_color, .45);
+}
+.chat-scrollbar.faded { opacity: 0; }

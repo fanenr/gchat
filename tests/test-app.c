@@ -862,6 +862,19 @@ corrupt_preference (gconstpointer data)
 }
 
 static void
+styles_resource (void)
+{
+  GError *error = NULL;
+  GBytes *bytes = g_resources_lookup_data ("/cc/arthur63/gchat/style.css",
+                                           G_RESOURCE_LOOKUP_FLAGS_NONE,
+                                           &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (bytes);
+  g_assert_cmpuint (g_bytes_get_size (bytes), >, 0);
+  g_bytes_unref (bytes);
+}
+
+static void
 styles_single_install (void)
 {
   if (!have_display)
@@ -1243,7 +1256,7 @@ draft_startup (gconstpointer data)
       app->chat->edit_text = g_strdup ("恢复的编辑草稿");
     }
   GtkApplication *application =
-      gtk_application_new ("com.example.Gchat.Tests", G_APPLICATION_NON_UNIQUE);
+      gtk_application_new ("cc.arthur63.gchat.Tests", G_APPLICATION_NON_UNIQUE);
   GError *error = NULL;
   g_assert_true (
       g_application_register (G_APPLICATION (application), NULL, &error));
@@ -1562,7 +1575,7 @@ keyboard_actions (void)
   if (!setup_ui ())
     return;
   GtkApplication *application =
-      gtk_application_new ("com.example.Gchat.Tests", G_APPLICATION_NON_UNIQUE);
+      gtk_application_new ("cc.arthur63.gchat.Tests", G_APPLICATION_NON_UNIQUE);
   GError *error = NULL;
   g_assert_true (
       g_application_register (G_APPLICATION (application), NULL, &error));
@@ -1766,7 +1779,7 @@ shutdown_snapshot (gconstpointer data)
   setup ();
   app->api_key = g_strdup ("test-key-not-sent");
   AdwApplication *gtk_app = adw_application_new (
-      "com.example.Gchat.Tests.Shutdown", G_APPLICATION_NON_UNIQUE);
+      "cc.arthur63.gchat.Tests.Shutdown", G_APPLICATION_NON_UNIQUE);
   g_signal_connect (gtk_app, "activate", G_CALLBACK (activate), NULL);
   g_signal_connect (gtk_app, "shutdown", G_CALLBACK (on_shutdown), NULL);
   if (GPOINTER_TO_INT (data) == 2)
@@ -2439,6 +2452,7 @@ main (int    argc,
                         corrupt_preference);
   g_test_add_data_func ("/app/preferences/corrupt-language", "language",
                         corrupt_preference);
+  g_test_add_func ("/app/styles-resource", styles_resource);
   g_test_add_func ("/app/styles-single-install", styles_single_install);
   g_test_add_func ("/app/theme-save-failure", theme_save_failure);
   g_test_add_func ("/app/language-settings", language_settings);
