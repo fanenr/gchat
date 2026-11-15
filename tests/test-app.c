@@ -356,6 +356,72 @@ begin_reply (gboolean reasoning)
 }
 
 static void
+action_visibility (void)
+{
+  if (!setup_ui ())
+    return;
+  render_chat ();
+  show_window ();
+  GtkWidget *first = gtk_widget_get_first_child (app->messages);
+  GtkWidget *last = gtk_widget_get_last_child (app->messages);
+  GtkWidget *first_actions = g_object_get_data (G_OBJECT (first), "actions");
+  GtkWidget *last_actions = g_object_get_data (G_OBJECT (last), "actions");
+  GtkWidget *body = g_object_get_data (G_OBJECT (first), "body");
+  GtkWidget *text = gtk_widget_get_first_child (body);
+  GtkEventController *motion = g_object_get_data (G_OBJECT (first), "motion");
+
+  g_signal_emit_by_name (motion, "leave");
+  gtk_widget_grab_focus (app->input);
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 0);
+  g_assert_false (gtk_widget_get_can_target (first_actions));
+  g_assert_cmpfloat (gtk_widget_get_opacity (last_actions), ==, 1);
+  g_assert_true (gtk_widget_get_can_target (last_actions));
+  g_signal_emit_by_name (motion, "enter", 0.0, 0.0);
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 1);
+  g_assert_true (gtk_widget_get_can_target (first_actions));
+  g_signal_emit_by_name (motion, "leave");
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 0);
+  g_assert_false (gtk_widget_get_can_target (first_actions));
+  g_assert_true (gtk_widget_grab_focus (text));
+  g_signal_emit_by_name (motion, "enter", 0.0, 0.0);
+  g_signal_emit_by_name (motion, "leave");
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 1);
+  g_assert_true (gtk_widget_get_can_target (first_actions));
+  GtkWidget *button = gtk_widget_get_first_child (first_actions);
+  g_assert_true (gtk_widget_grab_focus (button));
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 1);
+  gtk_widget_grab_focus (app->input);
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 0);
+  g_assert_false (gtk_widget_get_can_target (first_actions));
+  g_assert_cmpfloat (gtk_widget_get_opacity (last_actions), ==, 1);
+  g_assert_true (gtk_widget_grab_focus (button));
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 1);
+  g_signal_emit_by_name (motion, "enter", 0.0, 0.0);
+  gtk_widget_grab_focus (app->input);
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 1);
+  g_signal_emit_by_name (motion, "leave");
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 0);
+
+  body = g_object_get_data (G_OBJECT (last), "body");
+  text = gtk_widget_get_first_child (body);
+  g_assert_true (gtk_widget_grab_focus (text));
+  begin_reply (FALSE);
+  GtkWidget *reply_actions =
+      g_object_get_data (G_OBJECT (app->reply_bubble), "actions");
+  g_assert_cmpfloat (gtk_widget_get_opacity (last_actions), ==, 1);
+  g_assert_cmpfloat (gtk_widget_get_opacity (reply_actions), ==, 1);
+  gtk_widget_grab_focus (app->input);
+  g_assert_cmpfloat (gtk_widget_get_opacity (last_actions), ==, 0);
+  drop_reply ();
+  g_assert_cmpfloat (gtk_widget_get_opacity (last_actions), ==, 1);
+  on_delete_message (NULL, last);
+  first = gtk_widget_get_first_child (app->messages);
+  first_actions = g_object_get_data (G_OBJECT (first), "actions");
+  g_assert_cmpfloat (gtk_widget_get_opacity (first_actions), ==, 1);
+  teardown ();
+}
+
+static void
 sse_parser (void)
 {
   gchar *content = NULL, *reasoning = NULL;
@@ -2357,6 +2423,7 @@ main (int    argc,
                         code_block_layout);
   g_test_add_data_func ("/app/code-block/dark", GINT_TO_POINTER (TRUE),
                         code_block_layout);
+  g_test_add_func ("/app/action-visibility", action_visibility);
   g_test_add_func ("/app/sse-parse", sse_parser);
   g_test_add_func ("/app/api-key-prompt-path", api_key_prompt_path);
   g_test_add_func ("/app/choice-selection", choice_selection);

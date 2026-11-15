@@ -458,6 +458,53 @@ add_fork_action (GtkWidget *bubble)
   gtk_button_set_child (GTK_BUTTON (button), icon);
 }
 
+static void
+update_bubble_actions (GtkWidget *bubble)
+{
+  GtkWidget *parent = gtk_widget_get_parent (bubble);
+  GtkWidget *actions = g_object_get_data (G_OBJECT (bubble), "actions");
+  GtkEventControllerFocus *focus =
+      g_object_get_data (G_OBJECT (bubble), "focus");
+  gboolean show = (parent != NULL &&
+                   gtk_widget_get_last_child (parent) == bubble) ||
+                  gtk_event_controller_focus_contains_focus (focus) ||
+                  GPOINTER_TO_INT (g_object_get_data (G_OBJECT (bubble),
+                                                      "hovered"));
+  gtk_widget_set_opacity (actions, show ? 1 : 0);
+  gtk_widget_set_can_target (actions, show);
+}
+
+static void
+on_bubble_focus_changed (GObject    *controller,
+                         GParamSpec *pspec G_GNUC_UNUSED,
+                         gpointer    data G_GNUC_UNUSED)
+{
+  GtkWidget *bubble =
+      gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller));
+  if (bubble != NULL)
+    update_bubble_actions (bubble);
+}
+
+static void
+on_bubble_enter (GtkEventControllerMotion *controller G_GNUC_UNUSED,
+                 double                    x G_GNUC_UNUSED,
+                 double                    y G_GNUC_UNUSED,
+                 gpointer                  data)
+{
+  GtkWidget *bubble = data;
+  g_object_set_data (G_OBJECT (bubble), "hovered", GINT_TO_POINTER (TRUE));
+  update_bubble_actions (bubble);
+}
+
+static void
+on_bubble_leave (GtkEventControllerMotion *controller G_GNUC_UNUSED,
+                 gpointer                  data)
+{
+  GtkWidget *bubble = data;
+  g_object_set_data (G_OBJECT (bubble), "hovered", NULL);
+  update_bubble_actions (bubble);
+}
+
 static GtkWidget *
 bubble_new (const gchar *role)
 {
@@ -493,7 +540,21 @@ bubble_new (const gchar *role)
   gtk_box_append (GTK_BOX (bubble), actions);
   g_object_set_data (G_OBJECT (bubble), "copy", copy);
   g_object_set_data (G_OBJECT (bubble), "actions", actions);
+  GtkEventController *focus = gtk_event_controller_focus_new ();
+  g_signal_connect (focus, "notify::contains-focus",
+                    G_CALLBACK (on_bubble_focus_changed), NULL);
+  gtk_widget_add_controller (bubble, focus);
+  g_object_set_data (G_OBJECT (bubble), "focus", focus);
+  GtkEventController *motion = gtk_event_controller_motion_new ();
+  g_signal_connect (motion, "enter", G_CALLBACK (on_bubble_enter), bubble);
+  g_signal_connect (motion, "leave", G_CALLBACK (on_bubble_leave), bubble);
+  gtk_widget_add_controller (bubble, motion);
+  g_object_set_data (G_OBJECT (bubble), "motion", motion);
+  GtkWidget *previous = gtk_widget_get_last_child (app->messages);
   gtk_box_append (GTK_BOX (app->messages), bubble);
+  if (previous != NULL)
+    update_bubble_actions (previous);
+  update_bubble_actions (bubble);
   return bubble;
 }
 
@@ -1436,7 +1497,12 @@ static void
 drop_reply (void)
 {
   if (app->reply_bubble != NULL)
-    gtk_box_remove (GTK_BOX (app->messages), app->reply_bubble);
+    {
+      gtk_box_remove (GTK_BOX (app->messages), app->reply_bubble);
+      GtkWidget *last = gtk_widget_get_last_child (app->messages);
+      if (last != NULL)
+        update_bubble_actions (last);
+    }
   json_array_remove_element (app->chat->messages,
                              json_array_get_length (app->chat->messages) - 1);
   if (!json_array_get_length (app->chat->messages))
@@ -2307,10 +2373,7 @@ load_css (void)
       ".user-bubble { background: alpha(@accent_bg_color, .16); border-radius: "
       "20px;"
       " padding: 10px 16px; }"
-      ".msg-actions-row { opacity: .35; transition: opacity 120ms ease; "
-      "margin-top: 6px; }"
-      ".msg:hover .msg-actions-row, .msg-actions-row:focus-within { opacity: "
-      "1; }"
+      ".msg-actions-row { margin-top: 6px; }"
       ".compact-action { min-width: 16px; min-height: 16px; padding: 2px 3px; }"
       ".row-del { opacity: 0; transition: opacity 120ms ease; min-width: 20px; "
       "min-height: 20px;"

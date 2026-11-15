@@ -5,6 +5,7 @@
 #pragma once
 
 #include "config.h"
+
 #include <glib/gi18n.h>
 
 /* Return a supported gettext language code; an unknown choice resolves from the

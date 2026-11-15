@@ -66,7 +66,7 @@ The gear at the bottom of the sidebar opens the settings page. It offers these i
 
 ### Message actions
 
-Hover a message to show its action row. The row offers these actions:
+The latest message always shows its action row. Other messages show it while hovered or while the message or one of its controls has focus. The row offers these actions:
 
 - Copy the whole message.
 - Edit and resend. The client puts the body back in the input box. It withdraws this message and all later messages only when you send.
