@@ -73,6 +73,8 @@ static void on_delete_message (GtkButton *button,
                                gpointer   data);
 static void on_edit_message (GtkButton *button,
                              gpointer   data);
+static void on_fork_message (GtkButton *button,
+                             gpointer   data);
 static void on_regenerate_message (GtkButton *button,
                                    gpointer   data);
 static void on_row_rename (GtkGestureClick *gesture,
@@ -403,8 +405,8 @@ on_copy_message (GtkButton *button,
   app_toast (_ ("Copied"));
 }
 
-/* The message action row supports copy, edit, regenerate, and delete. */
-static void
+/* The message action row supports copy, edit, fork, regenerate, and delete. */
+static GtkWidget *
 add_bubble_action (GtkWidget   *bubble,
                    const gchar *icon,
                    const gchar *tooltip,
@@ -414,6 +416,46 @@ add_bubble_action (GtkWidget   *bubble,
   GtkWidget *button = icon_button (icon, 14, TRUE, tooltip);
   g_signal_connect (button, "clicked", callback, bubble);
   gtk_box_append (GTK_BOX (actions), button);
+  return button;
+}
+
+static void
+draw_fork_icon (GtkDrawingArea *area,
+                cairo_t        *cr,
+                int             width,
+                int             height,
+                gpointer        data G_GNUC_UNUSED)
+{
+  GdkRGBA color;
+  gtk_widget_get_color (GTK_WIDGET (area), &color);
+  gdk_cairo_set_source_rgba (cr, &color);
+  cairo_scale (cr, width / 16.0, height / 16.0);
+  cairo_set_line_width (cr, 1.5);
+  cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
+  cairo_move_to (cr, 4, 5);
+  cairo_line_to (cr, 4, 11);
+  cairo_move_to (cr, 12, 5);
+  cairo_curve_to (cr, 12, 9, 4, 6, 4, 11);
+  cairo_stroke (cr);
+  cairo_arc (cr, 4, 3.5, 1.5, 0, 2 * G_PI);
+  cairo_new_sub_path (cr);
+  cairo_arc (cr, 4, 12.5, 1.5, 0, 2 * G_PI);
+  cairo_new_sub_path (cr);
+  cairo_arc (cr, 12, 3.5, 1.5, 0, 2 * G_PI);
+  cairo_fill (cr);
+}
+
+static void
+add_fork_action (GtkWidget *bubble)
+{
+  GtkWidget *button = add_bubble_action (bubble, "list-add-symbolic",
+                                        _ ("Fork conversation"),
+                                        G_CALLBACK (on_fork_message));
+  GtkWidget *icon = gtk_drawing_area_new ();
+  gtk_widget_set_size_request (icon, 14, 14);
+  gtk_drawing_area_set_draw_func (GTK_DRAWING_AREA (icon), draw_fork_icon,
+                                  NULL, NULL);
+  gtk_button_set_child (GTK_BUTTON (button), icon);
 }
 
 static GtkWidget *
@@ -533,6 +575,7 @@ render_history (guint count)
                                _ ("Regenerate"),
                                G_CALLBACK (on_regenerate_message));
         }
+      add_fork_action (bubble);
       add_bubble_action (bubble, "user-trash-symbolic", _ ("Delete message"),
                          G_CALLBACK (on_delete_message));
       set_copy_text (bubble, content);
@@ -856,6 +899,53 @@ on_edit_message (GtkButton *button G_GNUC_UNUSED,
   app->chat->edit_from = index;
   g_free (app->chat->edit_text);
   app->chat->edit_text = g_strdup (content);
+  render_chat ();
+  save_session ();
+  gtk_widget_grab_focus (app->input);
+}
+
+static void
+on_fork_message (GtkButton *button G_GNUC_UNUSED,
+                 gpointer   data)
+{
+  guint index = bubble_index (data);
+  if (app->busy || index >= json_array_get_length (app->chat->messages))
+    return;
+
+  Chat *source = app->chat;
+  JsonObject *selected =
+      json_array_get_object_element (source->messages, index);
+  gboolean is_user = g_str_equal (
+      json_object_get_string_member (selected, "role"), "user");
+  Chat *fork = chat_new_empty ();
+  g_free (fork->title);
+  fork->title = *source->title
+                    ? g_strdup_printf (_ ("%s (Fork)"), source->title)
+                    : g_strdup (_ ("Fork"));
+  if (is_user)
+    {
+      g_free (fork->draft);
+      fork->draft = g_strdup (json_object_get_string_member (selected,
+                                                             "content"));
+    }
+  for (guint i = 0; i < index + !is_user; i++)
+    {
+      JsonObject *original =
+          json_array_get_object_element (source->messages, i);
+      JsonObject *copy = json_object_new ();
+      GList *members = json_object_get_members (original);
+      for (GList *l = members; l != NULL; l = l->next)
+        json_object_set_member (copy, l->data,
+                                json_node_copy (json_object_get_member (
+                                    original, l->data)));
+      g_list_free (members);
+      json_array_add_object_element (fork->messages, copy);
+    }
+
+  gtk_editable_set_text (GTK_EDITABLE (app->search), "");
+  app->chat = fork;
+  g_ptr_array_add (app->chats, fork);
+  rebuild_sidebar ();
   render_chat ();
   save_session ();
   gtk_widget_grab_focus (app->input);
@@ -1406,6 +1496,7 @@ end_stream (void)
       GUINT_TO_POINTER (json_array_get_length (app->chat->messages) - 1));
   add_bubble_action (app->reply_bubble, "view-refresh-symbolic",
                      _ ("Regenerate"), G_CALLBACK (on_regenerate_message));
+  add_fork_action (app->reply_bubble);
   add_bubble_action (app->reply_bubble, "user-trash-symbolic",
                      _ ("Delete message"), G_CALLBACK (on_delete_message));
   scroll_if_following ();

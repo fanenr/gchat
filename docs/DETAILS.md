@@ -70,6 +70,7 @@ Hover a message to show its action row. The row offers these actions:
 
 - Copy the whole message.
 - Edit and resend. The client puts the body back in the input box. It withdraws this message and all later messages only when you send.
+- Fork into a new session. For a user message, the new session keeps the earlier history and puts the selected message in its draft. For a reply, it keeps the history through that reply, including reasoning. The original session stays unchanged. Forking does not send a request and is unavailable during generation.
 - Regenerate. This works only on the last reply.
 - Delete one message.
 

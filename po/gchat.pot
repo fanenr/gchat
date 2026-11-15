@@ -61,6 +61,19 @@ msgstr ""
 msgid "Delete message"
 msgstr ""
 
+#: main.c
+msgid "Fork conversation"
+msgstr ""
+
+#: main.c
+#, c-format
+msgid "%s (Fork)"
+msgstr ""
+
+#: main.c
+msgid "Fork"
+msgstr ""
+
 #: main.c:538 main.c:1945
 msgid "Failed to save conversation"
 msgstr ""

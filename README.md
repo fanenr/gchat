@@ -43,7 +43,7 @@ The client needs these packages:
 - Markdown rendering: md4c parses the text and renders it as native widgets, with headings, lists, quotes, tables, and code blocks.
 - Code blocks: a separate card with a language label and a copy button. GtkSourceView does the highlighting.
 - Multiple sessions: the sidebar groups sessions as Today / Yesterday / Earlier. Sessions can be searched, renamed, and deleted.
-- Message actions: copy, edit and resend, regenerate, and delete.
+- Message actions: copy, edit and resend, fork into a new session, regenerate, and delete.
 - Models and reasoning levels: `deepseek-flash` and `deepseek-v4-pro`, with four reasoning levels.
 - Drafts: each session keeps its own draft. It is written to disk 750ms after typing stops.
 - Interface language: English and Simplified Chinese. A change applies after a client restart.

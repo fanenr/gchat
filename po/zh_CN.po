@@ -57,6 +57,16 @@ msgstr "重新生成"
 msgid "Delete message"
 msgstr "删除这条消息"
 
+msgid "Fork conversation"
+msgstr "分叉会话"
+
+#, c-format
+msgid "%s (Fork)"
+msgstr "%s（分叉）"
+
+msgid "Fork"
+msgstr "分叉"
+
 #: main.c:538 main.c:1945
 msgid "Failed to save conversation"
 msgstr "会话保存失败"

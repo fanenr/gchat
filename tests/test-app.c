@@ -875,6 +875,117 @@ assert_input (const gchar *expected)
   g_free (text);
 }
 
+static void
+fork_message (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  guint index = GPOINTER_TO_UINT (data);
+  add_message ("user", "question two\n ");
+  add_message ("assistant", "answer two");
+  Chat *source = app->chat;
+  JsonObject *reply = json_array_get_object_element (source->messages, 1);
+  json_object_set_string_member (reply, "reasoning", "thought");
+  json_object_set_double_member (reply, "duration", 2.5);
+  g_free (source->draft);
+  source->draft = g_strdup ("original draft");
+  render_chat ();
+  if (index == 1)
+    {
+      source->edit_from = 2;
+      g_free (source->edit_text);
+      source->edit_text = g_strdup ("editing");
+      render_chat ();
+    }
+  GtkWidget *bubble = gtk_widget_get_first_child (app->messages);
+  for (guint i = 0; i < index; i++)
+    bubble = gtk_widget_get_next_sibling (bubble);
+  GtkWidget *actions = g_object_get_data (G_OBJECT (bubble), "actions");
+  GtkWidget *button = gtk_widget_get_first_child (actions);
+  while (button != NULL &&
+         g_strcmp0 (gtk_widget_get_tooltip_text (button),
+                    _ ("Fork conversation")) != 0)
+    {
+      button = gtk_widget_get_next_sibling (button);
+    }
+  g_assert_nonnull (button);
+  g_assert_true (GTK_IS_DRAWING_AREA (
+      gtk_button_get_child (GTK_BUTTON (button))));
+  app->busy = TRUE;
+  g_signal_emit_by_name (button, "clicked");
+  g_assert_true (app->chat == source);
+  app->busy = FALSE;
+  g_signal_emit_by_name (button, "clicked");
+
+  Chat *fork = app->chat;
+  g_assert_true (fork != source);
+  g_assert_cmpuint (app->chats->len, ==, 2);
+  g_assert_cmpuint (json_array_get_length (source->messages), ==, 4);
+  g_assert_cmpstr (source->draft, ==, "original draft");
+  g_assert_cmpuint (fork->edit_from, ==, G_MAXUINT);
+  guint count = index + (index == 1);
+  g_assert_cmpuint (json_array_get_length (fork->messages), ==, count);
+  const gchar *drafts[] = { "question one", "", "question two\n " };
+  g_assert_cmpstr (fork->draft, ==, drafts[index]);
+  assert_input (fork->draft);
+  if (index == 1)
+    {
+      g_assert_cmpuint (source->edit_from, ==, 2);
+      g_assert_cmpstr (source->edit_text, ==, "editing");
+      JsonObject *copied = json_array_get_object_element (fork->messages, 1);
+      g_assert_cmpstr (json_object_get_string_member (copied, "reasoning"), ==,
+                       "thought");
+      g_assert_cmpfloat (json_object_get_double_member (copied, "duration"),
+                         ==, 2.5);
+      json_object_set_string_member (copied, "content", "changed");
+      g_assert_cmpstr (json_object_get_string_member (reply, "content"), ==,
+                       "answer one");
+    }
+  gchar *path = store_session_path (), *current = NULL, *model = NULL,
+        *effort = NULL;
+  GError *error = NULL;
+  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  g_assert_cmpstr (current, ==, fork->id);
+  Chat *saved = g_ptr_array_index (loaded, 1);
+  g_assert_cmpstr (saved->draft, ==, fork->draft);
+  g_assert_cmpuint (json_array_get_length (saved->messages), ==, count);
+  g_ptr_array_unref (loaded);
+  g_free (path);
+  g_free (current);
+  g_free (model);
+  g_free (effort);
+  teardown ();
+}
+
+static void
+fork_stream_reply (void)
+{
+  if (!setup_ui ())
+    return;
+  begin_reply (FALSE);
+  g_string_append (app->answer, "streamed answer");
+  GtkWidget *bubble = app->reply_bubble;
+  end_stream ();
+  GtkWidget *actions = g_object_get_data (G_OBJECT (bubble), "actions");
+  GtkWidget *button = gtk_widget_get_first_child (actions);
+  while (button != NULL &&
+         g_strcmp0 (gtk_widget_get_tooltip_text (button),
+                    _ ("Fork conversation")) != 0)
+    {
+      button = gtk_widget_get_next_sibling (button);
+    }
+  g_assert_nonnull (button);
+  g_assert_true (GTK_IS_DRAWING_AREA (
+      gtk_button_get_child (GTK_BUTTON (button))));
+  g_signal_emit_by_name (button, "clicked");
+  g_assert_cmpuint (app->chats->len, ==, 2);
+  JsonObject *reply = json_array_get_object_element (app->chat->messages, 2);
+  g_assert_cmpstr (json_object_get_string_member (reply, "content"), ==,
+                   "streamed answer");
+  teardown ();
+}
+
 static GtkListBoxRow *
 sidebar_row (Chat *chat)
 {
@@ -2266,6 +2377,13 @@ main (int    argc,
   g_test_add_func ("/app/language-settings", language_settings);
   g_test_add_func ("/app/corrupt-startup", corrupt_startup);
   g_test_add_func ("/app/edit-preserves-history", edit_preserves_history);
+  g_test_add_data_func ("/app/fork/first-user", GUINT_TO_POINTER (0),
+                        fork_message);
+  g_test_add_data_func ("/app/fork/assistant", GUINT_TO_POINTER (1),
+                        fork_message);
+  g_test_add_data_func ("/app/fork/later-user", GUINT_TO_POINTER (2),
+                        fork_message);
+  g_test_add_func ("/app/fork/stream-reply", fork_stream_reply);
   g_test_add_func ("/app/draft-lifecycle", draft_lifecycle);
   g_test_add_func ("/app/draft-autosave", draft_autosave);
   g_test_add_data_func ("/app/draft-startup/normal", NULL, draft_startup);
