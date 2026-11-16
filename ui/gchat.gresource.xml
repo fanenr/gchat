@@ -4,5 +4,10 @@
 <gresources>
   <gresource prefix="/cc/arthur63/gchat">
     <file>style.css</file>
+    <file>shell.ui</file>
+    <file>sidebar.ui</file>
+    <file>content.ui</file>
+    <file>settings.ui</file>
+    <file>thought.ui</file>
   </gresource>
 </gresources>

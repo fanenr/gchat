@@ -13,7 +13,20 @@ configure_file(output: 'config.h', configuration: config)
 subdir('po')
 
 gnome = import('gnome')
-resources = gnome.compile_resources('gchat-resources', 'gchat.gresource.xml')
+blueprint = find_program('blueprint-compiler')
+ui_files = []
+foreach name : ['shell', 'sidebar', 'content', 'settings', 'thought']
+  ui_files += custom_target(name + '-ui',
+    input: 'ui' / name + '.blp',
+    output: name + '.ui',
+    command: [blueprint, 'compile', '--output', '@OUTPUT@', '@INPUT@'],
+  )
+endforeach
+resources = gnome.compile_resources('gchat-resources',
+  'ui/gchat.gresource.xml',
+  source_dir: 'ui',
+  dependencies: ui_files,
+)
 
 i18n_dep = declare_dependency(
   sources: 'i18n.c',

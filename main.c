@@ -1405,57 +1405,34 @@ thought_widget (const gchar *reasoning,
                 GtkWidget  **view_out,
                 GtkWidget  **title_out)
 {
-  GtkWidget *root = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
+  GtkBuilder *builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/thought.ui");
+  GtkWidget *root = GTK_WIDGET (gtk_builder_get_object (builder, "thought"));
+  GtkWidget *toggle = GTK_WIDGET (gtk_builder_get_object (builder, "toggle"));
+  GtkWidget *content = GTK_WIDGET (gtk_builder_get_object (builder, "content"));
+  GtkWidget *view = GTK_WIDGET (gtk_builder_get_object (builder, "text"));
+  GtkWidget *title_label =
+      GTK_WIDGET (gtk_builder_get_object (builder, "title"));
+  GtkWidget *chevron = GTK_WIDGET (gtk_builder_get_object (builder, "chevron"));
 
   gchar *title = thought_title (seconds);
-  GtkWidget *toggle = gtk_button_new ();
-  gtk_widget_add_css_class (toggle, "thought-toggle");
-  gtk_widget_set_halign (toggle, GTK_ALIGN_START);
-
-  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-  GtkWidget *title_label = gtk_label_new (title);
-  gtk_widget_add_css_class (title_label, "caption");
-  gtk_widget_add_css_class (title_label, "dimmed");
-  GtkWidget *chevron = gtk_image_new_from_icon_name ("pan-end-symbolic");
-  gtk_image_set_pixel_size (GTK_IMAGE (chevron), 13);
-  gtk_widget_add_css_class (chevron, "dimmed");
-  gtk_box_append (GTK_BOX (row), title_label);
-  gtk_box_append (GTK_BOX (row), chevron);
-  gtk_button_set_child (GTK_BUTTON (toggle), row);
+  gtk_label_set_text (GTK_LABEL (title_label), title);
   g_free (title);
 
-  /* GtkLabel rounds each line's selection clip separately and can leave
-     gaps at fractional line heights. GtkTextView fills between lines. */
-  GtkWidget *view = gtk_text_view_new ();
-  gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
-  gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
+  /* GtkTextView avoids gaps in selection at fractional line heights. */
   gtk_text_buffer_set_text (
       gtk_text_view_get_buffer (GTK_TEXT_VIEW (view)), reasoning, -1);
-  gtk_widget_add_css_class (view, "thought-text");
-  gtk_widget_add_css_class (view, "dimmed");
-  gtk_widget_set_hexpand (view, TRUE);
-
-  GtkWidget *bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  gtk_widget_add_css_class (bar, "quote-bar");
-  gtk_widget_set_size_request (bar, 3, -1);
-
-  GtkWidget *content = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10);
-  g_object_set (content, "margin-top", 4, "margin-bottom", 6, NULL);
-  gtk_box_append (GTK_BOX (content), bar);
-  gtk_box_append (GTK_BOX (content), view);
-  gtk_widget_set_visible (content, FALSE);
-
   g_object_set_data (G_OBJECT (toggle), "chevron", chevron);
   g_signal_connect (toggle, "clicked", G_CALLBACK (on_thought_toggle), content);
-
-  gtk_box_append (GTK_BOX (root), toggle);
-  gtk_box_append (GTK_BOX (root), content);
 
   if (view_out != NULL)
     *view_out = view;
   if (title_out != NULL)
     *title_out = title_label;
+
+  g_object_ref (root);
+  g_object_unref (builder);
+  g_object_force_floating (G_OBJECT (root));
   return root;
 }
 
@@ -2464,58 +2441,42 @@ on_settings_key_apply (AdwEntryRow *row,
     app_toast (_ ("API key saved"));
 }
 
-static AdwActionRow *
-settings_info_row (const gchar *title,
-                   const gchar *subtitle)
-{
-  AdwActionRow *row = ADW_ACTION_ROW (adw_action_row_new ());
-  adw_preferences_row_set_use_markup (ADW_PREFERENCES_ROW (row), FALSE);
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
-  adw_action_row_set_subtitle (row, subtitle);
-  return row;
-}
-
 static void
 on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
                      gpointer   data G_GNUC_UNUSED)
 {
-  AdwPreferencesDialog *dialog =
-      ADW_PREFERENCES_DIALOG (adw_preferences_dialog_new ());
-  AdwPreferencesPage *page = ADW_PREFERENCES_PAGE (adw_preferences_page_new ());
+  GtkBuilder *builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/settings.ui");
+  AdwDialog *dialog = ADW_DIALOG (
+      gtk_builder_get_object (builder, "settings_dialog"));
+  AdwEntryRow *key_row = ADW_ENTRY_ROW (
+      gtk_builder_get_object (builder, "key_row"));
+  AdwActionRow *key_source = ADW_ACTION_ROW (
+      gtk_builder_get_object (builder, "key_source"));
+  AdwComboRow *theme = ADW_COMBO_ROW (
+      gtk_builder_get_object (builder, "theme"));
+  AdwComboRow *language = ADW_COMBO_ROW (
+      gtk_builder_get_object (builder, "language"));
+  AdwActionRow *version = ADW_ACTION_ROW (
+      gtk_builder_get_object (builder, "version"));
+  AdwActionRow *session = ADW_ACTION_ROW (
+      gtk_builder_get_object (builder, "session_path"));
 
-  /* API */
-  AdwPreferencesGroup *api =
-      ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
-  adw_preferences_group_set_title (api, "API");
-
-  AdwEntryRow *key_row = ADW_ENTRY_ROW (adw_password_entry_row_new ());
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (key_row), _ ("API key"));
   if (app->api_key != NULL)
     gtk_editable_set_text (GTK_EDITABLE (key_row), app->api_key);
-  adw_entry_row_set_show_apply_button (key_row, TRUE);
   g_signal_connect (key_row, "apply", G_CALLBACK (on_settings_key_apply), NULL);
-  adw_preferences_group_add (api, GTK_WIDGET (key_row));
 
   const gchar *env = g_getenv ("DEEPSEEK_API_KEY");
   gchar *config_file = store_config_path ();
-  gchar *key_source =
+  gchar *source =
       (env != NULL && *env)
           ? g_strdup (_ ("DEEPSEEK_API_KEY environment variable (overrides "
                          "this setting)"))
           : g_strdup_printf (_ ("Local configuration file: %s"), config_file);
-  adw_preferences_group_add (
-      api, GTK_WIDGET (settings_info_row (_ ("Key source"), key_source)));
-  g_free (key_source);
+  adw_action_row_set_subtitle (key_source, source);
+  g_free (source);
   g_free (config_file);
-  adw_preferences_page_add (page, api);
 
-  /* Appearance */
-  AdwPreferencesGroup *look =
-      ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
-  adw_preferences_group_set_title (look, _ ("Appearance"));
-
-  AdwComboRow *theme = ADW_COMBO_ROW (adw_combo_row_new ());
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (theme), _ ("Theme"));
   GtkStringList *theme_model = gtk_string_list_new (NULL);
   for (guint i = 0; i < G_N_ELEMENTS (THEMES); i++)
     gtk_string_list_append (theme_model, _ (THEMES[i].label));
@@ -2532,14 +2493,7 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
                      GUINT_TO_POINTER (theme_index));
   g_signal_connect (theme, "notify::selected", G_CALLBACK (on_theme_selected),
                     NULL);
-  adw_preferences_group_add (look, GTK_WIDGET (theme));
 
-  AdwComboRow *language = ADW_COMBO_ROW (adw_combo_row_new ());
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (language),
-                                 _ ("Language"));
-  adw_action_row_set_subtitle (
-      ADW_ACTION_ROW (language),
-      _ ("Restart the app to apply language changes."));
   GtkStringList *language_model = gtk_string_list_new (NULL);
   for (guint i = 0; i < G_N_ELEMENTS (LANGUAGES); i++)
     gtk_string_list_append (language_model, i == 0 ? _ (LANGUAGES[i].label)
@@ -2557,27 +2511,13 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
                      GUINT_TO_POINTER (language_index));
   g_signal_connect (language, "notify::selected",
                     G_CALLBACK (on_language_selected), NULL);
-  adw_preferences_group_add (look, GTK_WIDGET (language));
-  adw_preferences_page_add (page, look);
 
-  /* About */
-  AdwPreferencesGroup *about =
-      ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
-  adw_preferences_group_set_title (about, _ ("About"));
-  adw_preferences_group_add (
-      about, GTK_WIDGET (settings_info_row ("gchat", GCHAT_VERSION
-                                            " · GTK 4 + libadwaita")));
+  adw_action_row_set_subtitle (version, GCHAT_VERSION " · GTK 4 + libadwaita");
   gchar *session_path = store_session_path ();
-  adw_preferences_group_add (
-      about,
-      GTK_WIDGET (settings_info_row (_ ("Conversation data"), session_path)));
+  adw_action_row_set_subtitle (session, session_path);
   g_free (session_path);
-  adw_preferences_page_add (page, about);
-
-  adw_dialog_set_title (ADW_DIALOG (dialog), _ ("Settings"));
-  adw_preferences_dialog_set_search_enabled (dialog, FALSE);
-  adw_preferences_dialog_add (dialog, page);
-  adw_dialog_present (ADW_DIALOG (dialog), app->window);
+  adw_dialog_present (dialog, app->window);
+  g_object_unref (builder);
 }
 
 static void
@@ -2667,151 +2607,82 @@ on_search_stop (GtkSearchEntry *entry,
 static GtkWidget *
 build_sidebar (void)
 {
-  GtkWidget *view = adw_toolbar_view_new ();
-  GtkWidget *header = adw_header_bar_new ();
-  GtkWidget *brand = gtk_label_new ("gchat");
-  gtk_widget_add_css_class (brand, "heading");
-  g_object_set (brand, "margin-start", 6, NULL);
-  adw_header_bar_pack_start (ADW_HEADER_BAR (header), brand);
-  adw_header_bar_set_title_widget (ADW_HEADER_BAR (header),
-                                   gtk_label_new (NULL));
-  adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (view), header);
-
-  GtkWidget *content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-
-  GtkWidget *new_row = gtk_button_new ();
-  gtk_widget_add_css_class (new_row, "new-chat-row");
-  gtk_widget_set_margin_start (new_row, 8);
-  gtk_widget_set_margin_end (new_row, 8);
-  gtk_widget_set_margin_top (new_row, 4);
-  gtk_widget_set_margin_bottom (new_row, 2);
-  GtkWidget *nb = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
-  GtkWidget *ni = gtk_image_new_from_icon_name ("document-new-symbolic");
-  gtk_image_set_pixel_size (GTK_IMAGE (ni), 15);
-  GtkWidget *nl = gtk_label_new (_ ("New chat"));
-  gtk_label_set_xalign (GTK_LABEL (nl), 0);
-  gtk_box_append (GTK_BOX (nb), ni);
-  gtk_box_append (GTK_BOX (nb), nl);
-  gtk_button_set_child (GTK_BUTTON (new_row), nb);
-  gtk_widget_set_tooltip_text (new_row, _ ("New chat (Ctrl+N)"));
-  g_signal_connect (new_row, "clicked", G_CALLBACK (on_new_chat_clicked), NULL);
+  GtkBuilder *builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/sidebar.ui");
+  GtkWidget *view = GTK_WIDGET (gtk_builder_get_object (builder, "sidebar"));
+  GtkWidget *new_row =
+      GTK_WIDGET (gtk_builder_get_object (builder, "new_chat"));
+  GtkWidget *settings =
+      GTK_WIDGET (gtk_builder_get_object (builder, "settings"));
+  app->search = GTK_WIDGET (gtk_builder_get_object (builder, "search"));
+  app->sidebar_list =
+      GTK_WIDGET (gtk_builder_get_object (builder, "sidebar_list"));
   app->new_btn = new_row;
-  gtk_box_append (GTK_BOX (content), new_row);
 
-  app->search = gtk_search_entry_new ();
+  g_signal_connect (new_row, "clicked", G_CALLBACK (on_new_chat_clicked), NULL);
+  g_signal_connect (settings, "clicked", G_CALLBACK (on_settings_clicked),
+                    NULL);
   connect_search_ime (app->search);
-  g_object_set (app->search, "placeholder-text", _ ("Search conversations"),
-                "margin-start", 8, "margin-end", 8, "margin-top", 6,
-                "margin-bottom", 8, NULL);
   gtk_accessible_update_property (GTK_ACCESSIBLE (app->search),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
                                   _ ("Search conversations"), -1);
-  gtk_widget_set_tooltip_text (app->search,
-                               _ ("Search conversations (Ctrl/Cmd+F)"));
   g_signal_connect (app->search, "search-changed",
                     G_CALLBACK (on_search_changed), NULL);
   g_signal_connect (app->search, "stop-search", G_CALLBACK (on_search_stop),
                     NULL);
-  gtk_box_append (GTK_BOX (content), app->search);
 
-  app->sidebar_list = gtk_list_box_new ();
   GtkWidget *no_results = gtk_label_new (_ ("No conversations found"));
   gtk_widget_add_css_class (no_results, "dimmed");
   g_object_set (no_results, "margin-top", 16, "margin-bottom", 16, NULL);
   gtk_list_box_set_placeholder (GTK_LIST_BOX (app->sidebar_list), no_results);
-  gtk_list_box_set_selection_mode (GTK_LIST_BOX (app->sidebar_list),
-                                   GTK_SELECTION_SINGLE);
-  gtk_widget_add_css_class (app->sidebar_list, "navigation-sidebar");
-  gtk_widget_add_css_class (app->sidebar_list, "sidebar-list");
   g_signal_connect (app->sidebar_list, "row-selected",
                     G_CALLBACK (on_row_selected), NULL);
 
-  GtkWidget *scroller = gtk_scrolled_window_new ();
-  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroller),
-                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroller),
-                                 app->sidebar_list);
-  gtk_widget_set_vexpand (scroller, TRUE);
-  gtk_box_append (GTK_BOX (content), scroller);
-
-  GtkWidget *settings = gtk_button_new ();
-  gtk_widget_add_css_class (settings, "settings-row");
-  gtk_widget_set_margin_start (settings, 8);
-  gtk_widget_set_margin_end (settings, 8);
-  gtk_widget_set_margin_top (settings, 2);
-  gtk_widget_set_margin_bottom (settings, 8);
-  GtkWidget *sb = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
-  GtkWidget *si = gtk_image_new_from_icon_name ("emblem-system-symbolic");
-  gtk_image_set_pixel_size (GTK_IMAGE (si), 15);
-  GtkWidget *sl = gtk_label_new (_ ("Settings"));
-  gtk_label_set_xalign (GTK_LABEL (sl), 0);
-  gtk_box_append (GTK_BOX (sb), si);
-  gtk_box_append (GTK_BOX (sb), sl);
-  gtk_button_set_child (GTK_BUTTON (settings), sb);
-  gtk_widget_set_tooltip_text (settings, _ ("Settings (Ctrl/Cmd+,)"));
-  g_signal_connect (settings, "clicked", G_CALLBACK (on_settings_clicked),
-                    NULL);
-  gtk_box_append (GTK_BOX (content), settings);
-
-  adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (view), content);
-  gtk_widget_set_size_request (view, 240, -1);
+  /* Return a floating widget, as the other build functions do. */
+  g_object_ref (view);
+  g_object_unref (builder);
+  g_object_force_floating (G_OBJECT (view));
   return view;
 }
 
 static GtkWidget *
 build_content (void)
 {
-  GtkWidget *view = adw_toolbar_view_new ();
-
-  GtkWidget *header = adw_header_bar_new ();
+  GtkBuilder *builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/content.ui");
+  GtkWidget *view = GTK_WIDGET (gtk_builder_get_object (builder, "content"));
   GtkWidget *toggle =
-      icon_button ("sidebar-show-symbolic", 15, FALSE, _ ("Conversations"));
+      GTK_WIDGET (gtk_builder_get_object (builder, "toggle_sidebar"));
+  GtkWidget *cancel_edit =
+      GTK_WIDGET (gtk_builder_get_object (builder, "cancel_edit"));
+  app->title_label =
+      GTK_WIDGET (gtk_builder_get_object (builder, "title_label"));
+  app->stack = GTK_WIDGET (gtk_builder_get_object (builder, "stack"));
+  app->scroller = GTK_WIDGET (gtk_builder_get_object (builder, "scroller"));
+  app->messages = GTK_WIDGET (gtk_builder_get_object (builder, "messages"));
+  app->chat_bar = GTK_WIDGET (gtk_builder_get_object (builder, "chat_bar"));
+  app->edit_bar = GTK_WIDGET (gtk_builder_get_object (builder, "edit_bar"));
+  app->input_frame =
+      GTK_WIDGET (gtk_builder_get_object (builder, "input_frame"));
+  app->input = GTK_WIDGET (gtk_builder_get_object (builder, "input"));
+  app->placeholder =
+      GTK_WIDGET (gtk_builder_get_object (builder, "placeholder"));
+  app->send = GTK_WIDGET (gtk_builder_get_object (builder, "send"));
+  app->choice_popover =
+      GTK_WIDGET (gtk_builder_get_object (builder, "choice_popover"));
+  app->model_chip = GTK_WIDGET (gtk_builder_get_object (builder, "model_chip"));
+  app->chip_model = GTK_WIDGET (gtk_builder_get_object (builder, "chip_model"));
+  app->chip_effort =
+      GTK_WIDGET (gtk_builder_get_object (builder, "chip_effort"));
+
+  gtk_image_set_pixel_size (
+      GTK_IMAGE (gtk_button_get_child (GTK_BUTTON (toggle))), 15);
   g_signal_connect (toggle, "clicked", G_CALLBACK (on_toggle_sidebar), NULL);
-  adw_header_bar_pack_start (ADW_HEADER_BAR (header), toggle);
 
-  app->title_label = adw_window_title_new ("gchat", NULL);
-  adw_header_bar_set_title_widget (ADW_HEADER_BAR (header), app->title_label);
-
-  adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (view), header);
-
-  GtkWidget *center = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-
-  app->stack = gtk_stack_new ();
-  gtk_widget_set_vexpand (app->stack, TRUE);
-
-  /* EXTERNAL: the scrollbar takes no part in layout and no width, so draw one
-     that floats above the content instead. The column width stays the same when
-     the content exceeds one screen, and centered content does not shift
-     sideways. */
-  app->scroller = gtk_scrolled_window_new ();
-  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (app->scroller),
-                                  GTK_POLICY_NEVER, GTK_POLICY_EXTERNAL);
-  app->messages = gtk_box_new (GTK_ORIENTATION_VERTICAL, 26);
-  g_object_set (app->messages, "margin-top", 24, "margin-bottom", 24,
-                "margin-start", 16, "margin-end", 16, NULL);
-  GtkWidget *clamp = adw_clamp_new ();
-  gtk_widget_set_hexpand (clamp, TRUE);
-  gtk_widget_set_halign (clamp, GTK_ALIGN_FILL);
-  adw_clamp_set_maximum_size (ADW_CLAMP (clamp), 760);
-  adw_clamp_set_tightening_threshold (ADW_CLAMP (clamp), 620);
-  adw_clamp_set_child (ADW_CLAMP (clamp), app->messages);
-  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (app->scroller), clamp);
-
-  GtkWidget *empty = adw_status_page_new ();
-  adw_status_page_set_title (ADW_STATUS_PAGE (empty),
-                             _ ("Start a conversation with DeepSeek"));
-  adw_status_page_set_description (
-      ADW_STATUS_PAGE (empty),
-      _ ("Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat"));
-
+  /* The external scrollbar floats above the content without shifting it. */
   GtkAdjustment *vadj =
       gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (app->scroller));
-  app->chat_bar = gtk_scrollbar_new (GTK_ORIENTATION_VERTICAL, vadj);
-  gtk_widget_add_css_class (app->chat_bar, "vertical");
-  gtk_widget_add_css_class (app->chat_bar, "chat-scrollbar");
-  gtk_widget_set_halign (app->chat_bar, GTK_ALIGN_END);
-  gtk_widget_set_valign (app->chat_bar, GTK_ALIGN_FILL);
-  gtk_widget_set_size_request (app->chat_bar, 12, -1);
+  gtk_scrollbar_set_adjustment (GTK_SCROLLBAR (app->chat_bar), vadj);
   GtkEventController *hover = gtk_event_controller_motion_new ();
   g_signal_connect (hover, "enter", G_CALLBACK (on_chat_bar_enter), NULL);
   gtk_widget_add_controller (app->chat_bar, hover);
@@ -2819,53 +2690,8 @@ build_content (void)
   g_signal_connect (vadj, "changed", G_CALLBACK (on_content_changed), NULL);
   g_signal_connect (vadj, "value-changed", G_CALLBACK (on_value_changed), NULL);
 
-  GtkWidget *chat_overlay = gtk_overlay_new ();
-  gtk_overlay_set_child (GTK_OVERLAY (chat_overlay), app->scroller);
-  gtk_overlay_add_overlay (GTK_OVERLAY (chat_overlay), app->chat_bar);
-  gtk_stack_add_named (GTK_STACK (app->stack), chat_overlay, "chat");
-  gtk_stack_add_named (GTK_STACK (app->stack), empty, "empty");
-  gtk_box_append (GTK_BOX (center), app->stack);
-
-  GtkWidget *bar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  g_object_set (bar, "margin-top", 8, "margin-bottom", 16, "margin-start", 16,
-                "margin-end", 16, NULL);
-  GtkWidget *bar_clamp = adw_clamp_new ();
-  gtk_widget_set_hexpand (bar_clamp, TRUE);
-  gtk_widget_set_halign (bar_clamp, GTK_ALIGN_FILL);
-  adw_clamp_set_maximum_size (ADW_CLAMP (bar_clamp), 760);
-  adw_clamp_set_tightening_threshold (ADW_CLAMP (bar_clamp), 620);
-  adw_clamp_set_child (ADW_CLAMP (bar_clamp), bar);
-
-  app->edit_bar = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
-  GtkWidget *edit_label = gtk_label_new (_ ("Editing message"));
-  gtk_label_set_xalign (GTK_LABEL (edit_label), 0);
-  gtk_widget_set_hexpand (edit_label, TRUE);
-  gtk_box_append (GTK_BOX (app->edit_bar), edit_label);
-  GtkWidget *cancel_edit = gtk_button_new_with_label (_ ("Cancel"));
-  gtk_widget_add_css_class (cancel_edit, "flat");
-  gtk_widget_set_tooltip_text (cancel_edit, _ ("Cancel editing (Esc)"));
   g_signal_connect (cancel_edit, "clicked", G_CALLBACK (on_cancel_edit), NULL);
-  gtk_box_append (GTK_BOX (app->edit_bar), cancel_edit);
-  gtk_widget_set_visible (app->edit_bar, FALSE);
-  gtk_box_append (GTK_BOX (bar), app->edit_bar);
-
-  GtkWidget *frame = gtk_scrolled_window_new ();
-  gtk_widget_set_size_request (frame, -1, INPUT_MIN_HEIGHT);
-  gtk_widget_set_hexpand (frame, TRUE);
-  gtk_widget_add_css_class (frame, "card");
-  gtk_widget_add_css_class (frame, "input-frame");
-  /* Use EXTERNAL to hide the scrollbar and reserve no width; keep wheel and
-     key scrolling. */
-  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (frame), GTK_POLICY_NEVER,
-                                  GTK_POLICY_EXTERNAL);
-  app->input_frame = frame;
-
-  app->input = gtk_text_view_new ();
-  gtk_widget_add_css_class (app->input, "chat-input");
-  gtk_widget_set_tooltip_text (app->input, _ ("Focus input (Ctrl/Cmd+L)"));
-  gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (app->input), GTK_WRAP_WORD_CHAR);
-  g_object_set (app->input, "margin-top", 14, "margin-bottom", 42,
-                "margin-start", 14, "margin-end", 14, NULL);
+  gtk_widget_set_size_request (app->input_frame, -1, INPUT_MIN_HEIGHT);
   gtk_accessible_update_property (
       GTK_ACCESSIBLE (app->input), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
       _ ("Message DeepSeek. Enter to send, Shift+Enter for a new line."), -1);
@@ -2875,90 +2701,44 @@ build_content (void)
   g_signal_connect (app->input, "preedit-changed",
                     G_CALLBACK (on_input_preedit), NULL);
 
-  /* GtkTextView has no placeholder, so overlay a label that takes no events. */
-  app->placeholder = gtk_label_new (_ ("Message DeepSeek"));
-  gtk_widget_add_css_class (app->placeholder, "dimmed");
-  gtk_widget_add_css_class (app->placeholder, "chat-input");
-  gtk_widget_set_can_target (app->placeholder, FALSE);
-  gtk_widget_set_halign (app->placeholder, GTK_ALIGN_START);
-  gtk_widget_set_valign (app->placeholder, GTK_ALIGN_START);
-  g_object_set (app->placeholder, "margin-top", 14, "margin-start", 16, NULL);
-
-  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (frame), app->input);
-
-  GtkAdjustment *input_adj =
-      gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (frame));
+  GtkAdjustment *input_adj = gtk_scrolled_window_get_vadjustment (
+      GTK_SCROLLED_WINDOW (app->input_frame));
   input_stick.adj = input_adj;
   g_signal_connect (input_adj, "changed", G_CALLBACK (on_input_content_changed),
                     NULL);
   g_signal_connect (input_adj, "value-changed",
                     G_CALLBACK (on_input_value_changed), NULL);
-
-  GtkWidget *overlay = gtk_overlay_new ();
-  gtk_overlay_set_child (GTK_OVERLAY (overlay), frame);
-  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), app->placeholder);
   g_signal_connect (gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input)),
                     "changed", G_CALLBACK (on_input_changed), NULL);
-  g_signal_connect (frame, "notify::width", G_CALLBACK (on_frame_width), NULL);
+  g_signal_connect (app->input_frame, "notify::width",
+                    G_CALLBACK (on_frame_width), NULL);
 
-  app->send = gtk_button_new_from_icon_name ("go-up-symbolic");
-  gtk_widget_add_css_class (app->send, "suggested-action");
-  gtk_widget_add_css_class (app->send, "circular");
-  gtk_widget_set_valign (app->send, GTK_ALIGN_CENTER);
-  gtk_widget_set_size_request (app->send, 32, 32);
   gtk_image_set_pixel_size (
       GTK_IMAGE (gtk_button_get_child (GTK_BUTTON (app->send))), 15);
-  gtk_widget_set_tooltip_text (app->send, _ ("Send"));
   g_signal_connect (app->send, "clicked", G_CALLBACK (on_send_clicked), NULL);
-
-  app->choice_popover = gtk_popover_new ();
-
-  app->model_chip = gtk_menu_button_new ();
-  gtk_widget_add_css_class (app->model_chip, "input-chip");
-  gtk_widget_set_tooltip_text (app->model_chip,
-                               _ ("Model and reasoning level"));
-  GtkWidget *chip = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-  app->chip_model = gtk_label_new (NULL);
-  app->chip_effort = gtk_label_new (NULL);
-  gtk_widget_add_css_class (app->chip_effort, "dimmed");
-  GtkWidget *chevron = gtk_image_new_from_icon_name ("pan-down-symbolic");
-  gtk_image_set_pixel_size (GTK_IMAGE (chevron), 13);
-  gtk_widget_add_css_class (chevron, "dimmed");
-  gtk_box_append (GTK_BOX (chip), app->chip_model);
-  gtk_box_append (GTK_BOX (chip), app->chip_effort);
-  gtk_box_append (GTK_BOX (chip), chevron);
-  gtk_menu_button_set_child (GTK_MENU_BUTTON (app->model_chip), chip);
-  gtk_menu_button_set_popover (GTK_MENU_BUTTON (app->model_chip),
-                               app->choice_popover);
   refresh_choices ();
 
-  /* The bottom row's chip and send button share one vertical center line. */
-  GtkWidget *controls = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
-  gtk_widget_set_valign (controls, GTK_ALIGN_END);
-  gtk_widget_set_halign (controls, GTK_ALIGN_FILL);
-  g_object_set (controls, "margin-start", 10, "margin-end", 8, "margin-bottom",
-                8, NULL);
-
-  GtkWidget *spacer = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-  gtk_widget_set_hexpand (spacer, TRUE);
-  gtk_box_append (GTK_BOX (controls), spacer);
-  gtk_box_append (GTK_BOX (controls), app->model_chip);
-  gtk_box_append (GTK_BOX (controls), app->send);
-  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), controls);
-
-  GtkWidget *hint = gtk_label_new (
-      _ ("AI-generated content. Please verify important information."));
-  gtk_widget_add_css_class (hint, "caption");
-  gtk_widget_add_css_class (hint, "dimmed");
-  gtk_widget_set_halign (hint, GTK_ALIGN_CENTER);
-  g_object_set (hint, "margin-top", 6, NULL);
-
-  gtk_box_append (GTK_BOX (bar), overlay);
-  gtk_box_append (GTK_BOX (bar), hint);
-  gtk_box_append (GTK_BOX (center), bar_clamp);
-
-  adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (view), center);
+  /* Return a floating widget, as the other build functions do. */
+  g_object_ref (view);
+  g_object_unref (builder);
+  g_object_force_floating (G_OBJECT (view));
   return view;
+}
+
+static void
+build_shell (void)
+{
+  GtkBuilder *builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/shell.ui");
+  app->toasts = GTK_WIDGET (gtk_builder_get_object (builder, "shell"));
+  app->split = GTK_WIDGET (gtk_builder_get_object (builder, "split"));
+  adw_overlay_split_view_set_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
+                                      build_sidebar ());
+  adw_overlay_split_view_set_content (ADW_OVERLAY_SPLIT_VIEW (app->split),
+                                      build_content ());
+  adw_application_window_set_content (ADW_APPLICATION_WINDOW (app->window),
+                                      app->toasts);
+  g_object_unref (builder);
 }
 
 static void
@@ -3093,22 +2873,7 @@ activate (GtkApplication *gtk_app,
   gtk_window_set_default_size (GTK_WINDOW (app->window), 940, 800);
   g_signal_connect (app->window, "close-request", G_CALLBACK (on_close), NULL);
 
-  app->toasts = adw_toast_overlay_new ();
-  adw_application_window_set_content (ADW_APPLICATION_WINDOW (app->window),
-                                      app->toasts);
-
-  app->split = adw_overlay_split_view_new ();
-  adw_overlay_split_view_set_pin_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
-                                          TRUE);
-  adw_overlay_split_view_set_max_sidebar_width (
-      ADW_OVERLAY_SPLIT_VIEW (app->split), 280);
-  adw_overlay_split_view_set_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
-                                      build_sidebar ());
-  adw_overlay_split_view_set_content (ADW_OVERLAY_SPLIT_VIEW (app->split),
-                                      build_content ());
-  adw_overlay_split_view_set_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
-                                           TRUE);
-  adw_toast_overlay_set_child (ADW_TOAST_OVERLAY (app->toasts), app->split);
+  build_shell ();
 
   register_actions (gtk_app);
 

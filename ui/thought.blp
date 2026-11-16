@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: 2026 Arthur <arthur63@163.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+using Gtk 4.0;
+
+Gtk.Box thought {
+  orientation: vertical;
+  spacing: 2;
+
+  Gtk.Button toggle {
+    halign: start;
+
+    styles [
+      "thought-toggle",
+    ]
+
+    child: Gtk.Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Gtk.Label title {
+        styles [
+          "caption",
+          "dimmed",
+        ]
+      }
+
+      Gtk.Image chevron {
+        icon-name: "pan-end-symbolic";
+        pixel-size: 13;
+
+        styles [
+          "dimmed",
+        ]
+      }
+    };
+  }
+
+  Gtk.Box content {
+    orientation: horizontal;
+    spacing: 10;
+    margin-top: 4;
+    margin-bottom: 6;
+    visible: false;
+
+    Gtk.Box {
+      orientation: vertical;
+      width-request: 3;
+
+      styles [
+        "quote-bar",
+      ]
+    }
+
+    // Blueprint lint checks only the direct parent for a scroll container.
+    // The outer chat scroller scrolls this text together with the message.
+    Gtk.TextView text {
+      wrap-mode: word_char;
+      editable: false;
+      cursor-visible: false;
+      hexpand: true;
+
+      styles [
+        "thought-text",
+        "dimmed",
+      ]
+    }
+  }
+}

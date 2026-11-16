@@ -122,15 +122,7 @@ setup_ui (void)
   setup ();
   app->window = adw_application_window_new (NULL);
   g_object_ref (app->window);
-  app->toasts = adw_toast_overlay_new ();
-  adw_application_window_set_content (ADW_APPLICATION_WINDOW (app->window),
-                                      app->toasts);
-  app->split = adw_overlay_split_view_new ();
-  adw_overlay_split_view_set_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
-                                      build_sidebar ());
-  adw_overlay_split_view_set_content (ADW_OVERLAY_SPLIT_VIEW (app->split),
-                                      build_content ());
-  adw_toast_overlay_set_child (ADW_TOAST_OVERLAY (app->toasts), app->split);
+  build_shell ();
   return TRUE;
 }
 
@@ -603,6 +595,59 @@ find_label (GtkWidget   *root,
 }
 
 static void
+sidebar_builder (void)
+{
+  if (!setup_ui ())
+    return;
+
+  GtkWidget *sidebar = adw_overlay_split_view_get_sidebar (
+      ADW_OVERLAY_SPLIT_VIEW (app->split));
+  g_assert_nonnull (find_label (sidebar, _ ("New chat")));
+  g_assert_nonnull (find_label (sidebar, _ ("Settings")));
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->new_btn), ==,
+                   _ ("New chat (Ctrl+N)"));
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->search), ==,
+                   _ ("Search conversations (Ctrl/Cmd+F)"));
+  gchar *placeholder = NULL;
+  g_object_get (app->search, "placeholder-text", &placeholder, NULL);
+  g_assert_cmpstr (placeholder, ==, _ ("Search conversations"));
+  g_free (placeholder);
+  g_assert_true (GTK_IS_LIST_BOX (app->sidebar_list));
+  teardown ();
+}
+
+static void
+content_builder (void)
+{
+  if (!setup_ui ())
+    return;
+
+  g_assert_true (adw_overlay_split_view_get_pin_sidebar (
+      ADW_OVERLAY_SPLIT_VIEW (app->split)));
+  double max_width = adw_overlay_split_view_get_max_sidebar_width (
+      ADW_OVERLAY_SPLIT_VIEW (app->split));
+  g_assert_cmpfloat (max_width, ==, 280);
+  GtkWidget *chat =
+      gtk_stack_get_child_by_name (GTK_STACK (app->stack), "chat");
+  GtkWidget *empty =
+      gtk_stack_get_child_by_name (GTK_STACK (app->stack), "empty");
+  g_assert_true (GTK_IS_OVERLAY (chat));
+  g_assert_true (ADW_IS_STATUS_PAGE (empty));
+  g_assert_cmpstr (adw_status_page_get_title (ADW_STATUS_PAGE (empty)), ==,
+                   _ ("Start a conversation with DeepSeek"));
+  g_assert_true (gtk_scrollbar_get_adjustment (GTK_SCROLLBAR (app->chat_bar)) ==
+                 gtk_scrolled_window_get_vadjustment (
+                     GTK_SCROLLED_WINDOW (app->scroller)));
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->placeholder)), ==,
+                   _ ("Message DeepSeek"));
+  g_assert_false (gtk_widget_get_visible (app->edit_bar));
+  GtkPopover *popover =
+      gtk_menu_button_get_popover (GTK_MENU_BUTTON (app->model_chip));
+  g_assert_true (popover == GTK_POPOVER (app->choice_popover));
+  teardown ();
+}
+
+static void
 language_settings (void)
 {
   if (!setup_ui ())
@@ -753,12 +798,15 @@ literal_ui_text (void)
   app_toast (text);
   wait_for_layout ();
   g_assert_nonnull (find_label (app->toasts, text));
-  AdwActionRow *row = settings_info_row ("Path", "/tmp/<private>&data");
-  g_object_ref_sink (row);
+  GtkBuilder *builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/settings.ui");
+  AdwActionRow *row = ADW_ACTION_ROW (
+      gtk_builder_get_object (builder, "session_path"));
+  adw_action_row_set_subtitle (row, "/tmp/<private>&data");
   g_assert_false (
       adw_preferences_row_get_use_markup (ADW_PREFERENCES_ROW (row)));
   g_assert_nonnull (find_label (GTK_WIDGET (row), "/tmp/<private>&data"));
-  g_object_unref (row);
+  g_object_unref (builder);
   teardown ();
 }
 
@@ -2455,6 +2503,8 @@ main (int    argc,
   g_test_add_func ("/app/styles-resource", styles_resource);
   g_test_add_func ("/app/styles-single-install", styles_single_install);
   g_test_add_func ("/app/theme-save-failure", theme_save_failure);
+  g_test_add_func ("/app/content-builder", content_builder);
+  g_test_add_func ("/app/sidebar-builder", sidebar_builder);
   g_test_add_func ("/app/language-settings", language_settings);
   g_test_add_func ("/app/corrupt-startup", corrupt_startup);
   g_test_add_func ("/app/edit-preserves-history", edit_preserves_history);

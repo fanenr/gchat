@@ -9,7 +9,7 @@
 
 客户端需要以下软件：
 
-- Meson 与 Ninja
+- Meson、Ninja 和 Blueprint Compiler
 - GLib 2.66 或更高
 - GTK 4.12 或更高
 - libadwaita 1.5 或更高
@@ -22,7 +22,7 @@
 1. 安装依赖。在 macOS 上运行：
 
    ```sh
-   brew install meson ninja gtk4 libadwaita libsoup json-glib md4c gtksourceview5 gettext
+   brew install meson ninja blueprint-compiler gtk4 libadwaita libsoup json-glib md4c gtksourceview5 gettext
    ```
 
 2. 编译：

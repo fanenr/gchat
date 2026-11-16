@@ -9,7 +9,7 @@ It uses no WebView and no scripting layer.
 
 The client needs these packages:
 
-- Meson and Ninja
+- Meson, Ninja, and Blueprint Compiler
 - GLib 2.66 or later
 - GTK 4.12 or later
 - libadwaita 1.5 or later
@@ -22,7 +22,7 @@ The client needs these packages:
 1. Install the dependencies. On macOS, run:
 
    ```sh
-   brew install meson ninja gtk4 libadwaita libsoup json-glib md4c gtksourceview5 gettext
+   brew install meson ninja blueprint-compiler gtk4 libadwaita libsoup json-glib md4c gtksourceview5 gettext
    ```
 
 2. Compile:

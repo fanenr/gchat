@@ -1,3 +1,8 @@
 main.c
+ui/content.blp
+ui/settings.blp
+ui/shell.blp
+ui/sidebar.blp
+ui/thought.blp
 md.c
 store.c

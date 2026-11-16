@@ -1,0 +1,105 @@
+// SPDX-FileCopyrightText: 2026 Arthur <arthur63@163.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+using Gtk 4.0;
+using Adw 1;
+
+Adw.ToolbarView sidebar {
+  width-request: 240;
+
+  [top]
+  Adw.HeaderBar {
+    title-widget: Gtk.Label {};
+
+    [start]
+    Gtk.Label {
+      label: "gchat";
+      margin-start: 6;
+
+      styles [
+        "heading",
+      ]
+    }
+  }
+
+  content: Gtk.Box {
+    orientation: vertical;
+
+    Gtk.Button new_chat {
+      margin-start: 8;
+      margin-end: 8;
+      margin-top: 4;
+      margin-bottom: 2;
+      tooltip-text: _("New chat (Ctrl+N)");
+
+      styles [
+        "new-chat-row",
+      ]
+
+      child: Gtk.Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Gtk.Image {
+          icon-name: "document-new-symbolic";
+          pixel-size: 15;
+        }
+
+        Gtk.Label {
+          label: _("New chat");
+          xalign: 0;
+        }
+      };
+    }
+
+    Gtk.SearchEntry search {
+      placeholder-text: _("Search conversations");
+      tooltip-text: _("Search conversations (Ctrl/Cmd+F)");
+      margin-start: 8;
+      margin-end: 8;
+      margin-top: 6;
+      margin-bottom: 8;
+    }
+
+    Gtk.ScrolledWindow {
+      hscrollbar-policy: never;
+      vscrollbar-policy: automatic;
+      vexpand: true;
+
+      child: Gtk.ListBox sidebar_list {
+        selection-mode: single;
+
+        styles [
+          "navigation-sidebar",
+          "sidebar-list",
+        ]
+      };
+    }
+
+    Gtk.Button settings {
+      margin-start: 8;
+      margin-end: 8;
+      margin-top: 2;
+      margin-bottom: 8;
+      tooltip-text: _("Settings (Ctrl/Cmd+,)");
+
+      styles [
+        "settings-row",
+      ]
+
+      child: Gtk.Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Gtk.Image {
+          icon-name: "emblem-system-symbolic";
+          pixel-size: 15;
+        }
+
+        Gtk.Label {
+          label: _("Settings");
+          xalign: 0;
+        }
+      };
+    }
+  };
+}

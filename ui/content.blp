@@ -1,0 +1,229 @@
+// SPDX-FileCopyrightText: 2026 Arthur <arthur63@163.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+using Gtk 4.0;
+using Adw 1;
+
+Adw.ToolbarView content {
+  [top]
+  Adw.HeaderBar {
+    title-widget: Adw.WindowTitle title_label {
+      title: "gchat";
+    };
+
+    [start]
+    Gtk.Button toggle_sidebar {
+      icon-name: "sidebar-show-symbolic";
+      tooltip-text: _("Conversations");
+
+      styles [
+        "flat",
+      ]
+    }
+  }
+
+  content: Gtk.Box {
+    orientation: vertical;
+
+    Gtk.Stack stack {
+      vexpand: true;
+
+      Gtk.StackPage {
+        name: "chat";
+
+        child: Gtk.Overlay {
+          child: Gtk.ScrolledWindow scroller {
+            hscrollbar-policy: never;
+            vscrollbar-policy: external;
+
+            child: Adw.Clamp {
+              hexpand: true;
+              halign: fill;
+              maximum-size: 760;
+              tightening-threshold: 620;
+
+              child: Gtk.Box messages {
+                orientation: vertical;
+                spacing: 26;
+                margin-top: 24;
+                margin-bottom: 24;
+                margin-start: 16;
+                margin-end: 16;
+              };
+            };
+          };
+
+          [overlay]
+          Gtk.Scrollbar chat_bar {
+            orientation: vertical;
+            halign: end;
+            valign: fill;
+            width-request: 12;
+
+            styles [
+              "vertical",
+              "chat-scrollbar",
+            ]
+          }
+        };
+      }
+
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          title: _("Start a conversation with DeepSeek");
+          description: _("Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat");
+        };
+      }
+    }
+
+    Adw.Clamp {
+      hexpand: true;
+      halign: fill;
+      maximum-size: 760;
+      tightening-threshold: 620;
+
+      child: Gtk.Box {
+        orientation: vertical;
+        margin-top: 8;
+        margin-bottom: 16;
+        margin-start: 16;
+        margin-end: 16;
+
+        Gtk.Box edit_bar {
+          orientation: horizontal;
+          spacing: 8;
+          visible: false;
+
+          Gtk.Label {
+            label: _("Editing message");
+            xalign: 0;
+            hexpand: true;
+          }
+
+          Gtk.Button cancel_edit {
+            label: _("Cancel");
+            tooltip-text: _("Cancel editing (Esc)");
+
+            styles [
+              "flat",
+            ]
+          }
+        }
+
+        Gtk.Overlay {
+          child: Gtk.ScrolledWindow input_frame {
+            hexpand: true;
+            hscrollbar-policy: never;
+            vscrollbar-policy: external;
+
+            styles [
+              "card",
+              "input-frame",
+            ]
+
+            child: Gtk.TextView input {
+              tooltip-text: _("Focus input (Ctrl/Cmd+L)");
+              wrap-mode: word_char;
+              margin-top: 14;
+              margin-bottom: 42;
+              margin-start: 14;
+              margin-end: 14;
+
+              styles [
+                "chat-input",
+              ]
+            };
+          };
+
+          [overlay]
+          Gtk.Label placeholder {
+            label: _("Message DeepSeek");
+            can-target: false;
+            halign: start;
+            valign: start;
+            margin-top: 14;
+            margin-start: 16;
+
+            styles [
+              "dimmed",
+              "chat-input",
+            ]
+          }
+
+          [overlay]
+          Gtk.Box {
+            orientation: horizontal;
+            spacing: 4;
+            valign: end;
+            halign: fill;
+            margin-start: 10;
+            margin-end: 8;
+            margin-bottom: 8;
+
+            Gtk.Box {
+              orientation: horizontal;
+              hexpand: true;
+            }
+
+            Gtk.MenuButton model_chip {
+              tooltip-text: _("Model and reasoning level");
+
+              styles [
+                "input-chip",
+              ]
+
+              popover: Gtk.Popover choice_popover {};
+
+              child: Gtk.Box {
+                orientation: horizontal;
+                spacing: 6;
+
+                Gtk.Label chip_model {}
+
+                Gtk.Label chip_effort {
+                  styles [
+                    "dimmed",
+                  ]
+                }
+
+                Gtk.Image {
+                  icon-name: "pan-down-symbolic";
+                  pixel-size: 13;
+
+                  styles [
+                    "dimmed",
+                  ]
+                }
+              };
+            }
+
+            Gtk.Button send {
+              icon-name: "go-up-symbolic";
+              tooltip-text: _("Send");
+              valign: center;
+              width-request: 32;
+              height-request: 32;
+
+              styles [
+                "suggested-action",
+                "circular",
+              ]
+            }
+          }
+        }
+
+        Gtk.Label {
+          label: _("AI-generated content. Please verify important information.");
+          halign: center;
+          margin-top: 6;
+
+          styles [
+            "caption",
+            "dimmed",
+          ]
+        }
+      };
+    }
+  };
+}

@@ -1,0 +1,52 @@
+// SPDX-FileCopyrightText: 2026 Arthur <arthur63@163.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+using Gtk 4.0;
+using Adw 1;
+
+Adw.PreferencesDialog settings_dialog {
+  title: _("Settings");
+  search-enabled: false;
+
+  Adw.PreferencesPage {
+    Adw.PreferencesGroup {
+      title: "API";
+
+      Adw.PasswordEntryRow key_row {
+        title: _("API key");
+        show-apply-button: true;
+      }
+
+      Adw.ActionRow key_source {
+        title: _("Key source");
+        use-markup: false;
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Appearance");
+
+      Adw.ComboRow theme {
+        title: _("Theme");
+      }
+
+      Adw.ComboRow language {
+        title: _("Language");
+        subtitle: _("Restart the app to apply language changes.");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("About");
+
+      Adw.ActionRow version {
+        title: "gchat";
+        use-markup: false;
+      }
+
+      Adw.ActionRow session_path {
+        title: _("Conversation data");
+        use-markup: false;
+      }
+    }
+  }
+}

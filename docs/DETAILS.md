@@ -146,7 +146,8 @@ These items are not translated:
 The client also does not force the model to answer in one language through the API.
 An empty title of a new session is translated at display time. The client does not write the interface language into a session title.
 
-Translations live in `po/`. The English source is in the code. The Simplified Chinese translation is in `po/zh_CN.po`.
+Translations live in `po/`. The English source is in C and Blueprint files. The Simplified Chinese translation is in `po/zh_CN.po`.
+`po/POTFILES` lists these files; Blueprint strings use the same `_()` syntax as C.
 The build needs `msgfmt` from gettext.
 The compiled catalogs are under `po/` in the build directory. You must keep this directory at run time.
 A single copied `gchat` binary will not run.
@@ -249,6 +250,7 @@ GTK tests need a display backend. They skip when no backend is available.
 | --- | --- |
 | `meson.build` | Project version, build directory configuration, direct dependencies of the app and of each test. The version also feeds the About page and the User-Agent |
 | `main.c` | Window layout, sidebar and message area, settings panel, streaming requests and cancellation, session snapshots, and the quit lifecycle |
+| `ui/` | Blueprint layouts, CSS, and the GResource manifest. The layouts compile to GtkBuilder XML and are embedded in the app |
 | `i18n.c` / `i18n.h` | Language matching and gettext setup at startup |
 | `po/` | gettext template, Simplified Chinese catalog, and build rules |
 | `md.c` / `md.h` | md4c callbacks to GTK widgets. Body text and tables share inline styles and text decoding |
