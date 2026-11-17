@@ -19,6 +19,105 @@
 #define INPUT_MIN_HEIGHT 92
 #define INPUT_MAX_HEIGHT 210
 
+/* Keep content aligned and transition smoothly from 85% to 75%. */
+typedef struct
+{
+  GtkWidget  parent_instance;
+  GtkWidget *child; /* Owned through GTK parenting. */
+} ChatWidth;
+
+typedef GtkWidgetClass ChatWidthClass;
+
+G_DEFINE_TYPE (ChatWidth, chat_width, GTK_TYPE_WIDGET)
+
+static int
+chat_width_for (int width)
+{
+  double progress = CLAMP ((width - 760) / 440.0, 0.0, 1.0);
+  double fraction = 0.85 - 0.10 * progress;
+  /* The child has 16px margins on both sides. */
+  return MIN (width, (int) (width * fraction) + 32);
+}
+
+static GtkSizeRequestMode
+chat_width_get_request_mode (GtkWidget *widget G_GNUC_UNUSED)
+{
+  return GTK_SIZE_REQUEST_HEIGHT_FOR_WIDTH;
+}
+
+static void
+chat_width_measure (GtkWidget      *widget,
+                    GtkOrientation  orientation,
+                    int             for_size,
+                    int            *minimum,
+                    int            *natural,
+                    int            *minimum_baseline,
+                    int            *natural_baseline)
+{
+  ChatWidth *self = (ChatWidth *) widget;
+  if (orientation == GTK_ORIENTATION_VERTICAL && for_size >= 0)
+    for_size = chat_width_for (for_size);
+  gtk_widget_measure (self->child, orientation, for_size, minimum, natural,
+                      minimum_baseline, natural_baseline);
+}
+
+static void
+chat_width_size_allocate (GtkWidget *widget,
+                          int        width,
+                          int        height,
+                          int        baseline)
+{
+  ChatWidth *self = (ChatWidth *) widget;
+  int child_width = chat_width_for (width);
+  GtkAllocation allocation = { (width - child_width) / 2, 0,
+                               child_width, height };
+  gtk_widget_size_allocate (self->child, &allocation, baseline);
+}
+
+static void
+chat_width_snapshot (GtkWidget   *widget,
+                     GtkSnapshot *snapshot)
+{
+  ChatWidth *self = (ChatWidth *) widget;
+  gtk_widget_snapshot_child (widget, self->child, snapshot);
+}
+
+static void
+chat_width_dispose (GObject *object)
+{
+  ChatWidth *self = (ChatWidth *) object;
+  g_clear_pointer (&self->child, gtk_widget_unparent);
+  G_OBJECT_CLASS (chat_width_parent_class)->dispose (object);
+}
+
+static void
+chat_width_class_init (ChatWidthClass *klass)
+{
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+  G_OBJECT_CLASS (klass)->dispose = chat_width_dispose;
+  widget_class->get_request_mode = chat_width_get_request_mode;
+  widget_class->measure = chat_width_measure;
+  widget_class->size_allocate = chat_width_size_allocate;
+  widget_class->snapshot = chat_width_snapshot;
+}
+
+static void
+chat_width_init (ChatWidth *self G_GNUC_UNUSED)
+{
+}
+
+static void
+wrap_chat_width (AdwBin *host)
+{
+  GtkWidget *child = adw_bin_get_child (host);
+  g_autoptr (GtkWidget) owned_child = g_object_ref (child);
+  adw_bin_set_child (host, NULL);
+  ChatWidth *wrapper = g_object_new (chat_width_get_type (), NULL);
+  wrapper->child = owned_child;
+  gtk_widget_set_parent (owned_child, GTK_WIDGET (wrapper));
+  adw_bin_set_child (host, GTK_WIDGET (wrapper));
+}
+
 /* Share stored values and UI names with the picker, the chip, and startup
    validation. */
 typedef struct
@@ -2774,6 +2873,10 @@ build_content (void)
   app->chip_effort =
       GTK_WIDGET (gtk_builder_get_object (builder, "chip_effort"));
 
+  wrap_chat_width (ADW_BIN (gtk_builder_get_object (builder,
+                                                    "messages_width")));
+  wrap_chat_width (ADW_BIN (gtk_builder_get_object (builder, "input_width")));
+
   gtk_image_set_pixel_size (
       GTK_IMAGE (gtk_button_get_child (GTK_BUTTON (toggle))), 15);
   g_signal_connect (toggle, "clicked", G_CALLBACK (on_toggle_sidebar), NULL);
@@ -2827,6 +2930,7 @@ build_content (void)
 static void
 build_shell (void)
 {
+  gtk_widget_set_size_request (app->window, 640, 480);
   g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
       "/cc/arthur63/gchat/shell.ui");
   app->toasts = GTK_WIDGET (gtk_builder_get_object (builder, "shell"));

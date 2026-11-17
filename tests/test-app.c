@@ -618,6 +618,10 @@ content_builder (void)
   if (!setup_ui ())
     return;
 
+  int requested_width, requested_height;
+  gtk_widget_get_size_request (app->window, &requested_width, &requested_height);
+  g_assert_cmpint (requested_width, ==, 640);
+  g_assert_cmpint (requested_height, ==, 480);
   g_assert_true (adw_overlay_split_view_get_pin_sidebar (
       ADW_OVERLAY_SPLIT_VIEW (app->split)));
   double max_width = adw_overlay_split_view_get_max_sidebar_width (
@@ -640,6 +644,150 @@ content_builder (void)
   GtkPopover *popover =
       gtk_menu_button_get_popover (GTK_MENU_BUTTON (app->model_chip));
   g_assert_true (popover == GTK_POPOVER (app->choice_popover));
+  teardown ();
+}
+
+static void
+content_width_layout (void)
+{
+  if (!setup_ui ())
+    return;
+
+  g_assert_cmpint (chat_width_for (0), ==, 0);
+  g_assert_cmpint (chat_width_for (32), ==, 32);
+  g_assert_cmpint (chat_width_for (400), ==, 372);
+  g_assert_cmpint (chat_width_for (640), ==, 576);
+  g_assert_cmpint (chat_width_for (760), ==, 678);
+  g_assert_cmpint (chat_width_for (800), ==, 704);
+  g_assert_cmpint (chat_width_for (1000), ==, 827);
+  g_assert_cmpint (chat_width_for (1200), ==, 932);
+  g_assert_cmpint (chat_width_for (2000), ==, 1532);
+  for (int width = 1; width <= 2400; width++)
+    {
+      int difference = chat_width_for (width) - chat_width_for (width - 1);
+      g_assert_cmpint (difference, >=, 0);
+      g_assert_cmpint (difference, <=, 1);
+    }
+  JsonObject *reply = json_array_get_object_element (app->chat->messages, 1);
+  json_object_set_string_member (
+      reply, "content", "Example text.\n\n```c\nint main(void) { return 0; }"
+                        "\n```\n\n| Column | Value |\n| --- | --- |\n"
+                        "| Example | `code` |\n");
+  render_history (2);
+  GtkWidget *bubble = gtk_widget_get_last_child (app->messages);
+  GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
+  GtkWidget *code = NULL;
+  GtkWidget *table = NULL;
+  for (GtkWidget *child = gtk_widget_get_first_child (body); child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      if (gtk_widget_has_css_class (child, "code-card"))
+        code = child;
+      if (gtk_widget_has_css_class (child, "table-card"))
+        table = child;
+    }
+  g_assert_nonnull (code);
+  g_assert_nonnull (table);
+  gtk_stack_set_visible_child_name (GTK_STACK (app->stack), "chat");
+  adw_overlay_split_view_set_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
+                                           FALSE);
+  show_window ();
+  const int widths[] = { 400, 639, 640, 760, 800, 1000,
+                         1199, 1200, 1201, 1600 };
+  for (guint sidebar = 0; sidebar < 2; sidebar++)
+    {
+      adw_overlay_split_view_set_show_sidebar (
+          ADW_OVERLAY_SPLIT_VIEW (app->split), sidebar != 0);
+      if (sidebar)
+        for (guint frame = 0; frame < 6; frame++)
+          wait_for_layout ();
+      for (guint i = 0; i < G_N_ELEMENTS (widths); i++)
+        {
+          gtk_window_set_default_size (GTK_WINDOW (app->window), widths[i],
+                                       800);
+          wait_for_layout ();
+          if (widths[i] < 640)
+            {
+              for (guint retry = 0;
+                   retry < 20 && gtk_widget_get_width (app->window) != 640;
+                   retry++)
+                wait_for_layout ();
+              g_assert_cmpint (gtk_widget_get_width (app->window), ==, 640);
+            }
+          int window_width = gtk_widget_get_width (app->window);
+          g_assert_cmpint (window_width, >=, 640);
+          int available = gtk_widget_get_width (app->scroller);
+          int messages = gtk_widget_get_width (app->messages);
+          int input = gtk_widget_get_width (app->input_frame);
+          g_test_message ("sidebar=%u window=%d available=%d content=%d",
+                          sidebar, widths[i], available, messages);
+          g_assert_cmpint (ABS (messages - input), <=, 2);
+          double progress = CLAMP ((available - 760) / 440.0, 0.0, 1.0);
+          double fraction = 0.85 - 0.10 * progress;
+          int expected = MIN (available - 32, (int) (available * fraction));
+          g_assert_cmpint (ABS (messages - expected), <=, 2);
+          g_assert_cmpint (ABS (gtk_widget_get_width (code) - messages), <=, 2);
+          g_assert_cmpint (ABS (gtk_widget_get_width (table) - messages), <=,
+                           2);
+          graphene_rect_t message_bounds, input_bounds;
+          g_assert_true (gtk_widget_compute_bounds (app->messages, app->window,
+                                                    &message_bounds));
+          g_assert_true (gtk_widget_compute_bounds (app->input_frame,
+                                                    app->window,
+                                                    &input_bounds));
+          g_assert_cmpfloat (fabs (message_bounds.origin.x -
+                                   input_bounds.origin.x), <=, 1);
+        }
+    }
+  teardown ();
+}
+
+static void
+minimum_window_layout (void)
+{
+  if (!setup_ui ())
+    return;
+
+  render_history (2);
+  gtk_stack_set_visible_child_name (GTK_STACK (app->stack), "chat");
+  show_window ();
+  const int sizes[][2] = { { 400, 300 }, { 639, 479 }, { 640, 480 } };
+  for (guint sidebar = 0; sidebar < 2; sidebar++)
+    {
+      adw_overlay_split_view_set_show_sidebar (
+          ADW_OVERLAY_SPLIT_VIEW (app->split), sidebar != 0);
+      for (guint frame = 0; frame < 6; frame++)
+        wait_for_layout ();
+      g_assert_cmpint (adw_overlay_split_view_get_show_sidebar (
+                           ADW_OVERLAY_SPLIT_VIEW (app->split)), ==,
+                       sidebar != 0);
+      for (guint i = 0; i < G_N_ELEMENTS (sizes); i++)
+        {
+          gtk_window_set_default_size (GTK_WINDOW (app->window), sizes[i][0],
+                                       sizes[i][1]);
+          for (guint retry = 0; retry < 20; retry++)
+            {
+              wait_for_layout ();
+              if (gtk_widget_get_width (app->window) == 640 &&
+                  gtk_widget_get_height (app->window) == 480)
+                break;
+            }
+          g_assert_cmpint (gtk_widget_get_width (app->window), ==, 640);
+          g_assert_cmpint (gtk_widget_get_height (app->window), ==, 480);
+          g_assert_cmpint (gtk_widget_get_height (app->scroller), >=, 100);
+          g_assert_cmpint (gtk_widget_get_height (app->input_frame), >=,
+                           INPUT_MIN_HEIGHT);
+          g_assert_true (gtk_widget_get_mapped (app->scroller));
+          g_assert_true (gtk_widget_get_mapped (app->input_frame));
+          graphene_rect_t bounds;
+          g_assert_true (gtk_widget_compute_bounds (app->input_frame,
+                                                    app->window, &bounds));
+          g_assert_cmpfloat (bounds.origin.x, >=, 0);
+          g_assert_cmpfloat (bounds.origin.y, >=, 0);
+          g_assert_cmpfloat (bounds.origin.x + bounds.size.width, <=, 640);
+          g_assert_cmpfloat (bounds.origin.y + bounds.size.height, <=, 480);
+        }
+    }
   teardown ();
 }
 
@@ -2624,6 +2772,8 @@ main (int    argc,
   g_test_add_func ("/app/styles-resource", styles_resource);
   g_test_add_func ("/app/styles-single-install", styles_single_install);
   g_test_add_func ("/app/theme-save-failure", theme_save_failure);
+  g_test_add_func ("/app/content-width", content_width_layout);
+  g_test_add_func ("/app/minimum-window", minimum_window_layout);
   g_test_add_func ("/app/content-builder", content_builder);
   g_test_add_func ("/app/sidebar-builder", sidebar_builder);
   g_test_add_func ("/app/language-settings", language_settings);

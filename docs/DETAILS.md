@@ -6,6 +6,12 @@ This page covers what [README](../README.md) does not.
 
 ## Feature details
 
+### Conversation layout
+
+- The message and input areas stay aligned as the window is resized.
+- The window requests a minimum size of 640 × 480 logical pixels. The platform or content may require a larger size.
+- The content uses 85% of the available width up to 760 logical pixels and 75% from 1200 logical pixels. The proportion changes smoothly in between. Both sides keep at least 16 logical pixels of margin; very narrow windows prioritize the margins.
+
 ### Streaming replies
 
 - The client reads SSE asynchronously with libsoup3 and shows text as it arrives. It joins multiple `data` lines with newlines and processes each event at the blank line.

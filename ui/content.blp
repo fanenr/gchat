@@ -35,12 +35,7 @@ Adw.ToolbarView content {
             hscrollbar-policy: never;
             vscrollbar-policy: external;
 
-            child: Adw.Clamp {
-              hexpand: true;
-              halign: fill;
-              maximum-size: 760;
-              tightening-threshold: 620;
-
+            child: Adw.Bin messages_width {
               child: Gtk.Box messages {
                 orientation: vertical;
                 spacing: 26;
@@ -77,12 +72,7 @@ Adw.ToolbarView content {
       }
     }
 
-    Adw.Clamp {
-      hexpand: true;
-      halign: fill;
-      maximum-size: 760;
-      tightening-threshold: 620;
-
+    Adw.Bin input_width {
       child: Gtk.Box {
         orientation: vertical;
         margin-top: 8;
