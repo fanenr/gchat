@@ -59,10 +59,11 @@ static void
 add_message (const gchar *role,
              const gchar *content)
 {
-  JsonObject *msg = json_object_new ();
+  g_autoptr (JsonObject) msg = json_object_new ();
   json_object_set_string_member (msg, "role", role);
   json_object_set_string_member (msg, "content", content);
-  json_array_add_object_element (app->chat->messages, msg);
+  json_array_add_object_element (app->chat->messages,
+                                 g_steal_pointer (&msg));
 }
 
 static void
@@ -104,11 +105,10 @@ teardown (void)
   app = NULL;
   chat_stick = (Stick){ 0 };
   input_stick = (Stick){ 0 };
-  gchar *path = store_session_path (), *bak = g_strconcat (path, ".bak", NULL);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_unlink (path);
   g_unlink (bak);
-  g_free (path);
-  g_free (bak);
 }
 
 static gboolean
@@ -154,7 +154,8 @@ layout_timeout (gpointer data)
 static void
 wait_for_layout (void)
 {
-  FrameWait wait = { .loop = g_main_loop_new (NULL, FALSE), .frames = 3 };
+  g_autoptr (GMainLoop) loop = g_main_loop_new (NULL, FALSE);
+  FrameWait wait = { .loop = loop, .frames = 3 };
   guint tick =
       gtk_widget_add_tick_callback (app->window, layout_frame, &wait, NULL);
   guint timeout = g_timeout_add (2000, layout_timeout, wait.loop);
@@ -163,7 +164,6 @@ wait_for_layout (void)
     g_source_remove (timeout);
   if (wait.frames)
     gtk_widget_remove_tick_callback (app->window, tick);
-  g_main_loop_unref (wait.loop);
   g_assert_cmpuint (wait.frames, ==, 0);
 }
 
@@ -184,13 +184,13 @@ assert_user_bubble_layout (const gchar *text)
   GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
   GtkWidget *view = gtk_widget_get_first_child (body);
   g_assert_true (GTK_IS_TEXT_VIEW (view));
-  PangoLayout *layout = gtk_widget_create_pango_layout (view, text);
+  g_autoptr (PangoLayout) layout =
+      gtk_widget_create_pango_layout (view, text);
   int text_width, requested_width;
   pango_layout_get_pixel_size (layout, &text_width, NULL);
   gtk_widget_get_size_request (body, &requested_width, NULL);
   g_assert_cmpint (requested_width, ==, MIN (text_width + 2, 520));
   int expected_lines = pango_layout_get_line_count (layout);
-  g_object_unref (layout);
 
   g_assert_true (gtk_widget_get_realized (view));
   g_assert_true (gtk_widget_get_mapped (view));
@@ -292,10 +292,10 @@ code_block_layout (gconstpointer data)
   };
   for (guint i = 0; i < G_N_ELEMENTS (codes); i++)
     {
-      gchar *markdown = g_strdup_printf ("```c\n%s\n```\n", codes[i]);
+      g_autofree gchar *markdown =
+          g_strdup_printf ("```c\n%s\n```\n", codes[i]);
       JsonObject *msg = json_array_get_object_element (app->chat->messages, 1);
       json_object_set_string_member (msg, "content", markdown);
-      g_free (markdown);
       render_chat ();
       GtkWidget *bubble = gtk_widget_get_last_child (app->messages);
       GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
@@ -416,7 +416,8 @@ action_visibility (void)
 static void
 sse_parser (void)
 {
-  gchar *content = NULL, *reasoning = NULL;
+  g_autofree gchar *content = NULL;
+  g_autofree gchar *reasoning = NULL;
 
   g_assert_false (sse_parse ("data: [DONE]", &content, &reasoning));
   g_assert_false (sse_parse (": keep-alive", &content, &reasoning));
@@ -428,7 +429,7 @@ sse_parser (void)
                  &content, &reasoning));
   g_assert_cmpstr (content, ==, "hi");
   g_assert_null (reasoning);
-  g_free (content);
+  g_clear_pointer (&content, g_free);
 
   g_assert_true (sse_parse ("data: "
                             "{\"choices\":[{\"delta\":{\"reasoning_content\":"
@@ -436,8 +437,8 @@ sse_parser (void)
                             &content, &reasoning));
   g_assert_cmpstr (content, ==, "a");
   g_assert_cmpstr (reasoning, ==, "think");
-  g_free (content);
-  g_free (reasoning);
+  g_clear_pointer (&content, g_free);
+  g_clear_pointer (&reasoning, g_free);
 
   static const gchar *invalid[] = {
     "data: null",
@@ -459,7 +460,7 @@ sse_parser (void)
       sse_parse ("data:{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\r",
                  &content, &reasoning));
   g_assert_cmpstr (content, ==, "hi");
-  g_free (content);
+  g_clear_pointer (&content, g_free);
   g_assert_true (
       sse_parse ("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}",
                  &content, &reasoning));
@@ -495,18 +496,16 @@ choice_selection (void)
                    MODELS[1].label);
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->chip_effort)), ==,
                    _ (EFFORTS[0].label));
-  gchar *path = store_session_path (), *current = NULL, *model = NULL,
-        *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_cmpstr (model, ==, MODELS[1].value);
   g_assert_cmpstr (effort, ==, EFFORTS[0].value);
-  g_ptr_array_unref (loaded);
-  g_free (path);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
   teardown ();
 }
 
@@ -521,13 +520,11 @@ api_key_prompt_path (void)
   AdwDialog *dialog = adw_application_window_get_visible_dialog (
       ADW_APPLICATION_WINDOW (app->window));
   g_assert_true (ADW_IS_ALERT_DIALOG (dialog));
-  gchar *path = store_config_path ();
-  gchar *body =
+  g_autofree gchar *path = store_config_path ();
+  g_autofree gchar *body =
       g_strdup_printf (_ ("Your key is saved in %s for future use."), path);
   g_assert_cmpstr (adw_alert_dialog_get_body (ADW_ALERT_DIALOG (dialog)), ==,
                    body);
-  g_free (body);
-  g_free (path);
   teardown ();
 }
 
@@ -535,7 +532,7 @@ static void
 api_key_priority (gconstpointer data)
 {
   const gchar *env = data;
-  gchar *previous_env = g_strdup (g_getenv ("DEEPSEEK_API_KEY"));
+  g_autofree gchar *previous_env = g_strdup (g_getenv ("DEEPSEEK_API_KEY"));
   if (env != NULL)
     g_setenv ("DEEPSEEK_API_KEY", env, TRUE);
   else
@@ -546,13 +543,14 @@ api_key_priority (gconstpointer data)
   g_assert_cmpstr (app->api_key, ==, "old-key");
   g_assert_true (save_api_key ("local-key"));
   g_assert_cmpstr (app->api_key, ==, env != NULL && *env ? env : "local-key");
-  gchar *saved = config_get ("api_key");
+  g_autofree gchar *saved = config_get ("api_key");
   g_assert_cmpstr (saved, ==, "local-key");
-  g_free (saved);
+  g_clear_pointer (&saved, g_free);
 
-  gchar *path = g_build_filename (test_dir, "gchat", "config.json", NULL);
-  gchar *tmp = g_strconcat (path, ".tmp", NULL),
-        *bak = g_strconcat (path, ".bak", NULL);
+  g_autofree gchar *path =
+      g_build_filename (test_dir, "gchat", "config.json", NULL);
+  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
   g_assert_false (save_api_key ("unsaved-key"));
@@ -560,19 +558,14 @@ api_key_priority (gconstpointer data)
   g_assert_cmpstr (app->api_key, ==, env != NULL && *env ? env : "local-key");
   saved = config_get ("api_key");
   g_assert_cmpstr (saved, ==, "local-key");
-  g_free (saved);
   g_assert_cmpint (g_rmdir (tmp), ==, 0);
   g_unlink (path);
   g_unlink (bak);
-  g_free (path);
-  g_free (tmp);
-  g_free (bak);
   teardown ();
   if (previous_env != NULL)
     g_setenv ("DEEPSEEK_API_KEY", previous_env, TRUE);
   else
     g_unsetenv ("DEEPSEEK_API_KEY");
-  g_free (previous_env);
 }
 
 static GtkWidget *
@@ -608,10 +601,9 @@ sidebar_builder (void)
                    _ ("New chat (Ctrl+N)"));
   g_assert_cmpstr (gtk_widget_get_tooltip_text (app->search), ==,
                    _ ("Search conversations (Ctrl/Cmd+F)"));
-  gchar *placeholder = NULL;
+  g_autofree gchar *placeholder = NULL;
   g_object_get (app->search, "placeholder-text", &placeholder, NULL);
   g_assert_cmpstr (placeholder, ==, _ ("Search conversations"));
-  g_free (placeholder);
   g_assert_true (GTK_IS_LIST_BOX (app->sidebar_list));
   teardown ();
 }
@@ -684,12 +676,10 @@ language_settings (void)
   const gchar *env_key = g_getenv ("DEEPSEEK_API_KEY");
   if (env_key == NULL || !*env_key)
     {
-      gchar *path = store_config_path ();
-      gchar *source =
+      g_autofree gchar *path = store_config_path ();
+      g_autofree gchar *source =
           g_strdup_printf (_ ("Local configuration file: %s"), path);
       g_assert_nonnull (find_label (GTK_WIDGET (dialog), source));
-      g_free (source);
-      g_free (path);
     }
   GtkWidget *title = find_label (GTK_WIDGET (dialog), _ ("Language"));
   g_assert_nonnull (title);
@@ -707,11 +697,12 @@ language_settings (void)
   g_assert_cmpstr (adw_action_row_get_subtitle (ADW_ACTION_ROW (row)), ==,
                    _ ("Restart the app to apply language changes."));
 
-  gchar *active = g_strdup (_ ("Settings"));
+  g_autofree gchar *active = g_strdup (_ ("Settings"));
   guint selected = g_strcmp0 (g_getenv ("LANGUAGE"), "zh_CN") == 0 ? 1 : 2;
-  gchar *path = g_build_filename (test_dir, "gchat", "config.json", NULL);
-  gchar *tmp = g_strconcat (path, ".tmp", NULL),
-        *bak = g_strconcat (path, ".bak", NULL);
+  g_autofree gchar *path =
+      g_build_filename (test_dir, "gchat", "config.json", NULL);
+  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
   adw_combo_row_set_selected (row, selected);
@@ -720,8 +711,9 @@ language_settings (void)
   g_assert_null (config_get ("language"));
   g_assert_cmpint (g_rmdir (tmp), ==, 0);
   adw_combo_row_set_selected (row, selected);
-  gchar *language = config_get ("language"), *key = config_get ("api_key"),
-        *theme = config_get ("theme");
+  g_autofree gchar *language = config_get ("language");
+  g_autofree gchar *key = config_get ("api_key");
+  g_autofree gchar *theme = config_get ("theme");
   g_assert_cmpstr (language, ==, LANGUAGES[selected].value);
   g_assert_cmpstr (key, ==, "test-key");
   g_assert_cmpstr (theme, ==, "dark");
@@ -733,13 +725,10 @@ language_settings (void)
   g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 2);
   GtkTextIter start, end;
   gtk_text_buffer_get_bounds (buffer, &start, &end);
-  gchar *text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  g_autofree gchar *text =
+      gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
   g_assert_cmpstr (text, ==, draft);
-  g_free (text);
-  g_free (language);
-  g_free (key);
-  g_free (theme);
-  g_free (active);
+  g_clear_pointer (&language, g_free);
 
   g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
@@ -748,7 +737,6 @@ language_settings (void)
   g_assert_cmpuint (adw_combo_row_get_selected (row), ==, selected);
   language = config_get ("language");
   g_assert_cmpstr (language, ==, LANGUAGES[selected].value);
-  g_free (language);
   g_assert_cmpint (g_rmdir (tmp), ==, 0);
 
   adw_dialog_force_close (dialog);
@@ -762,9 +750,6 @@ language_settings (void)
   g_assert_cmpuint (adw_combo_row_get_selected (row), ==, selected);
   g_unlink (path);
   g_unlink (bak);
-  g_free (path);
-  g_free (tmp);
-  g_free (bak);
   teardown ();
 }
 
@@ -779,12 +764,11 @@ message_whitespace (void)
   g_assert_null (input_message ());
   const gchar *code = "    indented code  \n\n";
   gtk_text_buffer_set_text (buffer, code, -1);
-  gchar *text = input_message ();
+  g_autofree gchar *text = input_message ();
   g_assert_cmpstr (text, ==, code);
   commit_message (text);
   JsonObject *msg = json_array_get_object_element (app->chat->messages, 2);
   g_assert_cmpstr (json_object_get_string_member (msg, "content"), ==, code);
-  g_free (text);
   teardown ();
 }
 
@@ -798,7 +782,7 @@ literal_ui_text (void)
   app_toast (text);
   wait_for_layout ();
   g_assert_nonnull (find_label (app->toasts, text));
-  GtkBuilder *builder = gtk_builder_new_from_resource (
+  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
       "/cc/arthur63/gchat/settings.ui");
   AdwActionRow *row = ADW_ACTION_ROW (
       gtk_builder_get_object (builder, "session_path"));
@@ -806,7 +790,7 @@ literal_ui_text (void)
   g_assert_false (
       adw_preferences_row_get_use_markup (ADW_PREFERENCES_ROW (row)));
   g_assert_nonnull (find_label (GTK_WIDGET (row), "/tmp/<private>&data"));
-  g_object_unref (builder);
+  g_clear_object (&builder);
   teardown ();
 }
 
@@ -816,9 +800,9 @@ stale_retry (void)
   if (!setup_ui ())
     return;
   json_array_remove_element (app->chat->messages, 1);
-  GVariant *target = g_variant_ref_sink (g_variant_new_string ("another-chat"));
+  g_autoptr (GVariant) target =
+      g_variant_ref_sink (g_variant_new_string ("another-chat"));
   on_retry_action (NULL, target, NULL);
-  g_variant_unref (target);
   g_assert_null (adw_application_window_get_visible_dialog (
       ADW_APPLICATION_WINDOW (app->window)));
   g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 1);
@@ -842,9 +826,10 @@ theme_save_failure (void)
   AdwComboRow *row =
       ADW_COMBO_ROW (gtk_widget_get_ancestor (title, ADW_TYPE_COMBO_ROW));
   g_assert_cmpuint (adw_combo_row_get_selected (row), ==, 2);
-  gchar *path = g_build_filename (test_dir, "gchat", "config.json", NULL);
-  gchar *tmp = g_strconcat (path, ".tmp", NULL),
-        *bak = g_strconcat (path, ".bak", NULL);
+  g_autofree gchar *path =
+      g_build_filename (test_dir, "gchat", "config.json", NULL);
+  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
   adw_combo_row_set_selected (row, 1);
@@ -855,18 +840,14 @@ theme_save_failure (void)
       ADW_COLOR_SCHEME_FORCE_DARK);
   g_assert_cmpint (g_rmdir (tmp), ==, 0);
   adw_combo_row_set_selected (row, 1);
-  gchar *saved = config_get ("theme");
+  g_autofree gchar *saved = config_get ("theme");
   g_assert_cmpstr (saved, ==, "light");
-  g_free (saved);
   g_assert_cmpint (
       adw_style_manager_get_color_scheme (adw_style_manager_get_default ()), ==,
       ADW_COLOR_SCHEME_FORCE_LIGHT);
   apply_theme ("system");
   g_unlink (path);
   g_unlink (bak);
-  g_free (path);
-  g_free (tmp);
-  g_free (bak);
   teardown ();
 }
 
@@ -890,7 +871,7 @@ corrupt_preference (gconstpointer data)
       ADW_COMBO_ROW (gtk_widget_get_ancestor (title, ADW_TYPE_COMBO_ROW));
   guint previous = adw_combo_row_get_selected (row);
   g_assert_cmpuint (previous, ==, theme ? 2 : 1);
-  gchar *path = store_config_path ();
+  g_autofree gchar *path = store_config_path ();
   g_assert_true (g_file_set_contents (path, "{ broken", -1, NULL));
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
   adw_combo_row_set_selected (row, theme ? 1 : 2);
@@ -899,12 +880,10 @@ corrupt_preference (gconstpointer data)
   g_assert_cmpint (
       adw_style_manager_get_color_scheme (adw_style_manager_get_default ()), ==,
       ADW_COLOR_SCHEME_FORCE_DARK);
-  gchar *bytes = NULL;
+  g_autofree gchar *bytes = NULL;
   g_assert_true (g_file_get_contents (path, &bytes, NULL, NULL));
   g_assert_cmpstr (bytes, ==, "{ broken");
-  g_free (bytes);
   g_unlink (path);
-  g_free (path);
   apply_theme ("system");
   teardown ();
 }
@@ -912,14 +891,13 @@ corrupt_preference (gconstpointer data)
 static void
 styles_resource (void)
 {
-  GError *error = NULL;
-  GBytes *bytes = g_resources_lookup_data ("/cc/arthur63/gchat/style.css",
-                                           G_RESOURCE_LOOKUP_FLAGS_NONE,
-                                           &error);
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GBytes) bytes =
+      g_resources_lookup_data ("/cc/arthur63/gchat/style.css",
+                               G_RESOURCE_LOOKUP_FLAGS_NONE, &error);
   g_assert_no_error (error);
   g_assert_nonnull (bytes);
   g_assert_cmpuint (g_bytes_get_size (bytes), >, 0);
-  g_bytes_unref (bytes);
 }
 
 static void
@@ -944,27 +922,23 @@ styles_single_install (void)
 static void
 corrupt_startup (void)
 {
-  gchar *path = store_session_path ();
-  gchar *dir = g_path_get_dirname (path);
-  gchar *bak = g_strconcat (path, ".bak", NULL);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
   g_assert_true (g_file_set_contents (path, "{}", -1, NULL));
   g_assert_true (g_file_set_contents (bak, "{ broken", -1, NULL));
   gchar *argv[] = { "gchat", NULL };
   g_assert_cmpint (gchat_main (1, argv), ==, 1);
   g_assert_null (app);
-  gchar *primary = NULL, *backup = NULL;
+  g_autofree gchar *primary = NULL;
+  g_autofree gchar *backup = NULL;
   g_assert_true (g_file_get_contents (path, &primary, NULL, NULL));
   g_assert_true (g_file_get_contents (bak, &backup, NULL, NULL));
   g_assert_cmpstr (primary, ==, "{}");
   g_assert_cmpstr (backup, ==, "{ broken");
   g_unlink (path);
   g_unlink (bak);
-  g_free (primary);
-  g_free (backup);
-  g_free (path);
-  g_free (dir);
-  g_free (bak);
 }
 
 static void
@@ -997,9 +971,9 @@ assert_input (const gchar *expected)
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
   GtkTextIter start, end;
   gtk_text_buffer_get_bounds (buffer, &start, &end);
-  gchar *text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  g_autofree gchar *text =
+      gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
   g_assert_cmpstr (text, ==, expected);
-  g_free (text);
 }
 
 static void
@@ -1068,20 +1042,18 @@ fork_message (gconstpointer data)
       g_assert_cmpstr (json_object_get_string_member (reply, "content"), ==,
                        "answer one");
     }
-  gchar *path = store_session_path (), *current = NULL, *model = NULL,
-        *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_cmpstr (current, ==, fork->id);
   Chat *saved = g_ptr_array_index (loaded, 1);
   g_assert_cmpstr (saved->draft, ==, fork->draft);
   g_assert_cmpuint (json_array_get_length (saved->messages), ==, count);
-  g_ptr_array_unref (loaded);
-  g_free (path);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
   teardown ();
 }
 
@@ -1129,9 +1101,10 @@ sidebar_menu (void)
   if (!setup_ui ())
     return;
   Chat *source = app->chat;
-  Chat *other = chat_new ("other", "Other");
+  g_autoptr (Chat) owned_other = chat_new ("other", "Other");
+  Chat *other = owned_other;
   other->created = source->created + 1000;
-  g_ptr_array_add (app->chats, other);
+  g_ptr_array_add (app->chats, g_steal_pointer (&owned_other));
   g_free (source->draft);
   source->draft = g_strdup ("draft");
   source->edit_from = 0;
@@ -1178,19 +1151,17 @@ sidebar_menu (void)
   g_assert_cmpstr (json_object_get_string_member (message, "content"), ==,
                    "question one");
 
-  gchar *path = store_session_path (), *current = NULL, *model = NULL,
-        *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_true (((Chat *) g_ptr_array_index (loaded, 0))->pinned);
   g_assert_false (((Chat *) g_ptr_array_index (loaded, 2))->pinned);
   g_assert_cmpstr (current, ==, copy->id);
-  g_ptr_array_unref (loaded);
-  g_free (path);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
 
   on_row_pin (NULL, source);
   g_assert_false (source->pinned);
@@ -1259,8 +1230,10 @@ sidebar_layout (gconstpointer data)
   Chat *first = app->chat;
   g_free (first->title);
   first->title = g_strdup ("侧栏会话标题");
-  Chat *second = chat_new ("sidebar-second", "Other conversation");
-  g_ptr_array_add (app->chats, second);
+  g_autoptr (Chat) owned_second =
+      chat_new ("sidebar-second", "Other conversation");
+  Chat *second = owned_second;
+  g_ptr_array_add (app->chats, g_steal_pointer (&owned_second));
   const gchar *queries[] = { "", "会话标题", "answer one" };
   gtk_editable_set_text (GTK_EDITABLE (app->search), queries[mode]);
   rebuild_sidebar ();
@@ -1278,8 +1251,9 @@ draft_lifecycle (void)
   if (!setup_ui ())
     return;
   Chat *first = app->chat;
-  Chat *second = chat_new ("second", "第二个会话");
-  g_ptr_array_add (app->chats, second);
+  g_autoptr (Chat) owned_second = chat_new ("second", "第二个会话");
+  Chat *second = owned_second;
+  g_ptr_array_add (app->chats, g_steal_pointer (&owned_second));
   rebuild_sidebar ();
   render_chat ();
   show_window ();
@@ -1302,10 +1276,13 @@ draft_lifecycle (void)
   g_assert_true (gtk_widget_get_mapped (app->edit_bar));
   g_assert_cmpuint (first->edit_from, ==, 0);
   g_assert_cmpuint (json_array_get_length (first->messages), ==, 2);
-  gchar *path = store_session_path (), *current = NULL, *model = NULL,
-        *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *restored = g_ptr_array_index (loaded, 0);
   g_assert_cmpuint (restored->edit_from, ==, 0);
@@ -1313,11 +1290,6 @@ draft_lifecycle (void)
   g_assert_cmpstr (restored->draft, ==, first->draft);
   g_assert_cmpstr (((Chat *) g_ptr_array_index (loaded, 1))->draft, ==,
                    "另一份草稿");
-  g_ptr_array_unref (loaded);
-  g_free (path);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
   on_cancel_edit (NULL, NULL);
   assert_input ("普通草稿\n  保留空白 ");
   g_assert_cmpuint (json_array_get_length (first->messages), ==, 2);
@@ -1346,8 +1318,9 @@ delete_confirmation (gconstpointer data)
   if (!setup_ui ())
     return;
   guint mode = GPOINTER_TO_UINT (data);
-  Chat *target = chat_new ("delete-target", "待删除会话");
-  g_ptr_array_add (app->chats, target);
+  g_autoptr (Chat) owned_target = chat_new ("delete-target", "待删除会话");
+  Chat *target = owned_target;
+  g_ptr_array_add (app->chats, g_steal_pointer (&owned_target));
   if (mode == 4)
     app->chat = target;
   rebuild_sidebar ();
@@ -1358,7 +1331,7 @@ delete_confirmation (gconstpointer data)
       ADW_ALERT_DIALOG (adw_application_window_get_visible_dialog (
           ADW_APPLICATION_WINDOW (app->window)));
   g_assert_nonnull (dialog);
-  g_object_ref (dialog);
+  g_autoptr (AdwAlertDialog) dialog_ref = g_object_ref (dialog);
   g_assert_cmpstr (adw_alert_dialog_get_default_response (dialog), ==,
                    "cancel");
   g_assert_cmpstr (adw_alert_dialog_get_close_response (dialog), ==, "cancel");
@@ -1373,7 +1346,7 @@ delete_confirmation (gconstpointer data)
   g_assert_cmpstr (app->chat->id, ==, "42");
   app->busy = FALSE;
   adw_dialog_force_close (ADW_DIALOG (dialog));
-  g_object_unref (dialog);
+  g_clear_object (&dialog_ref);
   wait_for_layout ();
   teardown ();
 }
@@ -1396,9 +1369,9 @@ draft_startup (gconstpointer data)
       g_free (app->chat->edit_text);
       app->chat->edit_text = g_strdup ("恢复的编辑草稿");
     }
-  GtkApplication *application =
+  g_autoptr (GtkApplication) application =
       gtk_application_new ("cc.arthur63.gchat.Tests", G_APPLICATION_NON_UNIQUE);
-  GError *error = NULL;
+  g_autoptr (GError) error = NULL;
   g_assert_true (
       g_application_register (G_APPLICATION (application), NULL, &error));
   g_assert_no_error (error);
@@ -1431,7 +1404,6 @@ draft_startup (gconstpointer data)
   g_assert_true (app->cancel == cancel);
   assert_input ("重复激活时保留的输入");
   teardown ();
-  g_object_unref (application);
 }
 
 static void
@@ -1443,23 +1415,20 @@ draft_autosave (void)
   show_window ();
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
   gtk_text_buffer_set_text (buffer, "自动保存的草稿", -1);
-  GMainLoop *loop = g_main_loop_new (NULL, FALSE);
+  g_autoptr (GMainLoop) loop = g_main_loop_new (NULL, FALSE);
   g_timeout_add (900, layout_timeout, loop);
   g_main_loop_run (loop);
-  g_main_loop_unref (loop);
   g_assert_cmpuint (app->draft_save_source, ==, 0);
-  gchar *path = store_session_path (), *current = NULL, *model = NULL,
-        *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_cmpstr (((Chat *) g_ptr_array_index (loaded, 0))->draft, ==,
                    "自动保存的草稿");
-  g_ptr_array_unref (loaded);
-  g_free (path);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
   gtk_text_buffer_set_text (buffer, "关窗前的输入", -1);
   g_assert_cmpuint (app->draft_save_source, >, 0);
   on_close (NULL, NULL);
@@ -1473,9 +1442,10 @@ history_search (void)
   if (!setup_ui ())
     return;
   Chat *first = app->chat;
-  Chat *second = chat_new ("search-second", "SQLite notes");
-  g_ptr_array_add (app->chats, second);
-  GString *long_text = g_string_new (NULL);
+  g_autoptr (Chat) owned_second = chat_new ("search-second", "SQLite notes");
+  Chat *second = owned_second;
+  g_ptr_array_add (app->chats, g_steal_pointer (&owned_second));
+  g_autoptr (GString) long_text = g_string_new (NULL);
   for (guint i = 0; i < 200; i++)
     g_string_append (long_text, "很长的前文 ");
   g_string_append (long_text, "Needle [a.*] 中文\n后文");
@@ -1527,7 +1497,6 @@ history_search (void)
   g_assert_true (app->chat == second);
   wait_for_layout ();
   g_assert_false (gtk_widget_get_mapped (empty));
-  g_string_free (long_text, TRUE);
   teardown ();
 }
 
@@ -1539,16 +1508,17 @@ focus_inside (GtkWidget *widget)
          (focus == widget || gtk_widget_is_ancestor (focus, widget));
 }
 
+/* Return a new strong reference to the IM context; the caller releases it. */
 static GtkIMContext *
 search_context (GtkWidget *search)
 {
   GtkWidget *text =
       GTK_WIDGET (gtk_editable_get_delegate (GTK_EDITABLE (search)));
-  GListModel *controllers = gtk_widget_observe_controllers (text);
-  GtkIMContext *context = NULL;
+  g_autoptr (GListModel) controllers = gtk_widget_observe_controllers (text);
+  g_autoptr (GtkIMContext) context = NULL;
   for (guint i = 0; i < g_list_model_get_n_items (controllers); i++)
     {
-      GObject *controller = g_list_model_get_item (controllers, i);
+      g_autoptr (GObject) controller = g_list_model_get_item (controllers, i);
       if (GTK_IS_EVENT_CONTROLLER_KEY (controller))
         {
           GtkIMContext *candidate = gtk_event_controller_key_get_im_context (
@@ -1556,13 +1526,11 @@ search_context (GtkWidget *search)
           if (candidate != NULL)
             context = g_object_ref (candidate);
         }
-      g_object_unref (controller);
       if (context != NULL)
         break;
     }
-  g_object_unref (controllers);
   g_assert_nonnull (context);
-  return context;
+  return g_steal_pointer (&context);
 }
 
 static void
@@ -1585,12 +1553,11 @@ search_ime_commit (gconstpointer data)
   app->chat->title = g_strdup (expected[mode]);
   rebuild_sidebar ();
   render_chat ();
-  GtkIMContext *context = search_context (app->search);
+  g_autoptr (GtkIMContext) context = search_context (app->search);
   gtk_im_multicontext_set_context_id (GTK_IM_MULTICONTEXT (context),
                                       "gchat-test-ime");
-  gchar *preedit = NULL;
+  g_autofree gchar *preedit = NULL;
   gtk_im_context_get_preedit_string (context, &preedit, NULL, NULL);
-  g_free (preedit);
   g_assert_nonnull (test_context);
   show_window ();
   gtk_widget_grab_focus (app->search);
@@ -1604,10 +1571,9 @@ search_ime_commit (gconstpointer data)
   g_signal_emit_by_name (context, "preedit-changed");
   wait_for_layout ();
   g_assert_nonnull (g_object_get_data (G_OBJECT (context), "search-preedit"));
-  GtkIMContext *other = gtk_im_context_simple_new ();
+  g_autoptr (GtkIMContext) other = gtk_im_context_simple_new ();
   g_signal_emit_by_name (other, "commit", "unrelated");
   g_assert_nonnull (g_object_get_data (G_OBJECT (context), "search-preedit"));
-  g_object_unref (other);
   guint notifications = 0;
   gulong handler = g_signal_connect (
       context, "preedit-changed", G_CALLBACK (count_preedit), &notifications);
@@ -1648,10 +1614,11 @@ search_ime_commit (gconstpointer data)
   g_signal_emit_by_name (context, "commit", "A");
   g_assert_cmpuint (notifications, ==, 0);
   g_signal_handler_disconnect (context, handler);
-  g_object_add_weak_pointer (G_OBJECT (context), (gpointer *) &context);
-  g_object_unref (context);
+  GtkIMContext *weak_context = context;
+  g_object_add_weak_pointer (G_OBJECT (context), (gpointer *) &weak_context);
+  g_clear_object (&context);
   teardown ();
-  g_assert_null (context);
+  g_assert_null (weak_context);
   test_context = NULL;
 }
 
@@ -1674,9 +1641,8 @@ search_ime_lifetime (void)
       contexts[i] = search_context (searches[i]);
       gtk_im_multicontext_set_context_id (GTK_IM_MULTICONTEXT (contexts[i]),
                                           "gchat-test-ime");
-      gchar *preedit = NULL;
+      g_autofree gchar *preedit = NULL;
       gtk_im_context_get_preedit_string (contexts[i], &preedit, NULL, NULL);
-      g_free (preedit);
       modules[i] = test_context;
       modules[i]->preedit = "nihao";
       modules[i]->cursor = 5;
@@ -1715,9 +1681,9 @@ keyboard_actions (void)
 {
   if (!setup_ui ())
     return;
-  GtkApplication *application =
+  g_autoptr (GtkApplication) application =
       gtk_application_new ("cc.arthur63.gchat.Tests", G_APPLICATION_NON_UNIQUE);
-  GError *error = NULL;
+  g_autoptr (GError) error = NULL;
   g_assert_true (
       g_application_register (G_APPLICATION (application), NULL, &error));
   g_assert_no_error (error);
@@ -1731,10 +1697,10 @@ keyboard_actions (void)
   const gchar *keys[] = { "n", "l", "f", "comma", "period" };
   for (guint i = 0; i < G_N_ELEMENTS (actions); i++)
     {
-      gchar *name = g_strconcat ("win.", actions[i], NULL);
-      gchar **accels =
+      g_autofree gchar *name = g_strconcat ("win.", actions[i], NULL);
+      g_auto (GStrv) accels =
           gtk_application_get_accels_for_action (application, name);
-      gchar *primary = g_strconcat ("<Primary>", keys[i], NULL);
+      g_autofree gchar *primary = g_strconcat ("<Primary>", keys[i], NULL);
       guint expected_key;
       GdkModifierType expected_mods;
       g_assert_true (
@@ -1748,9 +1714,6 @@ keyboard_actions (void)
           found |= key == expected_key && mods == expected_mods;
         }
       g_assert_true (found);
-      g_strfreev (accels);
-      g_free (primary);
-      g_free (name);
     }
   adw_overlay_split_view_set_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
                                            FALSE);
@@ -1791,7 +1754,6 @@ keyboard_actions (void)
   adw_dialog_force_close (dialog);
   wait_for_layout ();
   teardown ();
-  g_object_unref (application);
 }
 
 static void
@@ -1803,8 +1765,8 @@ payload_filters_reasoning (void)
   json_object_set_string_member (reason, "reasoning", "仅推理");
   add_message ("user", "next");
   gsize len;
-  gchar *body = request_body (4, &len);
-  JsonParser *parser = json_parser_new ();
+  g_autofree gchar *body = request_body (4, &len);
+  g_autoptr (JsonParser) parser = json_parser_new ();
   g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
   JsonObject *root = json_node_get_object (json_parser_get_root (parser));
   JsonArray *messages = json_object_get_array_member (root, "messages");
@@ -1814,8 +1776,6 @@ payload_filters_reasoning (void)
                    ==, "next");
   g_assert_false (json_object_has_member (
       json_array_get_object_element (messages, 1), "reasoning"));
-  g_object_unref (parser);
-  g_free (body);
   teardown ();
 }
 
@@ -1830,20 +1790,18 @@ assert_reasoning_saved (void)
   g_assert_cmpfloat (json_object_get_double_member (msg, "duration"), >=, 1);
   g_assert_false (app->busy);
 
-  gchar *path = store_session_path (), *current = NULL, *model = NULL,
-        *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *chats = store_load (path, &current, &model, &effort, &error);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) chats =
+      store_load (path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *chat = g_ptr_array_index (chats, 0);
   msg = json_array_get_object_element (chat->messages, 2);
   g_assert_cmpstr (json_object_get_string_member (msg, "reasoning"), ==,
                    "已收到的推理");
-  g_ptr_array_unref (chats);
-  g_free (path);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
 }
 
 static void
@@ -1857,10 +1815,13 @@ stream_snapshot (void)
   g_assert_true (app->busy);
   g_assert_false (g_cancellable_is_cancelled (app->cancel));
   g_assert_cmpstr (app->answer->str, ==, "partial answer");
-  gchar *path = store_session_path (), *current = NULL, *model = NULL,
-        *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *chat = g_ptr_array_index (loaded, 0);
   JsonObject *reply = json_array_get_object_element (chat->messages, 2);
@@ -1868,11 +1829,6 @@ stream_snapshot (void)
                    "partial answer");
   g_assert_cmpstr (json_object_get_string_member (reply, "reasoning"), ==,
                    "已收到的推理");
-  g_ptr_array_unref (loaded);
-  g_free (path);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
   end_stream ();
   teardown ();
 }
@@ -1890,13 +1846,11 @@ quit_test_application (gpointer data)
     }
   else if (GPOINTER_TO_INT (data) == 2)
     {
-      gchar *path = store_session_path (), *dir = g_path_get_dirname (path);
-      gchar *tmp = g_strconcat (path, ".tmp", NULL);
+      g_autofree gchar *path = store_session_path ();
+      g_autofree gchar *dir = g_path_get_dirname (path);
+      g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
       g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
       g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
-      g_free (tmp);
-      g_free (dir);
-      g_free (path);
     }
   g_application_quit (
       G_APPLICATION (gtk_window_get_application (GTK_WINDOW (app->window))));
@@ -1919,7 +1873,7 @@ shutdown_snapshot (gconstpointer data)
     }
   setup ();
   app->api_key = g_strdup ("test-key-not-sent");
-  AdwApplication *gtk_app = adw_application_new (
+  g_autoptr (AdwApplication) gtk_app = adw_application_new (
       "cc.arthur63.gchat.Tests.Shutdown", G_APPLICATION_NON_UNIQUE);
   g_signal_connect (gtk_app, "activate", G_CALLBACK (activate), NULL);
   g_signal_connect (gtk_app, "shutdown", G_CALLBACK (on_shutdown), NULL);
@@ -1931,21 +1885,23 @@ shutdown_snapshot (gconstpointer data)
   g_assert_cmpuint (app->draft_save_source, ==, 0);
   g_assert_cmpuint (fit_source, ==, 0);
   g_assert_cmpuint (sync_tick, ==, 0);
-  gchar *path = store_session_path ();
+  g_autofree gchar *path = store_session_path ();
   if (GPOINTER_TO_INT (data) == 2)
     {
       g_test_assert_expected_messages ();
       g_assert_false (app->closing);
-      gchar *tmp = g_strconcat (path, ".tmp", NULL);
+      g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
       g_assert_cmpint (g_rmdir (tmp), ==, 0);
-      g_free (tmp);
     }
   else
     {
       g_assert_true (app->closing);
-      gchar *current = NULL, *model = NULL, *effort = NULL;
-      GError *error = NULL;
-      GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+      g_autofree gchar *current = NULL;
+      g_autofree gchar *model = NULL;
+      g_autofree gchar *effort = NULL;
+      g_autoptr (GError) error = NULL;
+      g_autoptr (GPtrArray) loaded =
+          store_load (path, &current, &model, &effort, &error);
       g_assert_no_error (error);
       Chat *chat = g_ptr_array_index (loaded, 0);
       g_assert_cmpstr (chat->draft, ==, "退出前的草稿");
@@ -1957,20 +1913,13 @@ shutdown_snapshot (gconstpointer data)
           g_assert_cmpstr (json_object_get_string_member (reply, "reasoning"),
                            ==, "已收到的推理");
         }
-      g_ptr_array_unref (loaded);
-      g_free (current);
-      g_free (model);
-      g_free (effort);
-      gchar *bak = g_strconcat (path, ".bak", NULL);
+      g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
       g_assert_false (g_file_test (bak, G_FILE_TEST_EXISTS));
       g_assert_false (on_close (NULL, NULL));
       on_shutdown (G_APPLICATION (gtk_app), NULL);
       g_assert_false (g_file_test (bak, G_FILE_TEST_EXISTS));
-      g_free (bak);
     }
-  g_free (path);
   teardown ();
-  g_object_unref (gtk_app);
 }
 
 static void
@@ -1985,12 +1934,14 @@ reasoning_visibility (void)
       "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" second\"}}]}\n"
       "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n"
       "data: [DONE]\n";
-  GInputStream *input = g_memory_input_stream_new_from_data (events, -1, NULL);
-  GDataInputStream *lines = g_data_input_stream_new (input);
-  g_object_unref (input);
+  g_autoptr (GInputStream) input =
+      g_memory_input_stream_new_from_data (events, -1, NULL);
+  g_autoptr (GDataInputStream) lines = g_data_input_stream_new (input);
   g_data_input_stream_read_line_async (lines, G_PRIORITY_DEFAULT, app->cancel,
                                        stream_line_cb,
                                        g_object_ref (app->cancel));
+  /* The stream callback owns this reference until the read ends. */
+  (void) g_steal_pointer (&lines);
   while (app->reason_box == NULL)
     g_main_context_iteration (NULL, TRUE);
   GtkWidget *root = app->reason_box;
@@ -2016,10 +1967,9 @@ reasoning_visibility (void)
   while (app->busy)
     g_main_context_iteration (NULL, TRUE);
   g_assert_true (gtk_widget_get_visible (content));
-  GtkWidget *history = thought_widget ("saved", 1, NULL, NULL);
+  g_autoptr (GtkWidget) history =
+      g_object_ref_sink (thought_widget ("saved", 1, NULL, NULL));
   g_assert_false (gtk_widget_get_visible (gtk_widget_get_last_child (history)));
-  g_object_ref_sink (history);
-  g_object_unref (history);
   teardown ();
 }
 
@@ -2070,18 +2020,19 @@ close_save_failure (void)
   if (!setup_ui ())
     return;
   begin_reply (FALSE);
-  GInputStream *body =
+  g_autoptr (GInputStream) body =
       g_memory_input_stream_new_from_data ("data: [DONE]\n", -1, NULL);
-  GDataInputStream *lines = g_data_input_stream_new (body);
-  g_object_unref (body);
+  g_autoptr (GDataInputStream) lines = g_data_input_stream_new (body);
   g_data_input_stream_read_line_async (lines, G_PRIORITY_DEFAULT, app->cancel,
                                        stream_line_cb,
                                        g_object_ref (app->cancel));
+  /* The stream callback owns this reference until the read ends. */
+  (void) g_steal_pointer (&lines);
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
   gtk_text_buffer_set_text (buffer, "不能丢失的草稿", -1);
-  gchar *path = store_session_path ();
-  gchar *dir = g_path_get_dirname (path),
-        *tmp = g_strconcat (path, ".tmp", NULL);
+  g_autofree gchar *path = store_session_path ();
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
   g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
   g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
@@ -2103,17 +2054,14 @@ close_save_failure (void)
   g_assert_cmpuint (sync_tick, ==, 0);
   g_assert_cmpuint (fit_retry_timer, ==, 0);
   g_assert_cmpuint (sync_retry_timer, ==, 0);
-  g_free (path);
-  g_free (dir);
-  g_free (tmp);
   teardown ();
 }
 
 static void
 locked_startup (void)
 {
-  gchar *path = store_session_path ();
-  GError *error = NULL;
+  g_autofree gchar *path = store_session_path ();
+  g_autoptr (GError) error = NULL;
   gint lock = store_lock (path, &error);
   g_assert_no_error (error);
   g_assert_cmpint (lock, >=, 0);
@@ -2121,13 +2069,11 @@ locked_startup (void)
   gchar *argv[] = { "gchat", NULL };
   g_assert_cmpint (gchat_main (1, argv), ==, 1);
   g_assert_null (app);
-  gchar *text = NULL;
+  g_autofree gchar *text = NULL;
   g_assert_true (g_file_get_contents (path, &text, NULL, NULL));
   g_assert_cmpstr (text, ==, "do not overwrite");
-  g_free (text);
   g_unlink (path);
   close (lock);
-  g_free (path);
 }
 
 static void
@@ -2155,11 +2101,22 @@ typedef struct
   GAsyncQueue     *first_event;
 } HttpTest;
 
+static void
+http_test_clear (HttpTest *test)
+{
+  g_clear_pointer (&test->first_event, g_async_queue_unref);
+  g_clear_pointer (&test->events, g_ptr_array_unref);
+  g_clear_object (&test->listener);
+  g_clear_pointer (&test->loop, g_main_loop_unref);
+}
+
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC (HttpTest, http_test_clear)
+
 static gpointer
 http_server (gpointer data)
 {
   HttpTest *test = data;
-  GSocketConnection *conn =
+  g_autoptr (GSocketConnection) conn =
       g_socket_listener_accept (test->listener, NULL, NULL, NULL);
   g_assert_nonnull (conn);
   g_socket_set_timeout (g_socket_connection_get_socket (conn), 3);
@@ -2193,7 +2150,6 @@ http_server (gpointer data)
       g_output_stream_write_all (out, "oops", 4, NULL, NULL, NULL);
     }
   g_io_stream_close (G_IO_STREAM (conn), NULL, NULL);
-  g_object_unref (conn);
   return NULL;
 }
 
@@ -2233,28 +2189,28 @@ http_error (gconstpointer data)
   if (!setup_ui ())
     return;
   begin_reply (FALSE);
-  HttpTest test = { .cancel = GPOINTER_TO_INT (data),
-                    .listener = g_socket_listener_new (),
-                    .loop = g_main_loop_new (NULL, FALSE) };
-  GInetAddress *ip = g_inet_address_new_loopback (G_SOCKET_FAMILY_IPV4);
-  GSocketAddress *addr = g_inet_socket_address_new (ip, 0), *effective = NULL;
-  GError *error = NULL;
+  g_auto (HttpTest) test = {
+    .cancel = GPOINTER_TO_INT (data),
+    .listener = g_socket_listener_new (),
+    .loop = g_main_loop_new (NULL, FALSE),
+  };
+  g_autoptr (GInetAddress) ip =
+      g_inet_address_new_loopback (G_SOCKET_FAMILY_IPV4);
+  g_autoptr (GSocketAddress) addr = g_inet_socket_address_new (ip, 0);
+  g_autoptr (GSocketAddress) effective = NULL;
+  g_autoptr (GError) error = NULL;
   g_assert_true (g_socket_listener_add_address (
       test.listener, addr, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP, NULL,
       &effective, &error));
   g_assert_no_error (error);
   guint port =
       g_inet_socket_address_get_port (G_INET_SOCKET_ADDRESS (effective));
-  g_object_unref (ip);
-  g_object_unref (addr);
-  g_object_unref (effective);
-  GThread *server = g_thread_new ("http-test", http_server, &test);
-  gchar *url = g_strdup_printf ("http://127.0.0.1:%u/", port);
-  SoupMessage *msg = soup_message_new ("GET", url);
-  g_free (url);
+  g_autoptr (GThread) server = g_thread_new ("http-test", http_server, &test);
+  g_autofree gchar *url = g_strdup_printf ("http://127.0.0.1:%u/", port);
+  g_autoptr (SoupMessage) msg = soup_message_new ("GET", url);
   app->session = soup_session_new ();
   test.started = g_get_monotonic_time ();
-  send_request (msg);
+  send_request (g_steal_pointer (&msg));
   g_timeout_add (50, http_tick, &test);
   guint finished = g_timeout_add (10, http_finished, &test);
   guint timeout = g_timeout_add (3000, http_timeout, &test);
@@ -2266,9 +2222,8 @@ http_error (gconstpointer data)
   g_source_remove (timeout);
   if (g_main_context_find_source_by_id (NULL, finished) != NULL)
     g_source_remove (finished);
-  g_thread_join (server);
-  g_object_unref (test.listener);
-  g_main_loop_unref (test.loop);
+  g_thread_join (g_steal_pointer (&server));
+  http_test_clear (&test);
   teardown ();
 }
 
@@ -2276,17 +2231,13 @@ static gchar *
 sse_event (const gchar *name,
            const gchar *text)
 {
-  JsonNode *node = json_node_new (JSON_NODE_VALUE);
+  g_autoptr (JsonNode) node = json_node_new (JSON_NODE_VALUE);
   json_node_set_string (node, text);
-  JsonGenerator *gen = json_generator_new ();
+  g_autoptr (JsonGenerator) gen = json_generator_new ();
   json_generator_set_root (gen, node);
-  gchar *encoded = json_generator_to_data (gen, NULL);
-  gchar *event = g_strdup_printf (
+  g_autofree gchar *encoded = json_generator_to_data (gen, NULL);
+  return g_strdup_printf (
       "data: {\"choices\":[{\"delta\":{\"%s\":%s}}]}\n\n", name, encoded);
-  g_free (encoded);
-  g_object_unref (gen);
-  json_node_free (node);
-  return event;
 }
 
 static void
@@ -2300,9 +2251,9 @@ assert_visible_tail (void)
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
   GtkTextIter start, end;
   gtk_text_buffer_get_bounds (buffer, &start, &end);
-  gchar *text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  g_autofree gchar *text =
+      gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
   g_assert_nonnull (strstr (text, "回复结束，末尾必须能看见。"));
-  g_free (text);
   gtk_text_iter_backward_char (&end);
   GdkRectangle glyph;
   gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &end, &glyph);
@@ -2338,10 +2289,9 @@ redirect_test_request (SoupSession *session G_GNUC_UNUSED,
                        SoupMessage *request,
                        gpointer     data)
 {
-  GUri *uri = g_uri_parse (data, SOUP_HTTP_URI_FLAGS, NULL);
+  g_autoptr (GUri) uri = g_uri_parse (data, SOUP_HTTP_URI_FLAGS, NULL);
   g_assert_nonnull (uri);
   soup_message_set_uri (request, uri);
-  g_uri_unref (uri);
 }
 
 static void
@@ -2350,7 +2300,8 @@ stream_layout (gconstpointer data)
   if (!setup_ui ())
     return;
   gint mode = GPOINTER_TO_INT (data);
-  GString *text = g_string_new ("我可以帮你做这些事：\n\n");
+  g_autoptr (GString) text =
+      g_string_new ("我可以帮你做这些事：\n\n");
   for (guint i = 1; i <= 10; i++)
     g_string_append_printf (
         text, "%u. **问答与解释**\n   解释概念，回答问题，梳理思路。\n\n", i);
@@ -2390,9 +2341,11 @@ stream_layout (gconstpointer data)
       wait_for_layout ();
     }
 
-  HttpTest test = { .listener = g_socket_listener_new (),
-                    .loop = g_main_loop_new (NULL, FALSE),
-                    .events = g_ptr_array_new_with_free_func (g_free) };
+  g_auto (HttpTest) test = {
+    .listener = g_socket_listener_new (),
+    .loop = g_main_loop_new (NULL, FALSE),
+    .events = g_ptr_array_new_with_free_func (g_free),
+  };
   if (mode == 5)
     test.first_event = g_async_queue_new ();
   g_ptr_array_add (test.events,
@@ -2402,9 +2355,8 @@ stream_layout (gconstpointer data)
     {
       const gchar *end = g_utf8_offset_to_pointer (
           cursor, MIN (40, g_utf8_strlen (cursor, -1)));
-      gchar *part = g_strndup (cursor, end - cursor);
+      g_autofree gchar *part = g_strndup (cursor, end - cursor);
       g_ptr_array_add (test.events, sse_event ("content", part));
-      g_free (part);
       cursor = end;
     }
   if (mode != 3)
@@ -2414,29 +2366,26 @@ stream_layout (gconstpointer data)
       for (guint i = 0; i < test.events->len; i++)
         {
           const gchar *event = g_ptr_array_index (test.events, i);
-          gchar **parts = g_strsplit (event + 6, "\n", -1);
-          gchar *crlf = g_strjoinv ("\r\n", parts);
+          g_auto (GStrv) parts = g_strsplit (event + 6, "\n", -1);
+          g_autofree gchar *crlf = g_strjoinv ("\r\n", parts);
           g_free (g_ptr_array_index (test.events, i));
           g_ptr_array_index (test.events, i) =
               g_strconcat ("data:", crlf, NULL);
-          g_free (crlf);
-          g_strfreev (parts);
         }
     }
-  GInetAddress *ip = g_inet_address_new_loopback (G_SOCKET_FAMILY_IPV4);
-  GSocketAddress *addr = g_inet_socket_address_new (ip, 0), *effective = NULL;
-  GError *error = NULL;
+  g_autoptr (GInetAddress) ip =
+      g_inet_address_new_loopback (G_SOCKET_FAMILY_IPV4);
+  g_autoptr (GSocketAddress) addr = g_inet_socket_address_new (ip, 0);
+  g_autoptr (GSocketAddress) effective = NULL;
+  g_autoptr (GError) error = NULL;
   g_assert_true (g_socket_listener_add_address (
       test.listener, addr, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP, NULL,
       &effective, &error));
   g_assert_no_error (error);
   guint port =
       g_inet_socket_address_get_port (G_INET_SOCKET_ADDRESS (effective));
-  g_object_unref (ip);
-  g_object_unref (addr);
-  g_object_unref (effective);
-  GThread *server = g_thread_new ("sse-test", http_server, &test);
-  gchar *url = g_strdup_printf ("http://127.0.0.1:%u/", port);
+  g_autoptr (GThread) server = g_thread_new ("sse-test", http_server, &test);
+  g_autofree gchar *url = g_strdup_printf ("http://127.0.0.1:%u/", port);
   app->session = soup_session_new ();
   if (mode == 5)
     {
@@ -2467,7 +2416,7 @@ stream_layout (gconstpointer data)
   g_source_remove (timeout);
   if (g_main_context_find_source_by_id (NULL, finished) != NULL)
     g_source_remove (finished);
-  g_thread_join (server);
+  g_thread_join (g_steal_pointer (&server));
   wait_for_layout ();
 
   guint count = json_array_get_length (app->chat->messages);
@@ -2504,12 +2453,7 @@ stream_layout (gconstpointer data)
   if (mode == 5)
     assert_user_bubble_layout ("C语言实现冒泡排序");
   g_signal_handlers_disconnect_by_data (app->session, url);
-  g_free (url);
-  g_clear_pointer (&test.first_event, g_async_queue_unref);
-  g_ptr_array_unref (test.events);
-  g_object_unref (test.listener);
-  g_main_loop_unref (test.loop);
-  g_string_free (text, TRUE);
+  http_test_clear (&test);
   teardown ();
 }
 
@@ -2542,7 +2486,7 @@ int
 main (int    argc,
       char **argv)
 {
-  GError *error = NULL;
+  g_autoptr (GError) error = NULL;
   test_dir = g_dir_make_tmp ("gchat-app-test-XXXXXX", &error);
   g_assert_no_error (error);
   g_setenv ("XDG_DATA_HOME", test_dir, TRUE);
@@ -2673,12 +2617,11 @@ main (int    argc,
   g_test_add_data_func ("/app/stream/crlf", GINT_TO_POINTER (4), stream_layout);
   g_test_add_data_func ("/app/stream/eof", GINT_TO_POINTER (3), stream_layout);
   int status = g_test_run ();
-  gchar *lock = g_build_filename (test_dir, "gchat", "session.json.lock", NULL);
+  g_autofree gchar *lock =
+      g_build_filename (test_dir, "gchat", "session.json.lock", NULL);
   g_unlink (lock);
-  g_free (lock);
-  gchar *dir = g_build_filename (test_dir, "gchat", NULL);
+  g_autofree gchar *dir = g_build_filename (test_dir, "gchat", NULL);
   g_rmdir (dir);
-  g_free (dir);
   g_rmdir (test_dir);
   g_free (test_dir);
   return status;

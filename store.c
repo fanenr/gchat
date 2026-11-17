@@ -18,7 +18,7 @@ Chat *
 chat_new (const gchar *id,
           const gchar *title)
 {
-  Chat *chat = g_new0 (Chat, 1);
+  g_autoptr (Chat) chat = g_new0 (Chat, 1);
   chat->id = g_strdup (id);
   chat->title = g_strdup (title);
   chat->draft = g_strdup ("");
@@ -26,16 +26,14 @@ chat_new (const gchar *id,
   chat->edit_from = G_MAXUINT;
   chat->created = g_get_real_time () / 1000;
   chat->messages = json_array_new ();
-  return chat;
+  return g_steal_pointer (&chat);
 }
 
 Chat *
 chat_new_empty (void)
 {
-  gchar *id = g_uuid_string_random ();
-  Chat *chat = chat_new (id, "");
-  g_free (id);
-  return chat;
+  g_autofree gchar *id = g_uuid_string_random ();
+  return chat_new (id, "");
 }
 
 void
@@ -62,8 +60,8 @@ gint
 store_lock (const gchar *path,
             GError     **error)
 {
-  gchar *dir = g_path_get_dirname (path);
-  gchar *lock = g_strconcat (path, ".lock", NULL);
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_autofree gchar *lock = g_strconcat (path, ".lock", NULL);
   gint fd = -1;
   if (g_mkdir_with_parents (dir, 0700) == 0)
     {
@@ -80,8 +78,6 @@ store_lock (const gchar *path,
     g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (errno),
                  _ ("Cannot lock conversation file %s: %s"), path,
                  g_strerror (errno));
-  g_free (dir);
-  g_free (lock);
   return fd;
 }
 
@@ -99,20 +95,20 @@ write_json (const gchar *path,
             JsonObject  *root,
             gboolean     backup)
 {
-  JsonNode *node = json_node_alloc ();
+  g_autoptr (JsonNode) node = json_node_alloc ();
   json_node_init (node, JSON_NODE_OBJECT);
   json_node_take_object (node, root);
-  JsonGenerator *gen = json_generator_new ();
+  g_autoptr (JsonGenerator) gen = json_generator_new ();
   json_generator_set_root (gen, node);
   json_generator_set_pretty (gen, TRUE);
   gsize len;
-  gchar *data = json_generator_to_data (gen, &len);
+  g_autofree gchar *data = json_generator_to_data (gen, &len);
 
-  gchar *dir = g_path_get_dirname (path);
+  g_autofree gchar *dir = g_path_get_dirname (path);
 
   /* Replace the target file only after the temporary file is written. */
-  gchar *tmp = g_strconcat (path, ".tmp", NULL);
-  GError *error = NULL;
+  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
+  g_autoptr (GError) error = NULL;
   /* Use 0600 because config.json holds the API key. */
   gboolean ok = g_mkdir_with_parents (dir, 0700) == 0;
   if (!ok)
@@ -123,7 +119,7 @@ write_json (const gchar *path,
         tmp, data, (gssize) len, G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error);
   if (ok)
     {
-      gchar *bak = backup ? g_strconcat (path, ".bak", NULL) : NULL;
+      g_autofree gchar *bak = backup ? g_strconcat (path, ".bak", NULL) : NULL;
       gboolean moved = FALSE;
       if (backup)
         {
@@ -138,20 +134,13 @@ write_json (const gchar *path,
           if (moved)
             g_rename (bak, path);
         }
-      g_free (bak);
     }
   if (!ok)
     {
       g_warning ("cannot write %s: %s", path, error->message);
-      g_clear_error (&error);
       g_unlink (tmp);
     }
 
-  g_free (tmp);
-  g_free (dir);
-  g_free (data);
-  g_object_unref (gen);
-  json_node_free (node);
   return ok;
 }
 
@@ -295,23 +284,22 @@ store_load (const gchar *path,
   *current_id = NULL;
   *model = NULL;
   *effort = NULL;
-  JsonParser *parser = json_parser_new ();
-  gchar *bak = g_strconcat (path, ".bak", NULL);
-  GError *primary_error = NULL, *backup_error = NULL;
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
+  g_autoptr (GError) primary_error = NULL;
+  g_autoptr (GError) backup_error = NULL;
   gboolean loaded = load_session (parser, path, &primary_error);
   if (!loaded && load_session (parser, bak, &backup_error))
     {
       /* A restore does not rotate the backup, so a broken main file cannot
          overwrite a valid one. */
-      JsonGenerator *gen = json_generator_new ();
+      g_autoptr (JsonGenerator) gen = json_generator_new ();
       json_generator_set_root (gen, json_parser_get_root (parser));
       gsize len;
-      gchar *bytes = json_generator_to_data (gen, &len);
+      g_autofree gchar *bytes = json_generator_to_data (gen, &len);
       loaded = g_file_set_contents_full (path, bytes, (gssize) len,
                                          G_FILE_SET_CONTENTS_CONSISTENT, 0600,
                                          error);
-      g_free (bytes);
-      g_object_unref (gen);
       if (loaded)
         g_message ("session.json restored from backup");
     }
@@ -326,7 +314,7 @@ store_load (const gchar *path,
           primary_error->message, backup_error->message);
     }
 
-  GPtrArray *chats = NULL;
+  g_autoptr (GPtrArray) chats = NULL;
   if (loaded ||
       (g_error_matches (primary_error, G_FILE_ERROR, G_FILE_ERROR_NOENT) &&
        g_error_matches (backup_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)))
@@ -343,8 +331,9 @@ store_load (const gchar *path,
       for (guint i = 0; i < json_array_get_length (array); i++)
         {
           JsonObject *obj = json_array_get_object_element (array, i);
-          Chat *chat = chat_new (json_object_get_string_member (obj, "id"),
-                                 json_object_get_string_member (obj, "title"));
+          g_autoptr (Chat) chat = chat_new (
+              json_object_get_string_member (obj, "id"),
+              json_object_get_string_member (obj, "title"));
           g_free (chat->draft);
           chat->draft = g_strdup (json_object_get_string_member (obj, "draft"));
           if (json_object_has_member (obj, "edit"))
@@ -362,14 +351,10 @@ store_load (const gchar *path,
           json_array_unref (chat->messages);
           chat->messages =
               json_array_ref (json_object_get_array_member (obj, "messages"));
-          g_ptr_array_add (chats, chat);
+          g_ptr_array_add (chats, g_steal_pointer (&chat));
         }
     }
-  g_clear_error (&primary_error);
-  g_clear_error (&backup_error);
-  g_free (bak);
-  g_object_unref (parser);
-  return chats;
+  return g_steal_pointer (&chats);
 }
 
 gboolean
@@ -379,43 +364,43 @@ store_save (const gchar *path,
             const gchar *model,
             const gchar *effort)
 {
-  JsonArray *array = json_array_new ();
+  g_autoptr (JsonArray) array = json_array_new ();
   for (guint i = 0; i < chats->len; i++)
     {
       Chat *chat = g_ptr_array_index (chats, i);
-      JsonObject *obj = json_object_new ();
+      g_autoptr (JsonObject) obj = json_object_new ();
       json_object_set_string_member (obj, "id", chat->id);
       json_object_set_string_member (obj, "title", chat->title);
       json_object_set_string_member (obj, "draft", chat->draft);
       if (chat->edit_from != G_MAXUINT)
         {
-          JsonObject *edit = json_object_new ();
+          g_autoptr (JsonObject) edit = json_object_new ();
           json_object_set_int_member (edit, "index", chat->edit_from);
           json_object_set_string_member (edit, "text", chat->edit_text);
-          json_object_set_object_member (obj, "edit", edit);
+          json_object_set_object_member (obj, "edit", g_steal_pointer (&edit));
         }
       json_object_set_int_member (obj, "created", chat->created);
       json_object_set_boolean_member (obj, "pinned", chat->pinned);
       json_object_set_array_member (obj, "messages",
                                     json_array_ref (chat->messages));
-      json_array_add_object_element (array, obj);
+      json_array_add_object_element (array, g_steal_pointer (&obj));
     }
 
-  JsonObject *root = json_object_new ();
-  json_object_set_array_member (root, "chats", array);
+  g_autoptr (JsonObject) root = json_object_new ();
+  json_object_set_array_member (root, "chats", g_steal_pointer (&array));
   json_object_set_string_member (root, "current",
                                  current_id != NULL ? current_id : "");
   json_object_set_string_member (root, "model", model);
   json_object_set_string_member (root, "effort", effort);
-  return write_json (path, root, TRUE);
+  return write_json (path, g_steal_pointer (&root), TRUE);
 }
 
 gchar *
 config_get (const gchar *name)
 {
-  gchar *path = store_config_path ();
-  gchar *value = NULL;
-  JsonParser *parser = json_parser_new ();
+  g_autofree gchar *path = store_config_path ();
+  g_autofree gchar *value = NULL;
+  g_autoptr (JsonParser) parser = json_parser_new ();
   if (json_parser_load_from_file (parser, path, NULL))
     {
       JsonNode *root = json_parser_get_root (parser);
@@ -430,34 +415,29 @@ config_get (const gchar *name)
             }
         }
     }
-  g_object_unref (parser);
-  g_free (path);
   if (value != NULL && !*value)
-    {
-      g_free (value);
-      value = NULL;
-    }
-  return value;
+    return NULL;
+  return g_steal_pointer (&value);
 }
 
 gboolean
 config_set (const gchar *name,
             const gchar *value)
 {
-  gchar *path = store_config_path ();
-  JsonObject *root = NULL;
+  g_autofree gchar *path = store_config_path ();
+  g_autoptr (JsonObject) root = NULL;
 
   /* Refuse to write when the existing configuration does not parse, so the key
      and other settings are not lost. */
-  JsonParser *parser = json_parser_new ();
-  GError *error = NULL;
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  g_autoptr (GError) error = NULL;
   gboolean loaded = json_parser_load_from_file (parser, path, &error);
   JsonNode *node = loaded ? json_parser_get_root (parser) : NULL;
   gboolean valid = node != NULL && JSON_NODE_HOLDS_OBJECT (node);
   if (valid)
     {
       JsonObject *old = json_node_get_object (node);
-      GList *members = json_object_get_members (old);
+      g_autoptr (GList) members = json_object_get_members (old);
       for (GList *it = members; it != NULL; it = it->next)
         {
           const gchar *key = it->data;
@@ -467,27 +447,20 @@ config_set (const gchar *name,
               break;
             }
         }
-      g_list_free (members);
       if (valid)
         root = json_object_ref (old);
     }
   gboolean missing = g_error_matches (error, G_FILE_ERROR, G_FILE_ERROR_NOENT);
-  g_object_unref (parser);
   if (!valid && !missing)
     {
       g_warning ("cannot write %s: %s", path,
                  error != NULL ? error->message
                                : "invalid configuration structure");
-      g_clear_error (&error);
-      g_free (path);
       return FALSE;
     }
-  g_clear_error (&error);
   if (missing)
     root = json_object_new ();
 
   json_object_set_string_member (root, name, value != NULL ? value : "");
-  gboolean ok = write_json (path, root, FALSE);
-  g_free (path);
-  return ok;
+  return write_json (path, g_steal_pointer (&root), FALSE);
 }

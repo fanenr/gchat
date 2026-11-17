@@ -25,10 +25,12 @@ Chat *     chat_new           (const gchar *id,
 Chat *     chat_new_empty     (void);
 void       chat_free          (Chat *chat);
 
-/* Return an empty list when there is no file. A file must match the current
-   session structure; a missing required field is not filled in. Return NULL
-   when neither the main file nor the backup is usable, and keep the original
-   data. */
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (Chat, chat_free)
+
+/* Return an owned array and owned output strings. Return an empty array when
+   there is no file. A file must match the current session structure; a missing
+   required field is not filled in. Return NULL when neither the main file nor
+   the backup is usable, and keep the original data. */
 GPtrArray *store_load         (const gchar *path,
                                gchar      **current_id,
                                gchar      **model,
@@ -39,6 +41,7 @@ gboolean   store_save         (const gchar *path,
                                const gchar *current_id,
                                const gchar *model,
                                const gchar *effort);
+/* Return newly allocated paths; the caller frees them. */
 gchar *    store_session_path (void);
 gchar *    store_config_path  (void);
 
@@ -47,8 +50,10 @@ gchar *    store_config_path  (void);
 gint       store_lock         (const gchar *path,
                                GError     **error);
 
+/* Return an owned string, or NULL when the value is missing or empty. */
+gchar *    config_get         (const gchar *name);
+
 /* Merge string key/value pairs into config.json atomically without a backup;
    refuse to overwrite an invalid configuration. */
-gchar *    config_get         (const gchar *name);
 gboolean   config_set         (const gchar *name,
                                const gchar *value);

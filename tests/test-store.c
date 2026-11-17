@@ -37,20 +37,20 @@ static void
 setup (Fixture      *f,
        gconstpointer data G_GNUC_UNUSED)
 {
-  GError *error = NULL;
+  g_autoptr (GError) error = NULL;
   f->dir = g_dir_make_tmp ("gchat-store-test-XXXXXX", &error);
   g_assert_no_error (error);
   f->path = g_build_filename (f->dir, "session.json", NULL);
   f->bak = g_strconcat (f->path, ".bak", NULL);
   f->chats = g_ptr_array_new_with_free_func ((GDestroyNotify) chat_free);
-  Chat *chat = chat_new ("42", "保留历史");
-  JsonObject *msg = json_object_new ();
+  g_autoptr (Chat) chat = chat_new ("42", "保留历史");
+  g_autoptr (JsonObject) msg = json_object_new ();
   json_object_set_string_member (msg, "role", "assistant");
   json_object_set_string_member (msg, "content", "");
   json_object_set_string_member (msg, "reasoning", "已收到的推理");
   json_object_set_double_member (msg, "duration", 1.5);
-  json_array_add_object_element (chat->messages, msg);
-  g_ptr_array_add (f->chats, chat);
+  json_array_add_object_element (chat->messages, g_steal_pointer (&msg));
+  g_ptr_array_add (f->chats, g_steal_pointer (&chat));
 }
 
 static void
@@ -59,9 +59,8 @@ teardown (Fixture      *f,
 {
   g_unlink (f->path);
   g_unlink (f->bak);
-  gchar *tmp = g_strconcat (f->path, ".tmp", NULL);
+  g_autofree gchar *tmp = g_strconcat (f->path, ".tmp", NULL);
   g_unlink (tmp);
-  g_free (tmp);
   g_rmdir (f->dir);
   g_free (f->dir);
   g_free (f->path);
@@ -99,7 +98,8 @@ recovery (Fixture      *f,
       store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
   g_assert_true (
       store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
-  gchar *backup_before = NULL, *backup_after = NULL;
+  g_autofree gchar *backup_before = NULL;
+  g_autofree gchar *backup_after = NULL;
   g_assert_true (g_file_get_contents (f->bak, &backup_before, NULL, NULL));
   if (test == NULL)
     {
@@ -111,7 +111,7 @@ recovery (Fixture      *f,
     }
   else
     {
-      JsonParser *parser = json_parser_new ();
+      g_autoptr (JsonParser) parser = json_parser_new ();
       g_assert_true (json_parser_load_from_file (parser, f->path, NULL));
       JsonObject *root = json_node_get_object (json_parser_get_root (parser));
       JsonArray *chats = json_object_get_array_member (root, "chats");
@@ -137,24 +137,26 @@ recovery (Fixture      *f,
         }
       else if (test->json != NULL)
         {
-          JsonNode *value = json_from_string (test->json, NULL);
+          g_autoptr (JsonNode) value = json_from_string (test->json, NULL);
           g_assert_nonnull (value);
-          json_object_set_member (target, test->member, value);
+          json_object_set_member (target, test->member,
+                                  g_steal_pointer (&value));
         }
       else
         {
           json_object_remove_member (target, test->member);
         }
-      JsonGenerator *gen = json_generator_new ();
+      g_autoptr (JsonGenerator) gen = json_generator_new ();
       json_generator_set_root (gen, json_parser_get_root (parser));
       g_assert_true (json_generator_to_file (gen, f->path, NULL));
-      g_object_unref (gen);
-      g_object_unref (parser);
     }
 
-  gchar *current = NULL, *model = NULL, *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   assert_history (loaded);
   g_assert_cmpstr (current, ==, "42");
@@ -162,15 +164,13 @@ recovery (Fixture      *f,
   g_assert_cmpstr (effort, ==, "high");
   g_assert_true (g_file_get_contents (f->bak, &backup_after, NULL, NULL));
   g_assert_cmpstr (backup_after, ==, backup_before);
-  g_free (backup_before);
-  g_free (backup_after);
 
   /* The restored main file can be re-read at once, and a second save still
      keeps a valid backup. */
-  g_ptr_array_unref (loaded);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
+  g_clear_pointer (&loaded, g_ptr_array_unref);
+  g_clear_pointer (&current, g_free);
+  g_clear_pointer (&model, g_free);
+  g_clear_pointer (&effort, g_free);
   loaded = store_load (f->path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   assert_history (loaded);
@@ -178,17 +178,13 @@ recovery (Fixture      *f,
   g_assert_cmpstr (model, ==, "deepseek-flash");
   g_assert_cmpstr (effort, ==, "high");
   g_assert_true (store_save (f->path, loaded, current, model, effort));
-  g_ptr_array_unref (loaded);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
+  g_clear_pointer (&loaded, g_ptr_array_unref);
+  g_clear_pointer (&current, g_free);
+  g_clear_pointer (&model, g_free);
+  g_clear_pointer (&effort, g_free);
   loaded = store_load (f->bak, &current, &model, &effort, &error);
   g_assert_no_error (error);
   assert_history (loaded);
-  g_ptr_array_unref (loaded);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
 
   struct stat st;
   g_assert_cmpint (g_stat (f->path, &st), ==, 0);
@@ -200,18 +196,17 @@ legacy_pinned (Fixture      *f,
                gconstpointer data G_GNUC_UNUSED)
 {
   const gchar *json = "{\"current\":\"42\",\"model\":\"m\",\"effort\":\"e\","
-                      "\"chats\":[{\"id\":\"42\",\"title\":\"t\",\"draft\":\"\","
-                      "\"created\":0,\"messages\":[]}]}";
+                      "\"chats\":[{\"id\":\"42\",\"title\":\"t\","
+                      "\"draft\":\"\",\"created\":0,\"messages\":[]}]}";
   g_assert_true (g_file_set_contents (f->path, json, -1, NULL));
-  gchar *current = NULL, *model = NULL, *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_false (((Chat *) g_ptr_array_index (loaded, 0))->pinned);
-  g_ptr_array_unref (loaded);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
 }
 
 static void
@@ -220,35 +215,39 @@ unrecoverable (Fixture      *f,
 {
   g_assert_true (g_file_set_contents (f->path, "{}", -1, NULL));
   g_assert_true (g_file_set_contents (f->bak, "{\"chats\":[42]}", -1, NULL));
-  gchar *current = NULL, *model = NULL, *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
   g_assert_null (loaded);
   g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
   g_clear_error (&error);
   g_assert_null (current);
   g_assert_null (model);
   g_assert_null (effort);
-  gchar *primary = NULL, *backup = NULL;
+  g_autofree gchar *primary = NULL;
+  g_autofree gchar *backup = NULL;
   g_assert_true (g_file_get_contents (f->path, &primary, NULL, NULL));
   g_assert_true (g_file_get_contents (f->bak, &backup, NULL, NULL));
   g_assert_cmpstr (primary, ==, "{}");
   g_assert_cmpstr (backup, ==, "{\"chats\":[42]}");
-  g_free (primary);
-  g_free (backup);
 }
 
 static void
 missing (Fixture      *f,
          gconstpointer data G_GNUC_UNUSED)
 {
-  gchar *current = NULL, *model = NULL, *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_nonnull (loaded);
   g_assert_cmpuint (loaded->len, ==, 0);
-  g_ptr_array_unref (loaded);
   g_assert_false (g_file_test (f->path, G_FILE_TEST_EXISTS));
 }
 
@@ -257,22 +256,22 @@ empty_title (Fixture      *f,
              gconstpointer data G_GNUC_UNUSED)
 {
   g_ptr_array_set_size (f->chats, 0);
-  Chat *chat = chat_new_empty ();
+  g_autoptr (Chat) chat = chat_new_empty ();
   g_assert_cmpstr (chat->title, ==, "");
-  g_ptr_array_add (f->chats, chat);
+  Chat *saved = chat;
+  g_ptr_array_add (f->chats, g_steal_pointer (&chat));
   g_assert_true (
-      store_save (f->path, f->chats, chat->id, "deepseek-flash", "high"));
-  gchar *current = NULL, *model = NULL, *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+      store_save (f->path, f->chats, saved->id, "deepseek-flash", "high"));
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_nonnull (loaded);
   g_assert_cmpuint (loaded->len, ==, 1);
   g_assert_cmpstr (((Chat *) g_ptr_array_index (loaded, 0))->title, ==, "");
-  g_ptr_array_unref (loaded);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
 }
 
 static void
@@ -292,19 +291,18 @@ drafts (Fixture      *f,
     }
   g_assert_true (
       store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
-  gchar *current = NULL, *model = NULL, *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *restored = g_ptr_array_index (loaded, 0);
   g_assert_cmpstr (restored->draft, ==, chat->draft);
   g_assert_cmpstr (restored->edit_text, ==, chat->edit_text);
   g_assert_cmpuint (restored->edit_from, ==, chat->edit_from);
   g_assert_cmpuint (json_array_get_length (restored->messages), ==, 1);
-  g_ptr_array_unref (loaded);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
 }
 
 static void
@@ -314,18 +312,17 @@ empty_session (Fixture      *f,
   g_ptr_array_set_size (f->chats, 0);
   g_assert_true (
       store_save (f->path, f->chats, NULL, "deepseek-flash", "high"));
-  gchar *current = NULL, *model = NULL, *effort = NULL;
-  GError *error = NULL;
-  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_cmpuint (loaded->len, ==, 0);
   g_assert_cmpstr (current, ==, "");
   g_assert_cmpstr (model, ==, "deepseek-flash");
   g_assert_cmpstr (effort, ==, "high");
-  g_ptr_array_unref (loaded);
-  g_free (current);
-  g_free (model);
-  g_free (effort);
 }
 
 static void
@@ -334,7 +331,8 @@ save_failure (Fixture      *f,
 {
   g_assert_true (
       store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
-  gchar *before = NULL, *after = NULL;
+  g_autofree gchar *before = NULL;
+  g_autofree gchar *after = NULL;
   g_assert_true (g_file_get_contents (f->path, &before, NULL, NULL));
   g_assert_cmpint (g_mkdir (f->bak, 0700), ==, 0);
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
@@ -343,11 +341,8 @@ save_failure (Fixture      *f,
   g_test_assert_expected_messages ();
   g_assert_true (g_file_get_contents (f->path, &after, NULL, NULL));
   g_assert_cmpstr (after, ==, before);
-  g_free (before);
-  g_free (after);
-  gchar *tmp = g_strconcat (f->path, ".tmp", NULL);
+  g_autofree gchar *tmp = g_strconcat (f->path, ".tmp", NULL);
   g_assert_false (g_file_test (tmp, G_FILE_TEST_EXISTS));
-  g_free (tmp);
   g_assert_cmpint (g_rmdir (f->bak), ==, 0);
 }
 
@@ -355,7 +350,7 @@ static void
 session_lock (Fixture      *f,
               gconstpointer data G_GNUC_UNUSED)
 {
-  GError *error = NULL;
+  g_autoptr (GError) error = NULL;
   gint first = store_lock (f->path, &error);
   g_assert_no_error (error);
   g_assert_cmpint (first, >=, 0);
@@ -367,32 +362,29 @@ session_lock (Fixture      *f,
   g_assert_no_error (error);
   g_assert_cmpint (second, >=, 0);
   close (second);
-  gchar *lock = g_strconcat (f->path, ".lock", NULL);
+  g_autofree gchar *lock = g_strconcat (f->path, ".lock", NULL);
   g_unlink (lock);
-  g_free (lock);
 }
 
 static void
 invalid_config (Fixture      *f G_GNUC_UNUSED,
                 gconstpointer data)
 {
-  gchar *dir = g_build_filename (g_get_user_config_dir (), "gchat", NULL);
-  gchar *path = g_build_filename (dir, "config.json", NULL);
+  g_autofree gchar *dir =
+      g_build_filename (g_get_user_config_dir (), "gchat", NULL);
+  g_autofree gchar *path = g_build_filename (dir, "config.json", NULL);
   g_assert_cmpint (g_mkdir (dir, 0700), ==, 0);
   g_assert_true (g_file_set_contents (path, data, -1, NULL));
-  gchar *value = config_get ("api_key");
+  g_autofree gchar *value = config_get ("api_key");
   g_assert_null (value);
   g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
   g_assert_false (config_set ("theme", "dark"));
   g_test_assert_expected_messages ();
-  gchar *primary = NULL;
+  g_autofree gchar *primary = NULL;
   g_assert_true (g_file_get_contents (path, &primary, NULL, NULL));
   g_assert_cmpstr (primary, ==, data);
-  g_free (primary);
   g_unlink (path);
   g_rmdir (dir);
-  g_free (dir);
-  g_free (path);
 }
 
 static void
@@ -401,23 +393,20 @@ config_roundtrip (void)
   g_assert_true (config_set ("api_key", "first-key"));
   g_assert_true (config_set ("theme", "dark"));
   g_assert_true (config_set ("api_key", "second-key"));
-  gchar *key = config_get ("api_key"), *theme = config_get ("theme");
+  g_autofree gchar *key = config_get ("api_key");
+  g_autofree gchar *theme = config_get ("theme");
   g_assert_cmpstr (key, ==, "second-key");
   g_assert_cmpstr (theme, ==, "dark");
-  g_free (key);
-  g_free (theme);
-  gchar *dir = g_build_filename (g_get_user_config_dir (), "gchat", NULL);
-  gchar *path = g_build_filename (dir, "config.json", NULL),
-        *bak = g_strconcat (path, ".bak", NULL);
+  g_autofree gchar *dir =
+      g_build_filename (g_get_user_config_dir (), "gchat", NULL);
+  g_autofree gchar *path = g_build_filename (dir, "config.json", NULL);
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_assert_false (g_file_test (bak, G_FILE_TEST_EXISTS));
   struct stat st;
   g_assert_cmpint (g_stat (path, &st), ==, 0);
   g_assert_cmpint (st.st_mode & 0777, ==, 0600);
   g_unlink (path);
   g_rmdir (dir);
-  g_free (bak);
-  g_free (path);
-  g_free (dir);
 }
 
 int
@@ -425,7 +414,8 @@ main (int    argc,
       char **argv)
 {
   g_test_init (&argc, &argv, NULL);
-  gchar *config_dir = g_dir_make_tmp ("gchat-config-test-XXXXXX", NULL);
+  g_autofree gchar *config_dir =
+      g_dir_make_tmp ("gchat-config-test-XXXXXX", NULL);
   g_assert_nonnull (config_dir);
   g_setenv ("XDG_CONFIG_HOME", config_dir, TRUE);
   i18n_init (NULL);
@@ -480,9 +470,8 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (invalid); i++)
     {
-      gchar *name = g_strdup_printf ("/store/recovery/%u", i);
+      g_autofree gchar *name = g_strdup_printf ("/store/recovery/%u", i);
       g_test_add (name, Fixture, &invalid[i], setup, recovery, teardown);
-      g_free (name);
     }
   g_test_add ("/store/recovery/missing-primary", Fixture, NULL, setup, recovery,
               teardown);
@@ -505,13 +494,11 @@ main (int    argc,
                                     "{\"api_key\":42}", "{\"api_key\":null}" };
   for (guint i = 0; i < G_N_ELEMENTS (configs); i++)
     {
-      gchar *name = g_strdup_printf ("/config/invalid/%u", i);
+      g_autofree gchar *name = g_strdup_printf ("/config/invalid/%u", i);
       g_test_add (name, Fixture, configs[i], setup, invalid_config, teardown);
-      g_free (name);
     }
   g_test_add_func ("/config/roundtrip-no-backup", config_roundtrip);
   int status = g_test_run ();
   g_rmdir (config_dir);
-  g_free (config_dir);
   return status;
 }

@@ -59,7 +59,7 @@ entity_text (GString     *out,
 {
   if (n > 3 && s[0] == '&' && s[n - 1] == ';')
     {
-      gchar *body = g_strndup (s + 1, n - 2);
+      g_autofree gchar *body = g_strndup (s + 1, n - 2);
       guint32 codepoint = 0;
       if (body[0] == '#')
         {
@@ -73,13 +73,11 @@ entity_text (GString     *out,
           gchar utf8[8];
           gint len = g_unichar_to_utf8 (codepoint, utf8);
           g_string_append_len (out, utf8, len);
-          g_free (body);
           return;
         }
       if (body[0] == '#')
         {
           g_string_append (out, "\xef\xbf\xbd");
-          g_free (body);
           return;
         }
       for (guint i = 0; i < G_N_ELEMENTS (ENTITIES); i++)
@@ -87,11 +85,9 @@ entity_text (GString     *out,
           if (g_str_equal (body, ENTITIES[i].name))
             {
               g_string_append (out, ENTITIES[i].utf8);
-              g_free (body);
               return;
             }
         }
-      g_free (body);
     }
   g_string_append_len (out, s, (gssize) n);
 }
@@ -101,7 +97,7 @@ entity_text (GString     *out,
 static gchar *
 link_href (const MD_ATTRIBUTE *attribute)
 {
-  GString *href = g_string_new (NULL);
+  g_autoptr (GString) href = g_string_new (NULL);
   for (guint i = 0;
        attribute->size && attribute->substr_offsets[i] < attribute->size; i++)
     {
@@ -119,16 +115,15 @@ link_href (const MD_ATTRIBUTE *attribute)
                          g_ascii_strcasecmp (scheme, "http") == 0 ||
                          g_ascii_strcasecmp (scheme, "mailto") == 0))
     {
-      return g_string_free (href, FALSE);
+      return g_string_free (g_steal_pointer (&href), FALSE);
     }
-  g_string_free (href, TRUE);
   return NULL;
 }
 
 /* ---------- code rendering ---------- */
 
-static GPtrArray
-    *code_buffers; /* Track live GtkSourceBuffers for style-scheme updates. */
+/* The style hook and weak callbacks keep this registry for process lifetime. */
+static GPtrArray *code_buffers;
 
 static GtkSourceStyleScheme *
 current_scheme (void)
@@ -208,9 +203,9 @@ code_view (const gchar *lang,
   ensure_style_hook ();
 
   GtkSourceLanguage *language = lookup_language (lang);
-  GtkSourceBuffer *buffer = language != NULL
-                                ? gtk_source_buffer_new_with_language (language)
-                                : gtk_source_buffer_new (NULL);
+  g_autoptr (GtkSourceBuffer) buffer =
+      language != NULL ? gtk_source_buffer_new_with_language (language)
+                       : gtk_source_buffer_new (NULL);
   gtk_source_buffer_set_highlight_syntax (buffer, language != NULL);
   gtk_source_buffer_set_highlight_matching_brackets (buffer, FALSE);
   gtk_source_buffer_set_style_scheme (buffer, current_scheme ());
@@ -225,7 +220,6 @@ code_view (const gchar *lang,
   g_ptr_array_add (code_buffers, buffer);
 
   GtkWidget *view = gtk_source_view_new_with_buffer (buffer);
-  g_object_unref (buffer);
   gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
   gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
   gtk_source_view_set_show_line_numbers (GTK_SOURCE_VIEW (view), FALSE);
@@ -297,11 +291,10 @@ cell_label (const gchar *markup,
             MD_ALIGN     align,
             gboolean     header)
 {
-  gchar *text =
+  g_autofree gchar *text =
       header ? g_strdup_printf ("<b>%s</b>", markup) : g_strdup (markup);
   GtkWidget *label = gtk_label_new (NULL);
   gtk_label_set_markup (GTK_LABEL (label), text);
-  g_free (text);
   gtk_label_set_wrap (GTK_LABEL (label), TRUE);
   gtk_label_set_wrap_mode (GTK_LABEL (label), PANGO_WRAP_WORD_CHAR);
   gtk_label_set_max_width_chars (GTK_LABEL (label), 34);
@@ -357,6 +350,23 @@ typedef struct
   int             col;
 } MdCtx;
 
+static void pop_scope (MdCtx *ctx);
+
+static void
+md_ctx_clear (MdCtx *ctx)
+{
+  while (ctx->scopes->len)
+    pop_scope (ctx);
+  g_ptr_array_unref (ctx->spans);
+  g_array_unref (ctx->scopes);
+  g_array_unref (ctx->ol_numbers);
+  g_string_free (ctx->cell, TRUE);
+  g_string_free (ctx->code, TRUE);
+  g_free (ctx->code_lang);
+}
+
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC (MdCtx, md_ctx_clear)
+
 static void
 on_link_clicked (GtkGestureClick *gesture G_GNUC_UNUSED,
                  int              n_press G_GNUC_UNUSED,
@@ -375,21 +385,19 @@ on_link_clicked (GtkGestureClick *gesture G_GNUC_UNUSED,
                                          (int) y, &bx, &by);
   gtk_text_view_get_iter_at_location (view, &iter, bx, by);
 
-  GSList *tags = gtk_text_iter_get_tags (&iter);
+  g_autoptr (GSList) tags = gtk_text_iter_get_tags (&iter);
   for (GSList *l = tags; l != NULL; l = l->next)
     {
       const gchar *href = g_object_get_data (G_OBJECT (l->data), "href");
       if (href == NULL)
         continue;
       GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (view));
-      GtkUriLauncher *launcher = gtk_uri_launcher_new (href);
+      g_autoptr (GtkUriLauncher) launcher = gtk_uri_launcher_new (href);
       gtk_uri_launcher_launch (launcher,
                                GTK_IS_WINDOW (root) ? GTK_WINDOW (root) : NULL,
                                NULL, NULL, NULL);
-      g_object_unref (launcher);
       break;
     }
-  g_slist_free (tags);
 }
 
 static gboolean
@@ -677,9 +685,9 @@ on_enter_block (MD_BLOCKTYPE type,
           }
 
         break_line (ctx, "gap4");
-        gchar *tag_name = g_strdup_printf ("list%d", ctx->list_depth);
+        g_autofree gchar *tag_name =
+            g_strdup_printf ("list%d", ctx->list_depth);
         push_scope (ctx, tag_name);
-        g_free (tag_name);
         insert_text (ctx, marker, strlen (marker), get_tag (ctx, "dim"));
         insert_text (ctx, " ", 1, NULL);
       }
@@ -696,9 +704,9 @@ on_enter_block (MD_BLOCKTYPE type,
         {
           for (int i = 0; i < ctx->quote_depth; i++)
             insert_text (ctx, "| ", 2, get_tag (ctx, "dim"));
-          gchar *tag_name = g_strdup_printf ("quote%d", ctx->quote_depth);
+          g_autofree gchar *tag_name =
+              g_strdup_printf ("quote%d", ctx->quote_depth);
           push_scope (ctx, tag_name);
-          g_free (tag_name);
           ctx->p_quote_depth = ctx->quote_depth;
         }
       break;
@@ -708,9 +716,8 @@ on_enter_block (MD_BLOCKTYPE type,
         unsigned level =
             detail != NULL ? ((MD_BLOCK_H_DETAIL *) detail)->level : 2;
         break_line (ctx, "gap24");
-        gchar *tag_name = g_strdup_printf ("h%u", MIN (level, 3));
+        g_autofree gchar *tag_name = g_strdup_printf ("h%u", MIN (level, 3));
         push_scope (ctx, tag_name);
-        g_free (tag_name);
       }
       break;
 
@@ -725,7 +732,7 @@ on_enter_block (MD_BLOCKTYPE type,
     case MD_BLOCK_CODE:
     case MD_BLOCK_HTML:
       {
-        gchar *lang = NULL;
+        g_autofree gchar *lang = NULL;
         if (type == MD_BLOCK_HTML)
           {
             lang = g_strdup ("html");
@@ -738,7 +745,7 @@ on_enter_block (MD_BLOCKTYPE type,
           }
         g_string_truncate (ctx->code, 0);
         g_free (ctx->code_lang);
-        ctx->code_lang = lang;
+        ctx->code_lang = g_steal_pointer (&lang);
       }
       break;
 
@@ -886,20 +893,18 @@ on_enter_span (MD_SPANTYPE type,
     case MD_SPAN_A:
       {
         MD_SPAN_A_DETAIL *link = detail;
-        gchar *href = link_href (&link->href);
+        g_autofree gchar *href = link_href (&link->href);
         if (ctx->in_cell)
           {
             if (href != NULL)
               {
-                gchar *escaped = g_markup_escape_text (href, -1);
+                g_autofree gchar *escaped = g_markup_escape_text (href, -1);
                 g_string_append_printf (cell, "<a href=\"%s\">", escaped);
-                g_free (escaped);
               }
             else
               {
                 g_string_append (cell, "<span>");
               }
-            g_free (href);
             break;
           }
         ensure_view (ctx);
@@ -907,7 +912,8 @@ on_enter_span (MD_SPANTYPE type,
         if (href != NULL)
           g_object_set (tag, "foreground", "#1c71d8", "underline",
                         PANGO_UNDERLINE_SINGLE, NULL);
-        g_object_set_data_full (G_OBJECT (tag), "href", href, g_free);
+        g_object_set_data_full (G_OBJECT (tag), "href",
+                                g_steal_pointer (&href), g_free);
         g_ptr_array_add (ctx->spans, tag);
       }
       break;
@@ -941,9 +947,9 @@ on_leave_span (MD_SPANTYPE type,
         {
           if (type == MD_SPAN_A)
             {
-              gchar *href = link_href (&((MD_SPAN_A_DETAIL *) detail)->href);
+              g_autofree gchar *href =
+                  link_href (&((MD_SPAN_A_DETAIL *) detail)->href);
               g_string_append (ctx->cell, href != NULL ? "</a>" : "</span>");
-              g_free (href);
             }
           else
             {
@@ -980,7 +986,7 @@ on_text (MD_TEXTTYPE    type,
       return 0;
     }
 
-  GString *decoded = NULL;
+  g_autoptr (GString) decoded = NULL;
   gsize length = size;
   switch (type)
     {
@@ -1010,8 +1016,6 @@ on_text (MD_TEXTTYPE    type,
     escape_into (ctx->cell, text, length);
   else
     insert_text (ctx, text, length, NULL);
-  if (decoded != NULL)
-    g_string_free (decoded, TRUE);
   return 0;
 }
 
@@ -1019,7 +1023,7 @@ void
 md_render (GtkBox      *box,
            const gchar *text)
 {
-  MdCtx ctx = {
+  g_auto (MdCtx) ctx = {
     .box = box,
     .spans = g_ptr_array_new (),
     .scopes = g_array_new (FALSE, FALSE, sizeof (Scope)),
@@ -1050,11 +1054,4 @@ md_render (GtkBox      *box,
      in this frame; requeue the layout for the next frame, or the reply stays
      blank. */
   defer_resize (GTK_WIDGET (box));
-
-  g_ptr_array_unref (ctx.spans);
-  g_array_unref (ctx.scopes);
-  g_array_unref (ctx.ol_numbers);
-  g_string_free (ctx.cell, TRUE);
-  g_string_free (ctx.code, TRUE);
-  g_free (ctx.code_lang);
 }

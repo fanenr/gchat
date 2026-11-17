@@ -36,8 +36,8 @@ static void
 text_tags (gconstpointer data)
 {
   const TagCase *test = data;
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  g_object_ref_sink (box);
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   md_render (GTK_BOX (box), test->markdown);
   gboolean found = FALSE;
   for (GtkWidget *view = gtk_widget_get_first_child (box); view != NULL;
@@ -48,7 +48,8 @@ text_tags (gconstpointer data)
       GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
       GtkTextIter start, end;
       gtk_text_buffer_get_bounds (buffer, &start, &end);
-      gchar *text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+      g_autofree gchar *text =
+          gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
       const gchar *at = strstr (text, test->text);
       if (at != NULL)
         {
@@ -61,19 +62,17 @@ text_tags (gconstpointer data)
                            test->active);
           found = TRUE;
         }
-      g_free (text);
     }
   g_assert_true (found);
   clear_box (box);
-  g_object_unref (box);
   g_assert_cmpuint (code_buffers != NULL ? code_buffers->len : 0, ==, 0);
 }
 
 static void
 code_buffers_released (void)
 {
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  g_object_ref_sink (box);
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   for (guint i = 0; i < 10; i++)
     {
       md_render (GTK_BOX (box), "```c\nint x;\n```\n");
@@ -81,7 +80,31 @@ code_buffers_released (void)
       clear_box (box);
       g_assert_cmpuint (code_buffers->len, ==, 0);
     }
-  g_object_unref (box);
+}
+
+static void
+open_scopes_released (void)
+{
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  GtkTextMark *mark = NULL;
+
+  {
+    g_auto (MdCtx) ctx = {
+      .box = GTK_BOX (box),
+      .spans = g_ptr_array_new (),
+      .scopes = g_array_new (FALSE, FALSE, sizeof (Scope)),
+      .ol_numbers = g_array_new (FALSE, FALSE, sizeof (gint64)),
+      .cell = g_string_new (NULL),
+      .code = g_string_new (NULL),
+    };
+    push_scope (&ctx, "list1");
+    mark = g_array_index (ctx.scopes, Scope, 0).mark;
+    g_object_add_weak_pointer (G_OBJECT (mark), (gpointer *) &mark);
+  }
+
+  g_assert_null (mark);
+  clear_box (box);
 }
 
 typedef struct
@@ -93,19 +116,18 @@ static void
 list_paragraphs (gconstpointer data)
 {
   const TextCase *test = data;
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  g_object_ref_sink (box);
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   md_render (GTK_BOX (box), test->markdown);
   GtkWidget *view = gtk_widget_get_first_child (box);
   g_assert_true (GTK_IS_TEXT_VIEW (view));
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
   GtkTextIter start, end;
   gtk_text_buffer_get_bounds (buffer, &start, &end);
-  gchar *text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  g_autofree gchar *text =
+      gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
   g_assert_cmpstr (text, ==, test->expected);
-  g_free (text);
   clear_box (box);
-  g_object_unref (box);
 }
 
 typedef struct
@@ -117,8 +139,8 @@ static void
 table_cells (gconstpointer data)
 {
   const TableCase *test = data;
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  g_object_ref_sink (box);
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   md_render (GTK_BOX (box), test->markdown);
   GtkWidget *card = gtk_widget_get_first_child (box);
   g_assert_true (GTK_IS_BOX (card));
@@ -135,30 +157,27 @@ table_cells (gconstpointer data)
     g_assert_cmpstr (gtk_label_get_label (GTK_LABEL (body)), ==,
                      test->body_markup);
   clear_box (box);
-  g_object_unref (box);
 }
 
 static void
 link_targets (gconstpointer data)
 {
   const TextCase *test = data;
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  g_object_ref_sink (box);
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   md_render (GTK_BOX (box), test->markdown);
   GtkWidget *view = gtk_widget_get_first_child (box);
   g_assert_true (GTK_IS_TEXT_VIEW (view));
   GtkTextIter start;
   gtk_text_buffer_get_start_iter (
       gtk_text_view_get_buffer (GTK_TEXT_VIEW (view)), &start);
-  GSList *tags = gtk_text_iter_get_tags (&start);
+  g_autoptr (GSList) tags = gtk_text_iter_get_tags (&start);
   const gchar *href = NULL;
   for (GSList *it = tags; it != NULL; it = it->next)
     if (g_object_get_data (G_OBJECT (it->data), "href") != NULL)
       href = g_object_get_data (G_OBJECT (it->data), "href");
   g_assert_cmpstr (href, ==, test->expected);
-  g_slist_free (tags);
   clear_box (box);
-  g_object_unref (box);
 }
 
 typedef struct
@@ -170,8 +189,8 @@ static void
 code_block_content (gconstpointer data)
 {
   const CodeBlockCase *test = data;
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  g_object_ref_sink (box);
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   md_render (GTK_BOX (box), test->markdown);
   GtkWidget *card = gtk_widget_get_first_child (box);
   g_assert_true (gtk_widget_has_css_class (card, "code-card"));
@@ -183,11 +202,10 @@ code_block_content (gconstpointer data)
       GTK_TEXT_VIEW (gtk_widget_get_last_child (card)));
   GtkTextIter start, end;
   gtk_text_buffer_get_bounds (buffer, &start, &end);
-  gchar *text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  g_autofree gchar *text =
+      gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
   g_assert_cmpstr (text, ==, test->display);
-  g_free (text);
   clear_box (box);
-  g_object_unref (box);
 }
 
 static void
@@ -250,9 +268,9 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
     {
-      gchar *name = g_strdup_printf ("/markdown/text-tag/%u", i);
+      g_autofree gchar *name =
+          g_strdup_printf ("/markdown/text-tag/%u", i);
       g_test_add_data_func (name, &cases[i], text_tags);
-      g_free (name);
     }
   static const TextCase lists[] = {
     { "1. **问答与解释**\n   解释概念，分析问题。\n\n2. **写作与润色**\n   "
@@ -273,9 +291,9 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (lists); i++)
     {
-      gchar *name = g_strdup_printf ("/markdown/list-paragraphs/%u", i);
+      g_autofree gchar *name =
+          g_strdup_printf ("/markdown/list-paragraphs/%u", i);
       g_test_add_data_func (name, &lists[i], list_paragraphs);
-      g_free (name);
     }
   static const TableCase tables[] = {
     { "| header |\n| --- |\n| **bold *both* tail** ~~old~~ `code` |\n",
@@ -301,9 +319,9 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (tables); i++)
     {
-      gchar *name = g_strdup_printf ("/markdown/table/%u", i);
+      g_autofree gchar *name =
+          g_strdup_printf ("/markdown/table/%u", i);
       g_test_add_data_func (name, &tables[i], table_cells);
-      g_free (name);
     }
   static const TextCase links[] = {
     { "[web](https://example.com/?a=1&amp;b=2)",
@@ -318,9 +336,9 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (links); i++)
     {
-      gchar *name = g_strdup_printf ("/markdown/link/%u", i);
+      g_autofree gchar *name =
+          g_strdup_printf ("/markdown/link/%u", i);
       g_test_add_data_func (name, &links[i], link_targets);
-      g_free (name);
     }
   static const CodeBlockCase code_blocks[] = {
     { "```text\nline\n```\n", "line\n", "line" },
@@ -338,11 +356,12 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (code_blocks); i++)
     {
-      gchar *name = g_strdup_printf ("/markdown/code-block/content/%u", i);
+      g_autofree gchar *name =
+          g_strdup_printf ("/markdown/code-block/content/%u", i);
       g_test_add_data_func (name, &code_blocks[i], code_block_content);
-      g_free (name);
     }
   g_test_add_func ("/markdown/language-aliases", language_aliases);
   g_test_add_func ("/markdown/code-buffers-released", code_buffers_released);
+  g_test_add_func ("/markdown/open-scopes-released", open_scopes_released);
   return g_test_run ();
 }

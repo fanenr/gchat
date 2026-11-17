@@ -48,17 +48,16 @@ translation (gconstpointer data)
   g_assert_cmpstr (_ ("Copy code"), ==,
                    test->chinese ? "复制代码" : "Copy code");
   g_assert_cmpstr (_ ("Language"), ==, test->chinese ? "语言" : "Language");
-  gchar *title = g_strdup_printf (_ ("Thought (%.1f s)"), 1.5);
+  g_autofree gchar *title = g_strdup_printf (_ ("Thought (%.1f s)"), 1.5);
   g_assert_cmpstr (title, ==,
                    test->chinese ? "已思考（用时 1.5 秒）" : "Thought (1.5 s)");
-  g_free (title);
-  gchar *error = g_strdup_printf (_ ("Invalid conversation file structure: %s"),
-                                  "session.json");
+  g_autofree gchar *error =
+      g_strdup_printf (_ ("Invalid conversation file structure: %s"),
+                       "session.json");
   g_assert_cmpstr (error, ==,
                    test->chinese
                        ? "会话文件结构无效：session.json"
                        : "Invalid conversation file structure: session.json");
-  g_free (error);
 }
 
 int
@@ -85,9 +84,9 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
     {
-      gchar *name = g_strdup_printf ("/i18n/resolve/%s", cases[i].name);
+      g_autofree gchar *name =
+          g_strdup_printf ("/i18n/resolve/%s", cases[i].name);
       g_test_add_data_func (name, &cases[i], resolve_language);
-      g_free (name);
     }
   static const TranslationCase translations[] = {
     { "manual-english", "en", "zh_CN", FALSE },
@@ -98,10 +97,9 @@ main (int    argc,
   };
   for (guint i = 0; i < G_N_ELEMENTS (translations); i++)
     {
-      gchar *name =
+      g_autofree gchar *name =
           g_strdup_printf ("/i18n/translation/%s", translations[i].name);
       g_test_add_data_func (name, &translations[i], translation);
-      g_free (name);
     }
   return g_test_run ();
 }

@@ -8,8 +8,8 @@
 
 #include <glib/gi18n.h>
 
-/* Return a supported gettext language code; an unknown choice resolves from the
-   system language. */
+/* Return a borrowed supported gettext language code; an unknown choice resolves
+   from the system language. */
 const gchar *i18n_resolve (const gchar        *preference,
                            const gchar *const *languages);
 
