@@ -315,29 +315,32 @@ member_string (JsonObject  *obj,
   return g_strdup (json_node_get_string (node));
 }
 
-/* shortcut: DeepSeek uses one data line per event, aggregate frames before
-   adding multiline SSE providers. */
 static const gchar *
 sse_data (const gchar *line)
 {
+  if (g_str_equal (line, "data"))
+    return line + 4;
   if (!g_str_has_prefix (line, "data:"))
     return NULL;
   const gchar *data = line + 5;
   return *data == ' ' ? data + 1 : data;
 }
 
+static void
+sse_buffer_free (gpointer data)
+{
+  g_string_free (data, TRUE);
+}
+
 /* Set both outputs to newly allocated strings or NULL; the caller frees them.
    Free previous values before reuse because both slots are overwritten. */
 static gboolean
-sse_parse (const gchar *line,
+sse_parse (const gchar *data,
            gchar      **content,
            gchar      **reasoning)
 {
   *content = NULL;
   *reasoning = NULL;
-  const gchar *data = sse_data (line);
-  if (data == NULL)
-    return FALSE;
 
   g_autoptr (JsonParser) parser = json_parser_new ();
   gboolean ok = FALSE;
@@ -1669,6 +1672,52 @@ fail_stream (const gchar *reason)
   app_toast_retry (reason);
 }
 
+/* Apply one complete DeepSeek event to the current reply. */
+static void
+process_sse_event (const gchar *event)
+{
+  g_autofree gchar *content = NULL;
+  g_autofree gchar *reasoning = NULL;
+  if (!sse_parse (event, &content, &reasoning))
+    return;
+  if (reasoning != NULL && *reasoning)
+    {
+      g_string_append (app->reasoning, reasoning);
+      if (app->reason_box == NULL)
+        {
+          app->reason_box =
+              thought_widget (app->reasoning->str, 0, &app->reason_view,
+                              &app->reason_title);
+          gtk_box_prepend (GTK_BOX (app->reply_body), app->reason_box);
+          if (app->answer->len == 0)
+            set_thought_expanded (app->reason_box, TRUE);
+          gtk_label_set_text (GTK_LABEL (app->reason_title), _ ("Thinking…"));
+        }
+      else
+        {
+          gtk_text_buffer_set_text (
+              gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->reason_view)),
+              app->reasoning->str, -1);
+        }
+      if (app->answer->len == 0)
+        gtk_label_set_text (GTK_LABEL (app->reply_label), _ ("Thinking…"));
+      scroll_if_following ();
+    }
+  if (content != NULL && *content)
+    {
+      if (app->answer->len == 0 && app->reason_box != NULL)
+        {
+          app->thought_seconds = elapsed_seconds ();
+          set_thought_label (app->thought_seconds);
+          set_thought_expanded (app->reason_box, FALSE);
+        }
+      g_string_append (app->answer, content);
+      g_autofree gchar *shown = g_strconcat (app->answer->str, "▍", NULL);
+      gtk_label_set_text (GTK_LABEL (app->reply_label), shown);
+      scroll_if_following ();
+    }
+}
+
 /* Consume the stream reference reserved for this callback chain and the
    cancellable reference in data; res is borrowed. */
 static void
@@ -1705,55 +1754,35 @@ stream_line_cb (GObject      *src,
       return;
     }
 
-  const gchar *event = sse_data (line);
-  if (event != NULL && g_str_equal (event, "[DONE]"))
+  /* The stream owns the buffer, including across asynchronous callbacks. */
+  GString *event = g_object_get_data (G_OBJECT (lines), "sse-data");
+  if (*line != '\0')
     {
-      end_stream ();
-      return;
+      const gchar *value = sse_data (line);
+      if (value != NULL)
+        {
+          if (event == NULL)
+            {
+              event = g_string_new (NULL);
+              g_object_set_data_full (G_OBJECT (lines), "sse-data", event,
+                                      sse_buffer_free);
+            }
+          g_string_append (event, value);
+          g_string_append_c (event, '\n');
+        }
+    }
+  else if (event != NULL && event->len > 0)
+    {
+      g_string_truncate (event, event->len - 1);
+      if (g_str_equal (event->str, "[DONE]"))
+        {
+          end_stream ();
+          return;
+        }
+      process_sse_event (event->str);
+      g_string_truncate (event, 0);
     }
 
-  g_autofree gchar *content = NULL;
-  g_autofree gchar *reasoning = NULL;
-  if (sse_parse (line, &content, &reasoning))
-    {
-      if (reasoning != NULL && *reasoning)
-        {
-          g_string_append (app->reasoning, reasoning);
-          if (app->reason_box == NULL)
-            {
-              app->reason_box =
-                  thought_widget (app->reasoning->str, 0, &app->reason_view,
-                                  &app->reason_title);
-              gtk_box_prepend (GTK_BOX (app->reply_body), app->reason_box);
-              if (app->answer->len == 0)
-                set_thought_expanded (app->reason_box, TRUE);
-              gtk_label_set_text (GTK_LABEL (app->reason_title),
-                                  _ ("Thinking…"));
-            }
-          else
-            {
-              gtk_text_buffer_set_text (
-                  gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->reason_view)),
-                  app->reasoning->str, -1);
-            }
-          if (app->answer->len == 0)
-            gtk_label_set_text (GTK_LABEL (app->reply_label), _ ("Thinking…"));
-          scroll_if_following ();
-        }
-      if (content != NULL && *content)
-        {
-          if (app->answer->len == 0 && app->reason_box != NULL)
-            {
-              app->thought_seconds = elapsed_seconds ();
-              set_thought_label (app->thought_seconds);
-              set_thought_expanded (app->reason_box, FALSE);
-            }
-          g_string_append (app->answer, content);
-          g_autofree gchar *shown = g_strconcat (app->answer->str, "▍", NULL);
-          gtk_label_set_text (GTK_LABEL (app->reply_label), shown);
-          scroll_if_following ();
-        }
-    }
   g_data_input_stream_read_line_async (lines, G_PRIORITY_DEFAULT, cancel,
                                        stream_line_cb, cancel);
   /* Keep both references for the next invocation. */

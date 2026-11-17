@@ -419,20 +419,24 @@ sse_parser (void)
   g_autofree gchar *content = NULL;
   g_autofree gchar *reasoning = NULL;
 
-  g_assert_false (sse_parse ("data: [DONE]", &content, &reasoning));
-  g_assert_false (sse_parse (": keep-alive", &content, &reasoning));
-  g_assert_false (sse_parse ("data: not json", &content, &reasoning));
-  g_assert_false (sse_parse ("data: {\"choices\":[]}", &content, &reasoning));
+  g_assert_null (sse_data (": keep-alive"));
+  g_assert_null (sse_data ("datax: ignored"));
+  g_assert_cmpstr (sse_data ("data"), ==, "");
+  g_assert_cmpstr (sse_data ("data:"), ==, "");
+  g_assert_cmpstr (sse_data ("data:  value"), ==, " value");
+
+  g_assert_false (sse_parse ("[DONE]", &content, &reasoning));
+  g_assert_false (sse_parse ("not json", &content, &reasoning));
+  g_assert_false (sse_parse ("{\"choices\":[]}", &content, &reasoning));
 
   g_assert_true (
-      sse_parse ("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
+      sse_parse ("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
                  &content, &reasoning));
   g_assert_cmpstr (content, ==, "hi");
   g_assert_null (reasoning);
   g_clear_pointer (&content, g_free);
 
-  g_assert_true (sse_parse ("data: "
-                            "{\"choices\":[{\"delta\":{\"reasoning_content\":"
+  g_assert_true (sse_parse ("{\"choices\":[{\"delta\":{\"reasoning_content\":"
                             "\"think\",\"content\":\"a\"}}]}",
                             &content, &reasoning));
   g_assert_cmpstr (content, ==, "a");
@@ -441,14 +445,14 @@ sse_parser (void)
   g_clear_pointer (&reasoning, g_free);
 
   static const gchar *invalid[] = {
-    "data: null",
-    "data: []",
-    "data: {}",
-    "data: {\"choices\":null}",
-    "data: {\"choices\":{}}",
-    "data: {\"choices\":[null]}",
-    "data: {\"choices\":[{\"delta\":null}]}",
-    "data: {\"choices\":[{\"delta\":42}]}",
+    "null",
+    "[]",
+    "{}",
+    "{\"choices\":null}",
+    "{\"choices\":{}}",
+    "{\"choices\":[null]}",
+    "{\"choices\":[{\"delta\":null}]}",
+    "{\"choices\":[{\"delta\":42}]}",
   };
   for (guint i = 0; i < G_N_ELEMENTS (invalid); i++)
     {
@@ -457,12 +461,12 @@ sse_parser (void)
       g_assert_null (reasoning);
     }
   g_assert_true (
-      sse_parse ("data:{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\r",
+      sse_parse ("{\"choices\":\n[{\"delta\":{\"content\":\"hi\"}}]}",
                  &content, &reasoning));
   g_assert_cmpstr (content, ==, "hi");
   g_clear_pointer (&content, g_free);
   g_assert_true (
-      sse_parse ("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}",
+      sse_parse ("{\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}",
                  &content, &reasoning));
   g_assert_null (content);
   g_assert_null (reasoning);
@@ -1923,6 +1927,80 @@ shutdown_snapshot (gconstpointer data)
 }
 
 static void
+sse_stream (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  begin_reply (FALSE);
+
+  const gchar *events = GPOINTER_TO_INT (data) == 0
+      ? ": keep-alive\r\nevent: message\r\n"
+        "data: {\"choices\":\r\ndata\r\n"
+        "data:[{\"delta\":{\"content\":\"你好\"}}]}\r\n\r\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ignored\"}}]}\r\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ignored\"}}]}\r\n\r\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\r\n\r\n"
+        "data: [DONE]\r\n\r\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}\r\n\r\n"
+      : "data: {\"choices\":[{\"delta\":{\"content\":\"kept\"}}]}\n\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unfinished\"}}]}\n";
+  g_autoptr (GInputStream) input =
+      g_memory_input_stream_new_from_data (events, -1, NULL);
+  g_autoptr (GDataInputStream) lines = g_data_input_stream_new (input);
+  g_data_input_stream_set_newline_type (lines, G_DATA_STREAM_NEWLINE_TYPE_ANY);
+  g_data_input_stream_read_line_async (g_object_ref (lines), G_PRIORITY_DEFAULT,
+                                       app->cancel, stream_line_cb,
+                                       g_object_ref (app->cancel));
+  if (GPOINTER_TO_INT (data) == 0)
+    {
+      GString *event = NULL;
+      while (event == NULL)
+        {
+          g_main_context_iteration (NULL, TRUE);
+          event = g_object_get_data (G_OBJECT (lines), "sse-data");
+        }
+      g_assert_cmpstr (event->str, ==, "{\"choices\":\n");
+      g_assert_cmpuint (app->answer->len, ==, 0);
+    }
+  while (app->busy)
+    g_main_context_iteration (NULL, TRUE);
+
+  JsonObject *reply = json_array_get_object_element (app->chat->messages, 2);
+  g_assert_cmpstr (json_object_get_string_member (reply, "content"), ==,
+                   GPOINTER_TO_INT (data) == 0 ? "你好!" : "kept");
+  teardown ();
+}
+
+static void
+sse_cancel_pending (void)
+{
+  if (!setup_ui ())
+    return;
+  begin_reply (FALSE);
+
+  const gchar *events =
+      "data: {\"choices\":[{\"delta\":{\"content\":\"pending\"}}]}\n";
+  g_autoptr (GInputStream) input =
+      g_memory_input_stream_new_from_data (events, -1, NULL);
+  g_autoptr (GDataInputStream) lines = g_data_input_stream_new (input);
+  g_data_input_stream_read_line_async (g_object_ref (lines), G_PRIORITY_DEFAULT,
+                                       app->cancel, stream_line_cb,
+                                       g_object_ref (app->cancel));
+  while (g_object_get_data (G_OBJECT (lines), "sse-data") == NULL)
+    g_main_context_iteration (NULL, TRUE);
+  g_cancellable_cancel (app->cancel);
+  while (app->busy)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 2);
+
+  GDataInputStream *weak_lines = lines;
+  g_object_add_weak_pointer (G_OBJECT (lines), (gpointer *) &weak_lines);
+  g_clear_object (&lines);
+  g_assert_null (weak_lines);
+  teardown ();
+}
+
+static void
 reasoning_visibility (void)
 {
   if (!setup_ui ())
@@ -1930,10 +2008,11 @@ reasoning_visibility (void)
   begin_reply (FALSE);
 
   const gchar *events =
-      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"first\"}}]}\n"
-      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" second\"}}]}\n"
-      "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n"
-      "data: [DONE]\n";
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"first\"}}]}\n\n"
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":"
+      "\" second\"}}]}\n\n"
+      "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\n"
+      "data: [DONE]\n\n";
   g_autoptr (GInputStream) input =
       g_memory_input_stream_new_from_data (events, -1, NULL);
   g_autoptr (GDataInputStream) lines = g_data_input_stream_new (input);
@@ -2021,7 +2100,7 @@ close_save_failure (void)
     return;
   begin_reply (FALSE);
   g_autoptr (GInputStream) body =
-      g_memory_input_stream_new_from_data ("data: [DONE]\n", -1, NULL);
+      g_memory_input_stream_new_from_data ("data: [DONE]\n\n", -1, NULL);
   g_autoptr (GDataInputStream) lines = g_data_input_stream_new (body);
   g_data_input_stream_read_line_async (lines, G_PRIORITY_DEFAULT, app->cancel,
                                        stream_line_cb,
@@ -2523,6 +2602,11 @@ main (int    argc,
                         code_block_layout);
   g_test_add_func ("/app/action-visibility", action_visibility);
   g_test_add_func ("/app/sse-parse", sse_parser);
+  g_test_add_data_func ("/app/sse-stream/multiline", GINT_TO_POINTER (0),
+                        sse_stream);
+  g_test_add_data_func ("/app/sse-stream/incomplete", GINT_TO_POINTER (1),
+                        sse_stream);
+  g_test_add_func ("/app/sse-stream/cancel-pending", sse_cancel_pending);
   g_test_add_func ("/app/api-key-prompt-path", api_key_prompt_path);
   g_test_add_func ("/app/choice-selection", choice_selection);
   g_test_add_func ("/app/choice-lookup", choice_lookup);

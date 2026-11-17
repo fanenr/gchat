@@ -8,7 +8,7 @@ This page covers what [README](../README.md) does not.
 
 ### Streaming replies
 
-- The client reads SSE asynchronously with libsoup3 and shows text as it arrives.
+- The client reads SSE asynchronously with libsoup3 and shows text as it arrives. It joins multiple `data` lines with newlines and processes each event at the blank line.
 - The button becomes a stop button during generation. A click stops at once and keeps the text and reasoning received so far.
 - If a record has only reasoning, the client does not send it to the API as an empty reply.
 - After layout, streaming text and the Markdown tail follow the bottom.
@@ -226,7 +226,7 @@ The regression tests also cover the following areas:
 - Markdown inline style scope and language aliases.
 - Reasoning storage and request filtering.
 - A slow HTTP error body and cancellation.
-- SSE field types and CRLF.
+- SSE field types, multi-line events, CRLF, and incomplete events.
 - A list number on the same line as the first paragraph.
 - An ordered list that starts at 0.
 - Multiple paragraphs and nested lists.
@@ -267,8 +267,7 @@ GTK tests need a display backend. They skip when no backend is available.
 - Code highlighting looks up a GtkSourceView language ID and explicit aliases, for example `javascript` to `js` and `csharp` to `c-sharp`.
 - An unknown language name shows as plain text. The client does not do fuzzy matching.
 - A selection cannot cross messages. A GTK selection range is limited to one widget. Code blocks and tables are separate widgets, so a drag selection breaks there.
-- The client reads SSE as single-line `data:` JSON events from DeepSeek. It supports LF, CRLF, and a missing space after the colon.
-- Multi-line `data:` aggregation is not implemented. You must not use this code as a general SSE client.
+- The client expects DeepSeek JSON data and the `[DONE]` marker in SSE events. It ignores invalid JSON and does not process `event`, `id`, or `retry` fields. An event without its final blank line is discarded. This is not a general SSE client.
 - The client decodes only common named entities and numeric entities. A named entity outside the table stays as source text.
 - Draft autosave has a 750ms delay. A forced process kill loses input not yet written and the current streaming reply. `.bak` keeps only the previous copy and is not a separate backup. The temporary-file replace does not guarantee durability after a sudden power loss.
 - Image input is not connected yet. `deepseek-flash` supports image input.
