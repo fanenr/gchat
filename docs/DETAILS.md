@@ -20,7 +20,11 @@ This page covers what [README](../README.md) does not.
 - The client renders Markdown as native widgets.
 - The widgets cover headings, bold, italic, strikethrough, inline code, multi-level lists, nested quotes, rules, and tables.
 - Lists support task lists and ordered lists. An ordered list can start at 0.
-- Tables support column alignment and row separators.
+- Tables support column alignment, row separators, and inline code.
+- HTTPS images outside tables load automatically. Image servers can see your IP address and request time. Private-network HTTPS addresses are not filtered. Loading starts after a streaming reply finishes; history is loaded again when rendered.
+- Images use a separate request without API credentials. PNG, JPEG, GIF, and WebP are supported when the system decoder is available. GIF and WebP are displayed as static images.
+- Images are displayed at no more than 320 × 240 logical pixels, preserving aspect ratio without enlarging small images. The image can set a minimum width for the message, so very narrow layouts may not shrink to fit it.
+- Image requests do not follow redirects. They time out after 20 seconds and are limited to 8 MiB and 16 million decoded pixels. Failed or unsupported images show `[alt text]`; empty alt text shows `[Image]`.
 - Links open only HTTP, HTTPS, and mailto.
 - Local files, relative links, and other app schemes show as plain text. The client does not launch external programs.
 
@@ -261,9 +265,8 @@ GTK tests need a display backend. They skip when no backend is available.
 ## Known limits
 
 - A macOS IME can clear the preedit text before the commit and notify GTK only after it. The search box syncs the cleared preedit state before the commit. The state and commit hooks die with the matching input method context. The client does not disable the IME.
-- Images do not load. The client shows `[alt text]` only.
+- Table images show `[alt text]`. Table cells support inline code, but not multi-line code blocks.
 - Formulas (`$…$`) show as source text.
-- Images and code blocks inside a table cell do not render. The client keeps only the inline styles.
 - Code highlighting looks up a GtkSourceView language ID and explicit aliases, for example `javascript` to `js` and `csharp` to `c-sharp`.
 - An unknown language name shows as plain text. The client does not do fuzzy matching.
 - A selection cannot cross messages. A GTK selection range is limited to one widget. Code blocks and tables are separate widgets, so a drag selection breaks there.

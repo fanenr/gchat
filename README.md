@@ -40,7 +40,7 @@ The client needs these packages:
 ## Features
 
 - Streaming replies: the client reads SSE asynchronously with libsoup3 and shows text as it arrives. It supports multi-line event data. A stop button interrupts generation and keeps the text received so far.
-- Markdown rendering: md4c parses the text and renders it as native widgets, with headings, lists, quotes, tables, and code blocks.
+- Markdown rendering: md4c parses the text and renders it as native widgets, with headings, lists, quotes, tables, code blocks, and HTTPS images outside tables. Remote image servers can see your IP address and request time.
 - Code blocks: a separate card with a language label and a copy button. GtkSourceView does the highlighting.
 - Multiple sessions: search, pin, duplicate, rename, and delete sessions from the sidebar.
 - Message actions: copy, edit and resend, fork into a new session, regenerate, and delete.

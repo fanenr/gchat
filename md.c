@@ -9,6 +9,7 @@
 
 #include <adwaita.h>
 #include <gtksourceview/gtksource.h>
+#include <libsoup/soup.h>
 #include <md4c.h>
 
 static void
@@ -92,10 +93,8 @@ entity_text (GString     *out,
   g_string_append_len (out, s, (gssize) n);
 }
 
-/* Markdown comes from untrusted content, so it must not launch a local file or
-   an arbitrary app scheme. */
 static gchar *
-link_href (const MD_ATTRIBUTE *attribute)
+attribute_text (const MD_ATTRIBUTE *attribute)
 {
   g_autoptr (GString) href = g_string_new (NULL);
   for (guint i = 0;
@@ -110,13 +109,19 @@ link_href (const MD_ATTRIBUTE *attribute)
       else
         g_string_append_len (href, attribute->text + start, size);
     }
-  const gchar *scheme = g_uri_peek_scheme (href->str);
+  return g_string_free (g_steal_pointer (&href), FALSE);
+}
+
+/* Markdown must not launch a local file or an arbitrary app scheme. */
+static gchar *
+link_href (const MD_ATTRIBUTE *attribute)
+{
+  g_autofree gchar *href = attribute_text (attribute);
+  const gchar *scheme = g_uri_peek_scheme (href);
   if (scheme != NULL && (g_ascii_strcasecmp (scheme, "https") == 0 ||
                          g_ascii_strcasecmp (scheme, "http") == 0 ||
                          g_ascii_strcasecmp (scheme, "mailto") == 0))
-    {
-      return g_string_free (g_steal_pointer (&href), FALSE);
-    }
+    return g_steal_pointer (&href);
   return NULL;
 }
 
@@ -284,6 +289,222 @@ code_card (const gchar *lang,
   return card;
 }
 
+/* ---------- remote images ---------- */
+
+#define IMAGE_MAX_BYTES (8 * 1024 * 1024)
+#define IMAGE_MAX_PIXELS (16 * 1000 * 1000)
+#define IMAGE_DISPLAY_WIDTH 320
+#define IMAGE_DISPLAY_HEIGHT 240
+
+typedef struct
+{
+  GWeakRef      widget;
+  gchar        *url;
+  GCancellable *cancel;
+  guint         timeout;
+} ImageRequest;
+
+static void
+image_request_free (gpointer data)
+{
+  ImageRequest *request = data;
+  g_weak_ref_clear (&request->widget);
+  g_free (request->url);
+  g_clear_object (&request->cancel);
+  g_free (request);
+}
+
+static void
+cancel_image (gpointer data)
+{
+  GCancellable *cancel = data;
+  g_cancellable_cancel (cancel);
+  g_object_unref (cancel);
+}
+
+static gboolean
+image_timed_out (gpointer data)
+{
+  ImageRequest *request = data;
+  request->timeout = 0;
+  g_cancellable_cancel (request->cancel);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+image_url_allowed (const gchar *url)
+{
+  g_autoptr (GUri) uri = g_uri_parse (url, G_URI_FLAGS_NONE, NULL);
+  return uri != NULL && g_uri_get_scheme (uri) != NULL &&
+         g_ascii_strcasecmp (g_uri_get_scheme (uri), "https") == 0 &&
+         g_uri_get_host (uri) != NULL && *g_uri_get_host (uri) != '\0' &&
+         g_uri_get_userinfo (uri) == NULL;
+}
+
+static gboolean
+image_format_allowed (const guchar *data,
+                      gsize         len)
+{
+  return (len >= 8 && memcmp (data, "\x89PNG\r\n\x1a\n", 8) == 0) ||
+         (len >= 3 && memcmp (data, "\xff\xd8\xff", 3) == 0) ||
+         (len >= 6 && (memcmp (data, "GIF87a", 6) == 0 ||
+                       memcmp (data, "GIF89a", 6) == 0)) ||
+         (len >= 12 && memcmp (data, "RIFF", 4) == 0 &&
+          memcmp (data + 8, "WEBP", 4) == 0);
+}
+
+static void
+image_size_prepared (GdkPixbufLoader *loader,
+                     gint             width,
+                     gint             height,
+                     gpointer         data)
+{
+  gboolean *too_large = data;
+  if (width <= 0 || height <= 0 ||
+      (guint64) width * (guint64) height > IMAGE_MAX_PIXELS)
+    {
+      *too_large = TRUE;
+      gdk_pixbuf_loader_set_size (loader, 1, 1);
+    }
+}
+
+/* Return an owned thumbnail without enlarging the source. */
+static GdkPixbuf *
+image_thumbnail (GdkPixbuf *pixbuf)
+{
+  int width = gdk_pixbuf_get_width (pixbuf);
+  int height = gdk_pixbuf_get_height (pixbuf);
+  double scale = MIN (1.0, MIN ((double) IMAGE_DISPLAY_WIDTH / width,
+                                (double) IMAGE_DISPLAY_HEIGHT / height));
+  if (scale == 1.0)
+    return g_object_ref (pixbuf);
+  return gdk_pixbuf_scale_simple (pixbuf, MAX (1, (int) (width * scale)),
+                                  MAX (1, (int) (height * scale)),
+                                  GDK_INTERP_BILINEAR);
+}
+
+/* Decode outside the GTK thread and bound both the response and image size. */
+static void
+image_load_thread (GTask        *task,
+                   gpointer      source G_GNUC_UNUSED,
+                   gpointer      task_data,
+                   GCancellable *cancel)
+{
+  ImageRequest *request = task_data;
+  g_autoptr (SoupSession) session = soup_session_new ();
+  g_autoptr (SoupMessage) message =
+      soup_message_new (SOUP_METHOD_GET, request->url);
+  g_autoptr (GInputStream) stream = NULL;
+  g_autoptr (GByteArray) bytes = g_byte_array_new ();
+  g_autoptr (GdkPixbufLoader) loader = NULL;
+  GdkPixbuf *pixbuf = NULL;
+  gboolean too_large = FALSE;
+  guchar chunk[16384];
+  gssize count;
+
+  if (message == NULL)
+    goto done;
+  soup_session_set_timeout (session, 15);
+  soup_message_set_flags (message, SOUP_MESSAGE_NO_REDIRECT |
+                                       SOUP_MESSAGE_DO_NOT_USE_AUTH_CACHE);
+  stream = soup_session_send (session, message, cancel, NULL);
+  if (stream == NULL || !SOUP_STATUS_IS_SUCCESSFUL (
+                            soup_message_get_status (message)))
+    goto done;
+  if (soup_message_headers_get_content_length (
+          soup_message_get_response_headers (message)) > IMAGE_MAX_BYTES)
+    goto done;
+  while ((count = g_input_stream_read (stream, chunk, sizeof chunk, cancel,
+                                       NULL)) > 0)
+    {
+      if (bytes->len + (gsize) count > IMAGE_MAX_BYTES)
+        goto done;
+      g_byte_array_append (bytes, chunk, (guint) count);
+    }
+  if (count < 0 || !image_format_allowed (bytes->data, bytes->len))
+    goto done;
+  loader = gdk_pixbuf_loader_new ();
+  g_signal_connect (loader, "size-prepared", G_CALLBACK (image_size_prepared),
+                    &too_large);
+  gboolean written =
+      gdk_pixbuf_loader_write (loader, bytes->data, bytes->len, NULL);
+  gboolean closed = gdk_pixbuf_loader_close (loader, NULL);
+  if (!written || !closed || too_large)
+    goto done;
+  GdkPixbuf *original = gdk_pixbuf_loader_get_pixbuf (loader);
+  if (original != NULL)
+    pixbuf = image_thumbnail (original);
+
+done:
+  g_task_return_pointer (task, pixbuf, g_object_unref);
+}
+
+static void
+image_loaded (GObject      *source G_GNUC_UNUSED,
+              GAsyncResult *result,
+              gpointer      data G_GNUC_UNUSED)
+{
+  GTask *task = G_TASK (result);
+  ImageRequest *request = g_task_get_task_data (task);
+  g_clear_handle_id (&request->timeout, g_source_remove);
+  g_autoptr (GdkPixbuf) pixbuf = g_task_propagate_pointer (task, NULL);
+  g_autoptr (GtkWidget) box = g_weak_ref_get (&request->widget);
+  if (pixbuf == NULL || box == NULL)
+    return;
+
+  g_autoptr (GBytes) pixels = gdk_pixbuf_read_pixel_bytes (pixbuf);
+  GdkMemoryFormat format = gdk_pixbuf_get_has_alpha (pixbuf)
+                               ? GDK_MEMORY_R8G8B8A8
+                               : GDK_MEMORY_R8G8B8;
+  int width = gdk_pixbuf_get_width (pixbuf);
+  int height = gdk_pixbuf_get_height (pixbuf);
+  g_autoptr (GdkTexture) texture = gdk_memory_texture_new (
+      width, height, format, pixels, gdk_pixbuf_get_rowstride (pixbuf));
+  GtkWidget *picture = gtk_picture_new_for_paintable (GDK_PAINTABLE (texture));
+  const gchar *alt = g_object_get_data (G_OBJECT (box), "image-alt");
+  gtk_picture_set_alternative_text (GTK_PICTURE (picture), alt);
+  gtk_picture_set_can_shrink (GTK_PICTURE (picture), TRUE);
+  gtk_picture_set_content_fit (GTK_PICTURE (picture),
+                               GTK_CONTENT_FIT_SCALE_DOWN);
+  gtk_widget_set_size_request (picture, width, height);
+  gtk_box_remove (GTK_BOX (box), gtk_widget_get_first_child (box));
+  gtk_box_append (GTK_BOX (box), picture);
+  gtk_widget_queue_resize (box);
+}
+
+static void
+start_image_request (GtkWidget   *box,
+                     const gchar *url)
+{
+  GCancellable *cancel = g_cancellable_new ();
+  ImageRequest *request = g_new0 (ImageRequest, 1);
+  g_weak_ref_init (&request->widget, box);
+  request->url = g_strdup (url);
+  request->cancel = g_object_ref (cancel);
+  request->timeout = g_timeout_add_seconds (20, image_timed_out, request);
+  g_object_set_data_full (G_OBJECT (box), "image-cancel", cancel,
+                          cancel_image);
+  g_autoptr (GTask) task = g_task_new (NULL, cancel, image_loaded, NULL);
+  g_task_set_task_data (task, request, image_request_free);
+  g_task_run_in_thread (task, image_load_thread);
+}
+
+static GtkWidget *
+image_widget (const gchar *url,
+              const gchar *alt)
+{
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
+  const gchar *description = *alt != '\0' ? alt : _ ("Image");
+  g_autofree gchar *fallback = g_strdup_printf ("[%s]", description);
+  gtk_box_append (GTK_BOX (box), gtk_label_new (fallback));
+  gtk_widget_set_tooltip_text (box, description);
+  g_object_set_data_full (G_OBJECT (box), "image-alt", g_strdup (description),
+                          g_free);
+  if (image_url_allowed (url))
+    start_image_request (box, url);
+  return box;
+}
+
 /* ---------- table cell ---------- */
 
 static GtkWidget *
@@ -339,6 +560,9 @@ typedef struct
 
   gboolean        in_cell;
   GString        *cell;
+  GString        *image_alt;
+  gchar          *image_src;
+  guint           image_depth;
   GString        *code;
   gchar          *code_lang;
   MD_ALIGN        cell_align;
@@ -361,6 +585,9 @@ md_ctx_clear (MdCtx *ctx)
   g_array_unref (ctx->scopes);
   g_array_unref (ctx->ol_numbers);
   g_string_free (ctx->cell, TRUE);
+  if (ctx->image_alt != NULL)
+    g_string_free (ctx->image_alt, TRUE);
+  g_free (ctx->image_src);
   g_string_free (ctx->code, TRUE);
   g_free (ctx->code_lang);
 }
@@ -876,6 +1103,13 @@ on_enter_span (MD_SPANTYPE type,
   MdCtx *ctx = ud;
   GString *cell = ctx->cell;
 
+  if (ctx->image_depth > 0)
+    {
+      if (type == MD_SPAN_IMG)
+        ctx->image_depth++;
+      return 0;
+    }
+
   switch (type)
     {
     case MD_SPAN_EM:
@@ -921,7 +1155,12 @@ on_enter_span (MD_SPANTYPE type,
       if (ctx->in_cell)
         g_string_append (cell, "[");
       else
-        insert_text (ctx, "[", 1, NULL);
+        {
+          MD_SPAN_IMG_DETAIL *image = detail;
+          ctx->image_src = attribute_text (&image->src);
+          ctx->image_alt = g_string_new (NULL);
+          ctx->image_depth = 1;
+        }
       break;
     default:
       break;
@@ -935,6 +1174,25 @@ on_leave_span (MD_SPANTYPE type,
                void       *ud)
 {
   MdCtx *ctx = ud;
+
+  if (ctx->image_depth > 0)
+    {
+      if (type == MD_SPAN_IMG && --ctx->image_depth == 0)
+        {
+          ensure_view (ctx);
+          GtkTextIter end;
+          gtk_text_buffer_get_end_iter (ctx->buffer, &end);
+          GtkTextChildAnchor *anchor =
+              gtk_text_buffer_create_child_anchor (ctx->buffer, &end);
+          GtkWidget *widget = image_widget (ctx->image_src,
+                                            ctx->image_alt->str);
+          gtk_text_view_add_child_at_anchor (ctx->view, widget, anchor);
+          g_clear_pointer (&ctx->image_src, g_free);
+          g_string_free (ctx->image_alt, TRUE);
+          ctx->image_alt = NULL;
+        }
+      return 0;
+    }
 
   switch (type)
     {
@@ -1012,7 +1270,9 @@ on_text (MD_TEXTTYPE    type,
     default:
       return 0;
     }
-  if (ctx->in_cell)
+  if (ctx->image_depth > 0)
+    g_string_append_len (ctx->image_alt, text, (gssize) length);
+  else if (ctx->in_cell)
     escape_into (ctx->cell, text, length);
   else
     insert_text (ctx, text, length, NULL);

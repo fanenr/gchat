@@ -209,6 +209,306 @@ code_block_content (gconstpointer data)
 }
 
 static void
+image_markup (void)
+{
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  md_render (GTK_BOX (box),
+             "before ![an *image* &amp; text](file:///tmp/x) after "
+             "![](file:///tmp/y)");
+  GtkWidget *view = gtk_widget_get_first_child (box);
+  g_assert_true (GTK_IS_TEXT_VIEW (view));
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+  GtkTextIter iter;
+  gtk_text_buffer_get_iter_at_offset (buffer, &iter, 7);
+  GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor (&iter);
+  g_assert_nonnull (anchor);
+  guint count = 0;
+  GtkWidget **widgets = gtk_text_child_anchor_get_widgets (anchor, &count);
+  g_assert_cmpuint (count, ==, 1);
+  GtkWidget *label = gtk_widget_get_first_child (widgets[0]);
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (label)), ==,
+                   "[an image & text]");
+  g_free (widgets);
+  gtk_text_buffer_get_iter_at_offset (buffer, &iter, 15);
+  anchor = gtk_text_iter_get_child_anchor (&iter);
+  g_assert_nonnull (anchor);
+  widgets = gtk_text_child_anchor_get_widgets (anchor, &count);
+  g_assert_cmpuint (count, ==, 1);
+  label = gtk_widget_get_first_child (widgets[0]);
+  g_autofree gchar *empty_alt = g_strdup_printf ("[%s]", _ ("Image"));
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (label)), ==, empty_alt);
+  g_free (widgets);
+  clear_box (box);
+}
+
+typedef struct
+{
+  int width, height;
+  int expected_width, expected_height;
+} ThumbnailCase;
+
+static void
+image_thumbnail_size (gconstpointer data)
+{
+  const ThumbnailCase *test = data;
+  g_autoptr (GdkPixbuf) original = gdk_pixbuf_new (
+      GDK_COLORSPACE_RGB, TRUE, 8, test->width, test->height);
+  gdk_pixbuf_fill (original, 0xff0000ff);
+  g_autoptr (GdkPixbuf) thumbnail = image_thumbnail (original);
+  g_assert_nonnull (thumbnail);
+  g_assert_cmpint (gdk_pixbuf_get_width (thumbnail), ==, test->expected_width);
+  g_assert_cmpint (gdk_pixbuf_get_height (thumbnail), ==,
+                   test->expected_height);
+}
+
+static void
+image_urls (void)
+{
+  g_assert_true (image_url_allowed ("https://example.com/image.png"));
+  g_assert_true (image_url_allowed ("HTTPS://example.com/a?x=1&y=2"));
+  g_assert_false (image_url_allowed ("http://example.com/image.png"));
+  g_assert_false (image_url_allowed ("file:///tmp/image.png"));
+  g_assert_false (image_url_allowed ("data:image/png;base64,abc"));
+  g_assert_false (image_url_allowed ("/image.png"));
+  g_assert_false (image_url_allowed ("https://user:pass@example.com/x"));
+}
+
+typedef struct
+{
+  GMainLoop *loop;
+  GdkPixbuf *pixbuf;
+  gboolean   done;
+} ImageResult;
+
+static void
+image_test_done (GObject      *source G_GNUC_UNUSED,
+                 GAsyncResult *result,
+                 gpointer      data)
+{
+  ImageResult *state = data;
+  state->pixbuf = g_task_propagate_pointer (G_TASK (result), NULL);
+  state->done = TRUE;
+  g_main_loop_quit (state->loop);
+}
+
+static gboolean
+image_test_timeout (gpointer data)
+{
+  g_main_loop_quit (data);
+  return G_SOURCE_REMOVE;
+}
+
+typedef struct
+{
+  GMainLoop *loop;
+  GtkWidget *widget;
+  gboolean   done;
+} ImageWidgetResult;
+
+static gboolean
+image_widget_ready (gpointer data)
+{
+  ImageWidgetResult *state = data;
+  if (!GTK_IS_PICTURE (gtk_widget_get_first_child (state->widget)))
+    return G_SOURCE_CONTINUE;
+  state->done = TRUE;
+  g_main_loop_quit (state->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+image_server_response (SoupServer        *server G_GNUC_UNUSED,
+                       SoupServerMessage *message,
+                       const char        *path,
+                       GHashTable        *query G_GNUC_UNUSED,
+                       gpointer           data)
+{
+  GBytes *png = data;
+  if (g_str_equal (path, "/redirect"))
+    {
+      soup_server_message_set_redirect (message, SOUP_STATUS_FOUND, "/ok");
+      return;
+    }
+  soup_server_message_set_status (message, SOUP_STATUS_OK, NULL);
+  if (g_str_equal (path, "/invalid"))
+    {
+      soup_server_message_set_response (message, "image/svg+xml",
+                                        SOUP_MEMORY_STATIC, "<svg/>", 6);
+      return;
+    }
+  if (g_str_equal (path, "/truncated"))
+    {
+      soup_server_message_set_response (message, "image/png",
+                                        SOUP_MEMORY_STATIC,
+                                        "\x89PNG\r\n\x1a\n", 8);
+      return;
+    }
+  if (g_str_equal (path, "/large"))
+    {
+      g_autofree gchar *large = g_malloc0 (IMAGE_MAX_BYTES + 1);
+      soup_server_message_set_response (message, "image/png", SOUP_MEMORY_COPY,
+                                        large, IMAGE_MAX_BYTES + 1);
+      return;
+    }
+  gsize len;
+  const gchar *bytes = g_bytes_get_data (png, &len);
+  soup_server_message_set_response (message, "image/png", SOUP_MEMORY_COPY,
+                                    bytes, len);
+}
+
+static void
+image_network (void)
+{
+  g_autoptr (GdkPixbuf) original =
+      gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, 640, 480);
+  gdk_pixbuf_fill (original, 0xff0000ff);
+  gchar *png_data = NULL;
+  gsize png_len = 0;
+  g_assert_true (gdk_pixbuf_save_to_buffer (original, &png_data, &png_len,
+                                            "png", NULL, NULL));
+  g_autoptr (GBytes) png = g_bytes_new_take (png_data, png_len);
+  g_autoptr (SoupServer) server = soup_server_new (NULL, NULL);
+  soup_server_add_handler (server, NULL, image_server_response, png, NULL);
+  g_assert_true (soup_server_listen_local (server, 0,
+                                           SOUP_SERVER_LISTEN_IPV4_ONLY, NULL));
+  GSList *uris = soup_server_get_uris (server);
+  g_assert_nonnull (uris);
+  g_autofree gchar *base = g_uri_to_string (uris->data);
+  g_slist_free_full (uris, (GDestroyNotify) g_uri_unref);
+
+  const gchar *paths[] = { "ok", "redirect", "invalid", "large", "truncated" };
+  for (guint i = 0; i < G_N_ELEMENTS (paths); i++)
+    {
+      ImageRequest *request = g_new0 (ImageRequest, 1);
+      g_weak_ref_init (&request->widget, NULL);
+      request->url = g_strconcat (base, paths[i], NULL);
+      ImageResult state = { .loop = g_main_loop_new (NULL, FALSE) };
+      g_autoptr (GTask) task = g_task_new (NULL, NULL, image_test_done, &state);
+      g_task_set_task_data (task, request, image_request_free);
+      guint timeout = g_timeout_add_seconds (5, image_test_timeout, state.loop);
+      g_task_run_in_thread (task, image_load_thread);
+      g_main_loop_run (state.loop);
+      g_assert_true (state.done);
+      g_source_remove (timeout);
+      g_main_loop_unref (state.loop);
+      if (i == 0)
+        {
+          g_assert_nonnull (state.pixbuf);
+          g_assert_cmpint (gdk_pixbuf_get_width (state.pixbuf), ==, 320);
+          g_assert_cmpint (gdk_pixbuf_get_height (state.pixbuf), ==, 240);
+        }
+      else
+        g_assert_null (state.pixbuf);
+      g_clear_object (&state.pixbuf);
+    }
+  g_autoptr (GtkWidget) container =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  md_render (GTK_BOX (container),
+             "before ![description](file:///not-loaded) after");
+  GtkWidget *view = gtk_widget_get_first_child (container);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+  GtkTextIter iter;
+  gtk_text_buffer_get_iter_at_offset (buffer, &iter, 7);
+  GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor (&iter);
+  g_assert_nonnull (anchor);
+  guint count = 0;
+  GtkWidget **widgets = gtk_text_child_anchor_get_widgets (anchor, &count);
+  g_assert_cmpuint (count, ==, 1);
+  GtkWidget *widget = widgets[0];
+  g_free (widgets);
+  g_autofree gchar *url = g_strconcat (base, "ok", NULL);
+  ImageWidgetResult display = {
+    .loop = g_main_loop_new (NULL, FALSE),
+    .widget = widget,
+  };
+  guint timeout = g_timeout_add_seconds (5, image_test_timeout, display.loop);
+  g_timeout_add (5, image_widget_ready, &display);
+  start_image_request (widget, url);
+  g_main_loop_run (display.loop);
+  g_assert_true (display.done);
+  g_source_remove (timeout);
+  g_main_loop_unref (display.loop);
+  GtkWidget *picture = gtk_widget_get_first_child (widget);
+  g_assert_true (GTK_IS_PICTURE (picture));
+  int minimum_width = 0;
+  gtk_widget_measure (view, GTK_ORIENTATION_HORIZONTAL, -1, &minimum_width,
+                      NULL, NULL, NULL);
+  g_assert_cmpint (minimum_width, >=, 320);
+  g_assert_cmpstr (gtk_picture_get_alternative_text (GTK_PICTURE (picture)),
+                   ==, "description");
+  GdkPaintable *paintable = gtk_picture_get_paintable (GTK_PICTURE (picture));
+  g_assert_nonnull (paintable);
+  g_assert_cmpint (gdk_paintable_get_intrinsic_width (paintable), ==, 320);
+  g_assert_cmpint (gdk_paintable_get_intrinsic_height (paintable), ==, 240);
+  g_assert_cmpint (gtk_picture_get_content_fit (GTK_PICTURE (picture)), ==,
+                   GTK_CONTENT_FIT_SCALE_DOWN);
+
+  gtk_widget_allocate (picture, 800, 600, -1, NULL);
+  GtkSnapshot *snapshot = gtk_snapshot_new ();
+  GTK_WIDGET_GET_CLASS (picture)->snapshot (picture, snapshot);
+  g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (snapshot);
+  g_assert_nonnull (node);
+  graphene_rect_t bounds;
+  gsk_render_node_get_bounds (node, &bounds);
+  g_assert_cmpfloat (bounds.size.width, ==, 320);
+  g_assert_cmpfloat (bounds.size.height, ==, 240);
+
+  gtk_widget_allocate (picture, 160, 120, -1, NULL);
+  snapshot = gtk_snapshot_new ();
+  GTK_WIDGET_GET_CLASS (picture)->snapshot (picture, snapshot);
+  g_clear_pointer (&node, gsk_render_node_unref);
+  node = gtk_snapshot_free_to_node (snapshot);
+  g_assert_nonnull (node);
+  gsk_render_node_get_bounds (node, &bounds);
+  g_assert_cmpfloat (bounds.size.width, ==, 160);
+  g_assert_cmpfloat (bounds.size.height, ==, 120);
+
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds (buffer, &start, &end);
+  g_autofree gchar *text = gtk_text_buffer_get_text (buffer, &start, &end,
+                                                     FALSE);
+  g_assert_cmpstr (text, ==, "before  after");
+  clear_box (container);
+  soup_server_disconnect (server);
+}
+
+static void
+image_pixel_limit (void)
+{
+  g_autoptr (GdkPixbufLoader) loader = gdk_pixbuf_loader_new ();
+  gboolean too_large = FALSE;
+  image_size_prepared (loader, 4000, 4000, &too_large);
+  g_assert_false (too_large);
+  image_size_prepared (loader, 4001, 4000, &too_large);
+  g_assert_true (too_large);
+  gdk_pixbuf_loader_close (loader, NULL);
+}
+
+static void
+image_timeout (void)
+{
+  g_autoptr (GCancellable) cancel = g_cancellable_new ();
+  ImageRequest request = { .cancel = cancel, .timeout = 1 };
+  g_assert_false (image_timed_out (&request));
+  g_assert_true (g_cancellable_is_cancelled (cancel));
+  g_assert_cmpuint (request.timeout, ==, 0);
+}
+
+static void
+image_cancel_on_destroy (void)
+{
+  GtkWidget *widget = g_object_ref_sink (
+      image_widget ("file:///not-loaded", "alt"));
+  start_image_request (widget, "http://127.0.0.1:1/image.png");
+  GCancellable *cancel = g_object_ref (
+      g_object_get_data (G_OBJECT (widget), "image-cancel"));
+  g_object_unref (widget);
+  g_assert_true (g_cancellable_is_cancelled (cancel));
+  g_object_unref (cancel);
+}
+
+static void
 language_aliases (void)
 {
   static const gchar *const names[][2] = {
@@ -299,6 +599,8 @@ main (int    argc,
     { "| header |\n| --- |\n| **bold *both* tail** ~~old~~ `code` |\n",
       "header", "bold both tail old code",
       "<b>bold <i>both</i> tail</b> <s>old</s> <tt>code</tt>" },
+    { "| header |\n| --- |\n| ![alt](https://example.com/a.png) `code` |\n",
+      "header", "[alt] code", "[alt] <tt>code</tt>" },
     { "| header |\n| --- |\n| [local](file:///tmp/example) |\n", "header",
       "local", "<span>local</span>" },
     { "| header |\n| --- |\n| [link](https://example.com/?a=1&amp;b=2) |\n",
@@ -360,6 +662,26 @@ main (int    argc,
           g_strdup_printf ("/markdown/code-block/content/%u", i);
       g_test_add_data_func (name, &code_blocks[i], code_block_content);
     }
+  static const ThumbnailCase thumbnails[] = {
+    { 1200, 600, 320, 160 },
+    { 600, 1200, 120, 240 },
+    { 100, 50, 100, 50 },
+    { 320, 240, 320, 240 },
+    { 1, 16000, 1, 240 },
+    { 16000, 1, 320, 1 },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS (thumbnails); i++)
+    {
+      g_autofree gchar *name =
+          g_strdup_printf ("/markdown/image/thumbnail/%u", i);
+      g_test_add_data_func (name, &thumbnails[i], image_thumbnail_size);
+    }
+  g_test_add_func ("/markdown/image/markup", image_markup);
+  g_test_add_func ("/markdown/image/urls", image_urls);
+  g_test_add_func ("/markdown/image/network", image_network);
+  g_test_add_func ("/markdown/image/pixel-limit", image_pixel_limit);
+  g_test_add_func ("/markdown/image/timeout", image_timeout);
+  g_test_add_func ("/markdown/image/cancel", image_cancel_on_destroy);
   g_test_add_func ("/markdown/language-aliases", language_aliases);
   g_test_add_func ("/markdown/code-buffers-released", code_buffers_released);
   g_test_add_func ("/markdown/open-scopes-released", open_scopes_released);

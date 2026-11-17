@@ -13,6 +13,9 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+msgid "Image"
+msgstr "图片"
+
 #: main.c:25
 msgid "Off"
 msgstr "关闭"

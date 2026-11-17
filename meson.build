@@ -38,8 +38,9 @@ md_deps = [
   dependency('libadwaita-1', version: '>=1.5'),
   dependency('md4c'),
   dependency('gtksourceview-5'),
+  dependency('libsoup-3.0'),
 ]
-app_deps = store_deps + md_deps + [dependency('libsoup-3.0')]
+app_deps = store_deps + md_deps
 
 executable('gchat', ['main.c', 'md.c', 'store.c', resources],
   dependencies: app_deps + [i18n_dep],
