@@ -77,11 +77,11 @@ static void on_fork_message (GtkButton *button,
                              gpointer   data);
 static void on_regenerate_message (GtkButton *button,
                                    gpointer   data);
-static void on_row_rename (GtkGestureClick *gesture,
-                           int              n_press,
-                           double           x,
-                           double           y,
-                           gpointer         data);
+static void on_row_menu (GtkGestureClick *gesture,
+                         int              n_press,
+                         double           x,
+                         double           y,
+                         gpointer         data);
 static void regenerate (void);
 static void start_request (void);
 static void refresh_input (void);
@@ -757,6 +757,8 @@ cmp_chat_desc (gconstpointer a,
 {
   const Chat *x = *(Chat *const *) a;
   const Chat *y = *(Chat *const *) b;
+  if (x->pinned != y->pinned)
+    return x->pinned ? -1 : 1;
   if (x->created == y->created)
     return 0;
   return x->created > y->created ? -1 : 1;
@@ -814,6 +816,27 @@ search_preview (Chat   *chat,
 }
 
 static void
+close_row_menu (GtkPopover *popover,
+                gpointer    data G_GNUC_UNUSED)
+{
+  GtkWidget *row = gtk_widget_get_parent (GTK_WIDGET (popover));
+  if (row != NULL)
+    {
+      g_object_set_data (G_OBJECT (row), "context-menu", NULL);
+      gtk_widget_unparent (GTK_WIDGET (popover));
+    }
+}
+
+static void
+on_row_unmap (GtkWidget *row,
+              gpointer   data G_GNUC_UNUSED)
+{
+  GtkPopover *popover = g_object_get_data (G_OBJECT (row), "context-menu");
+  if (popover != NULL)
+    close_row_menu (popover, NULL);
+}
+
+static void
 rebuild_sidebar (void)
 {
   app->syncing = TRUE;
@@ -831,11 +854,17 @@ rebuild_sidebar (void)
     {
       GtkWidget *next = gtk_widget_get_next_sibling (child);
       if (GTK_IS_LIST_BOX_ROW (child))
-        gtk_list_box_remove (GTK_LIST_BOX (app->sidebar_list), child);
+        {
+          GtkPopover *popover = g_object_get_data (G_OBJECT (child),
+                                                   "context-menu");
+          if (popover != NULL)
+            close_row_menu (popover, NULL);
+          gtk_list_box_remove (GTK_LIST_BOX (app->sidebar_list), child);
+        }
       child = next;
     }
 
-  /* Put the newest session on top. */
+  /* Put pinned sessions first, then sort each group by creation time. */
   GArray *sorted = g_array_new (FALSE, FALSE, sizeof (Chat *));
   for (guint i = 0; i < app->chats->len; i++)
     {
@@ -853,7 +882,8 @@ rebuild_sidebar (void)
       if (regex != NULL && preview == NULL)
         continue;
 
-      const gchar *label_text = chat_group_label (chat->created);
+      const gchar *label_text = chat->pinned ? _ ("Pinned")
+                                            : chat_group_label (chat->created);
       if (group == NULL || !g_str_equal (group, label_text))
         {
           sidebar_add_group (label_text);
@@ -898,11 +928,12 @@ rebuild_sidebar (void)
       gtk_overlay_add_overlay (GTK_OVERLAY (overlay), del);
       gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (row), overlay);
       g_object_set_data (G_OBJECT (row), "chat", chat);
-      gtk_widget_set_tooltip_text (row, _ ("Right-click to rename"));
+      g_signal_connect (row, "unmap", G_CALLBACK (on_row_unmap), NULL);
+      gtk_widget_set_tooltip_text (row, _ ("Right-click for conversation menu"));
       GtkGesture *secondary = gtk_gesture_click_new ();
       gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (secondary),
                                      GDK_BUTTON_SECONDARY);
-      g_signal_connect (secondary, "pressed", G_CALLBACK (on_row_rename), row);
+      g_signal_connect (secondary, "pressed", G_CALLBACK (on_row_menu), row);
       gtk_widget_add_controller (row, GTK_EVENT_CONTROLLER (secondary));
       gtk_list_box_append (GTK_LIST_BOX (app->sidebar_list), row);
       if (chat == app->chat)
@@ -966,6 +997,20 @@ on_edit_message (GtkButton *button G_GNUC_UNUSED,
 }
 
 static void
+copy_message (JsonArray  *target,
+              JsonObject *original)
+{
+  JsonObject *copy = json_object_new ();
+  GList *members = json_object_get_members (original);
+  for (GList *l = members; l != NULL; l = l->next)
+    json_object_set_member (copy, l->data,
+                            json_node_copy (json_object_get_member (
+                                original, l->data)));
+  g_list_free (members);
+  json_array_add_object_element (target, copy);
+}
+
+static void
 on_fork_message (GtkButton *button G_GNUC_UNUSED,
                  gpointer   data)
 {
@@ -993,14 +1038,7 @@ on_fork_message (GtkButton *button G_GNUC_UNUSED,
     {
       JsonObject *original =
           json_array_get_object_element (source->messages, i);
-      JsonObject *copy = json_object_new ();
-      GList *members = json_object_get_members (original);
-      for (GList *l = members; l != NULL; l = l->next)
-        json_object_set_member (copy, l->data,
-                                json_node_copy (json_object_get_member (
-                                    original, l->data)));
-      g_list_free (members);
-      json_array_add_object_element (fork->messages, copy);
+      copy_message (fork->messages, original);
     }
 
   gtk_editable_set_text (GTK_EDITABLE (app->search), "");
@@ -1086,14 +1124,11 @@ on_rename_activate (GtkEntry *entry,
 }
 
 static void
-on_row_rename (GtkGestureClick *gesture G_GNUC_UNUSED,
-               int              n_press G_GNUC_UNUSED,
-               double           x G_GNUC_UNUSED,
-               double           y G_GNUC_UNUSED,
-               gpointer         data)
+on_row_rename (GtkButton *button G_GNUC_UNUSED,
+               gpointer   data)
 {
-  Chat *chat = g_object_get_data (G_OBJECT (data), "chat");
-  if (chat == NULL || app->busy)
+  Chat *chat = data;
+  if (app->busy)
     return;
 
   AdwAlertDialog *dialog =
@@ -1111,6 +1146,88 @@ on_row_rename (GtkGestureClick *gesture G_GNUC_UNUSED,
   adw_alert_dialog_set_default_response (ADW_ALERT_DIALOG (dialog), "save");
   g_signal_connect (dialog, "response", G_CALLBACK (on_rename_response), chat);
   adw_dialog_present (ADW_DIALOG (dialog), app->window);
+}
+
+static void
+on_row_pin (GtkButton *button G_GNUC_UNUSED,
+            gpointer   data)
+{
+  Chat *chat = data;
+  if (app->busy)
+    return;
+  chat->pinned = !chat->pinned;
+  rebuild_sidebar ();
+  save_session ();
+}
+
+static void
+on_row_copy (GtkButton *button G_GNUC_UNUSED,
+             gpointer   data)
+{
+  Chat *source = data;
+  if (app->busy)
+    return;
+
+  Chat *copy = chat_new_empty ();
+  g_free (copy->title);
+  copy->title = *source->title
+                    ? g_strdup_printf (_ ("%s (Copy)"), source->title)
+                    : g_strdup (_ ("Copy"));
+  g_free (copy->draft);
+  copy->draft = g_strdup (source->draft);
+  copy->edit_from = source->edit_from;
+  g_free (copy->edit_text);
+  copy->edit_text = g_strdup (source->edit_text);
+  for (guint i = 0; i < json_array_get_length (source->messages); i++)
+    {
+      JsonObject *original = json_array_get_object_element (source->messages, i);
+      copy_message (copy->messages, original);
+    }
+  gtk_editable_set_text (GTK_EDITABLE (app->search), "");
+  app->chat = copy;
+  g_ptr_array_add (app->chats, copy);
+  rebuild_sidebar ();
+  render_chat ();
+  save_session ();
+  gtk_widget_grab_focus (app->input);
+}
+
+static void
+on_row_menu (GtkGestureClick *gesture G_GNUC_UNUSED,
+             int              n_press G_GNUC_UNUSED,
+             double           x,
+             double           y,
+             gpointer         data)
+{
+  GtkWidget *row = data;
+  Chat *chat = g_object_get_data (G_OBJECT (row), "chat");
+  if (chat == NULL || app->busy)
+    return;
+  GtkPopover *old = g_object_get_data (G_OBJECT (row), "context-menu");
+  if (old != NULL)
+    close_row_menu (old, NULL);
+  GtkWidget *popover = gtk_popover_new ();
+  gtk_widget_set_parent (popover, row);
+  g_object_set_data (G_OBJECT (row), "context-menu", popover);
+  GdkRectangle rect = { (int) x, (int) y, 1, 1 };
+  gtk_popover_set_pointing_to (GTK_POPOVER (popover), &rect);
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+  const gchar *labels[] = { chat->pinned ? _ ("Unpin") : _ ("Pin"),
+                            _ ("Copy"), _ ("Rename") };
+  GCallback callbacks[] = { G_CALLBACK (on_row_pin), G_CALLBACK (on_row_copy),
+                            G_CALLBACK (on_row_rename) };
+  for (guint i = 0; i < G_N_ELEMENTS (labels); i++)
+    {
+      GtkWidget *button = gtk_button_new_with_label (labels[i]);
+      gtk_widget_add_css_class (button, "flat");
+      g_signal_connect_swapped (button, "clicked",
+                                G_CALLBACK (gtk_popover_popdown), popover);
+      g_signal_connect (button, "clicked", callbacks[i], chat);
+      gtk_box_append (GTK_BOX (box), button);
+    }
+  gtk_popover_set_child (GTK_POPOVER (popover), box);
+  g_signal_connect (popover, "closed", G_CALLBACK (close_row_menu), NULL);
+  gtk_popover_popup (GTK_POPOVER (popover));
 }
 
 static void

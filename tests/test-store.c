@@ -196,6 +196,25 @@ recovery (Fixture      *f,
 }
 
 static void
+legacy_pinned (Fixture      *f,
+               gconstpointer data G_GNUC_UNUSED)
+{
+  const gchar *json = "{\"current\":\"42\",\"model\":\"m\",\"effort\":\"e\","
+                      "\"chats\":[{\"id\":\"42\",\"title\":\"t\",\"draft\":\"\","
+                      "\"created\":0,\"messages\":[]}]}";
+  g_assert_true (g_file_set_contents (f->path, json, -1, NULL));
+  gchar *current = NULL, *model = NULL, *effort = NULL;
+  GError *error = NULL;
+  GPtrArray *loaded = store_load (f->path, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  g_assert_false (((Chat *) g_ptr_array_index (loaded, 0))->pinned);
+  g_ptr_array_unref (loaded);
+  g_free (current);
+  g_free (model);
+  g_free (effort);
+}
+
+static void
 unrecoverable (Fixture      *f,
                gconstpointer data G_GNUC_UNUSED)
 {
@@ -434,6 +453,8 @@ main (int    argc,
     { INVALID_CHAT, "created", "-1" },
     { INVALID_CHAT, "created", "0.5" },
     { INVALID_CHAT, "created", "1e30" },
+    { INVALID_CHAT, "pinned", "null" },
+    { INVALID_CHAT, "pinned", "1" },
     { INVALID_CHAT, "messages", "null" },
     { INVALID_CHAT, "messages", "[null]" },
     { INVALID_CHAT, "edit", "null" },
@@ -464,6 +485,8 @@ main (int    argc,
       g_free (name);
     }
   g_test_add ("/store/recovery/missing-primary", Fixture, NULL, setup, recovery,
+              teardown);
+  g_test_add ("/store/legacy-pinned", Fixture, NULL, setup, legacy_pinned,
               teardown);
   g_test_add ("/store/unrecoverable", Fixture, NULL, setup, unrecoverable,
               teardown);

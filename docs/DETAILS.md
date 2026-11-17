@@ -36,8 +36,9 @@ This page covers what [README](../README.md) does not.
 
 ### Multiple sessions
 
-- The session list on the left groups sessions as "Today / Yesterday / Earlier". The newest is on top.
-- The "New chat" button is on the top row. A delete button appears at a session row end on hover. Right-click a session row to rename it.
+- The sidebar groups pinned sessions first, then other sessions as "Today / Yesterday / Earlier". Each group is sorted by creation time, newest first.
+- The "New chat" button is on the top row. A delete button appears at a session row end on hover. Right-click a session to pin or unpin, copy, or rename it.
+- Copying opens a new, unpinned session with independent messages, reasoning, and drafts, including any edit in progress.
 - History, the current session, the model, the reasoning level, and each session draft are stored in `~/.local/share/gchat/session.json`.
 - History includes reasoning and think time.
 - You must confirm a deletion. The default action is cancel.
@@ -160,7 +161,7 @@ meson compile -C build gchat-update-po
 ## Session file format
 
 The root of a session file must have `chats`, `current`, `model`, and `effort`.
-Each session must contain `id`, `title`, `draft`, `created`, and `messages`.
+Each session must contain `id`, `title`, `draft`, `created`, and `messages`. Optional boolean `pinned` defaults to false.
 `role` and `content` of a message are required. `reasoning` and `duration` are optional.
 `edit` exists only on an edited message.
 `current` must point to an existing session. It is the string `""` for an empty list.

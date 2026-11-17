@@ -210,6 +210,11 @@ session_valid (JsonNode *node)
         {
           return FALSE;
         }
+      JsonNode *pinned = json_object_get_member (chat, "pinned");
+      if (pinned != NULL &&
+          (!JSON_NODE_HOLDS_VALUE (pinned) ||
+           json_node_get_value_type (pinned) != G_TYPE_BOOLEAN))
+        return FALSE;
       const gchar *id = json_object_get_string_member (chat, "id");
       if (!g_hash_table_add (ids, (gpointer) id))
         return FALSE;
@@ -352,6 +357,8 @@ store_load (const gchar *path,
                   g_strdup (json_object_get_string_member (edit, "text"));
             }
           chat->created = json_object_get_int_member (obj, "created");
+          chat->pinned = json_object_get_boolean_member_with_default (
+              obj, "pinned", FALSE);
           json_array_unref (chat->messages);
           chat->messages =
               json_array_ref (json_object_get_array_member (obj, "messages"));
@@ -388,6 +395,7 @@ store_save (const gchar *path,
           json_object_set_object_member (obj, "edit", edit);
         }
       json_object_set_int_member (obj, "created", chat->created);
+      json_object_set_boolean_member (obj, "pinned", chat->pinned);
       json_object_set_array_member (obj, "messages",
                                     json_array_ref (chat->messages));
       json_array_add_object_element (array, obj);

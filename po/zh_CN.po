@@ -99,9 +99,27 @@ msgstr "新对话"
 msgid "Delete conversation"
 msgstr "删除对话"
 
-#: main.c:718
-msgid "Right-click to rename"
-msgstr "右键重命名"
+msgid "Right-click for conversation menu"
+msgstr "右键打开会话菜单"
+
+msgid "Pinned"
+msgstr "置顶"
+
+msgid "Pin"
+msgstr "置顶"
+
+msgid "Unpin"
+msgstr "取消置顶"
+
+msgid "Copy"
+msgstr "复制"
+
+#, c-format
+msgid "%s (Copy)"
+msgstr "%s（副本）"
+
+msgid "Rename"
+msgstr "重命名"
 
 #: main.c:854
 msgid "Rename conversation"

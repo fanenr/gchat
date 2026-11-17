@@ -1124,6 +1124,99 @@ sidebar_row (Chat *chat)
 }
 
 static void
+sidebar_menu (void)
+{
+  if (!setup_ui ())
+    return;
+  Chat *source = app->chat;
+  Chat *other = chat_new ("other", "Other");
+  other->created = source->created + 1000;
+  g_ptr_array_add (app->chats, other);
+  g_free (source->draft);
+  source->draft = g_strdup ("draft");
+  source->edit_from = 0;
+  g_free (source->edit_text);
+  source->edit_text = g_strdup ("editing");
+  rebuild_sidebar ();
+  render_chat ();
+  show_window ();
+
+  GtkWidget *row = GTK_WIDGET (sidebar_row (source));
+  on_row_menu (NULL, 1, 10, 10, row);
+  rebuild_sidebar ();
+  row = GTK_WIDGET (sidebar_row (source));
+  on_row_menu (NULL, 1, 10, 10, row);
+  GtkWidget *popover = gtk_widget_get_last_child (row);
+  g_assert_true (GTK_IS_POPOVER (popover));
+  GtkWidget *box = gtk_popover_get_child (GTK_POPOVER (popover));
+  GtkWidget *pin = gtk_widget_get_first_child (box);
+  g_assert_cmpstr (gtk_button_get_label (GTK_BUTTON (pin)), ==, _ ("Pin"));
+  g_signal_emit_by_name (pin, "clicked");
+  g_assert_true (source->pinned);
+  g_assert_cmpint (gtk_list_box_row_get_index (sidebar_row (source)), <,
+                   gtk_list_box_row_get_index (sidebar_row (other)));
+
+  row = GTK_WIDGET (sidebar_row (source));
+  on_row_menu (NULL, 1, 10, 10, row);
+  popover = gtk_widget_get_last_child (row);
+  box = gtk_popover_get_child (GTK_POPOVER (popover));
+  pin = gtk_widget_get_first_child (box);
+  g_assert_cmpstr (gtk_button_get_label (GTK_BUTTON (pin)), ==, _ ("Unpin"));
+  GtkWidget *copy_button = gtk_widget_get_next_sibling (pin);
+  g_signal_emit_by_name (copy_button, "clicked");
+  Chat *copy = app->chat;
+  g_assert_true (copy != source);
+  g_assert_false (copy->pinned);
+  g_assert_cmpstr (copy->id, !=, source->id);
+  g_assert_cmpstr (copy->draft, ==, "draft");
+  g_assert_cmpstr (copy->edit_text, ==, "editing");
+  g_assert_cmpuint (copy->edit_from, ==, 0);
+  g_assert_cmpuint (json_array_get_length (copy->messages), ==, 2);
+  JsonObject *message = json_array_get_object_element (copy->messages, 0);
+  json_object_set_string_member (message, "content", "changed");
+  message = json_array_get_object_element (source->messages, 0);
+  g_assert_cmpstr (json_object_get_string_member (message, "content"), ==,
+                   "question one");
+
+  gchar *path = store_session_path (), *current = NULL, *model = NULL,
+        *effort = NULL;
+  GError *error = NULL;
+  GPtrArray *loaded = store_load (path, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  g_assert_true (((Chat *) g_ptr_array_index (loaded, 0))->pinned);
+  g_assert_false (((Chat *) g_ptr_array_index (loaded, 2))->pinned);
+  g_assert_cmpstr (current, ==, copy->id);
+  g_ptr_array_unref (loaded);
+  g_free (path);
+  g_free (current);
+  g_free (model);
+  g_free (effort);
+
+  on_row_pin (NULL, source);
+  g_assert_false (source->pinned);
+  g_assert_cmpint (gtk_list_box_row_get_index (sidebar_row (source)), >,
+                   gtk_list_box_row_get_index (sidebar_row (other)));
+  row = GTK_WIDGET (sidebar_row (source));
+  on_row_menu (NULL, 1, 10, 10, row);
+  popover = gtk_widget_get_last_child (row);
+  box = gtk_popover_get_child (GTK_POPOVER (popover));
+  GtkWidget *rename = gtk_widget_get_last_child (box);
+  g_signal_emit_by_name (rename, "clicked");
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG (
+      adw_application_window_get_visible_dialog (
+          ADW_APPLICATION_WINDOW (app->window)));
+  g_assert_nonnull (dialog);
+  gtk_editable_set_text (GTK_EDITABLE (
+      adw_alert_dialog_get_extra_child (dialog)), "Renamed");
+  g_signal_emit_by_name (dialog, "response", "save");
+  g_assert_cmpstr (source->title, ==, "Renamed");
+  adw_dialog_force_close (ADW_DIALOG (dialog));
+  row = GTK_WIDGET (sidebar_row (source));
+  on_row_menu (NULL, 1, 10, 10, row);
+  teardown ();
+}
+
+static void
 assert_sidebar_centered (Chat    *chat,
                          gboolean has_snippet)
 {
@@ -2520,6 +2613,7 @@ main (int    argc,
   g_test_add_data_func ("/app/draft-startup/normal", NULL, draft_startup);
   g_test_add_data_func ("/app/draft-startup/editing", GINT_TO_POINTER (1),
                         draft_startup);
+  g_test_add_func ("/app/sidebar-menu", sidebar_menu);
   g_test_add_func ("/app/history-search", history_search);
   g_test_add_data_func ("/app/sidebar-layout/normal", GUINT_TO_POINTER (0),
                         sidebar_layout);

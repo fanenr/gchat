@@ -14,6 +14,7 @@ typedef struct
 
   guint      edit_from; /* Use G_MAXUINT for a normal draft; otherwise edit
                            the indexed user message. */
+  gboolean   pinned;
   gint64     created;   /* Store Unix milliseconds for sidebar grouping. */
   JsonArray *messages;  /* Store message objects with role and content
                            fields. */
