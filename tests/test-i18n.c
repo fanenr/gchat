@@ -51,13 +51,15 @@ translation (gconstpointer data)
   g_autofree gchar *title = g_strdup_printf (_ ("Thought (%.1f s)"), 1.5);
   g_assert_cmpstr (title, ==,
                    test->chinese ? "已思考（用时 1.5 秒）" : "Thought (1.5 s)");
-  g_autofree gchar *error =
-      g_strdup_printf (_ ("Invalid conversation file structure: %s"),
-                       "session.json");
+  g_autofree gchar *error = g_strdup_printf (
+      _ ("Unsupported conversation database version %d "
+         "(maximum supported: %d)"),
+      3, 1);
   g_assert_cmpstr (error, ==,
                    test->chinese
-                       ? "会话文件结构无效：session.json"
-                       : "Invalid conversation file structure: session.json");
+                       ? "不支持会话数据库版本 3（最高支持版本：1）"
+                       : "Unsupported conversation database version 3 "
+                         "(maximum supported: 1)");
 }
 
 int

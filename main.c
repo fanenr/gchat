@@ -156,7 +156,8 @@ typedef struct
   SoupSession  *session;
   GCancellable *cancel, *image_cancel;
 
-  GPtrArray    *chats;
+  sqlite3      *db;
+  GPtrArray    *chats, *deleted_chat_ids;
   Chat         *chat;
 
   gchar        *model, *effort, *api_key;
@@ -221,15 +222,15 @@ static gboolean save_session (void);
 static gboolean record_reply (void);
 static void rebuild_sidebar (void);
 
-/* Return an owned path for a UUID, never a path from the session file. */
+/* Return an owned path for a UUID, never a path from stored data. */
 static gchar *
 image_path (const gchar *id)
 {
   if (id == NULL || !g_uuid_string_is_valid (id))
     return NULL;
   g_autofree gchar *session = store_session_path ();
-  g_autofree gchar *dir = g_path_get_dirname (session);
-  return g_build_filename (dir, "images", id, NULL);
+  g_autofree gchar *dir = store_image_dir (session);
+  return g_build_filename (dir, id, NULL);
 }
 
 /* Return the owned bytes, bounded independently of the source file size. */
@@ -998,6 +999,7 @@ static void
 clear_edit (Chat *chat)
 {
   chat->edit_from = G_MAXUINT;
+  chat->dirty = TRUE;
   g_free (chat->edit_text);
   chat->edit_text = g_strdup ("");
   g_clear_pointer (&chat->edit_images, json_array_unref);
@@ -1032,11 +1034,14 @@ save_session (void)
   app->draft_save_source = 0;
   if (app->busy && app->reply_msg != NULL)
     record_reply ();
-  g_autofree gchar *path = store_session_path ();
-  gboolean ok =
-      store_save (path, app->chats, app->chat->id, app->model, app->effort);
+  g_autoptr (GError) error = NULL;
+  gboolean ok = store_save (app->db, app->chats, app->deleted_chat_ids,
+                            app->chat->id, app->model, app->effort, &error);
   if (!ok)
-    app_toast (_ ("Failed to save conversation"));
+    {
+      g_warning ("cannot save conversations: %s", error->message);
+      app_toast (_ ("Failed to save conversation"));
+    }
   return ok;
 }
 
@@ -1291,6 +1296,7 @@ on_delete_message (GtkButton *button G_GNUC_UNUSED,
   if (app->busy || index >= json_array_get_length (app->chat->messages))
     return;
   json_array_remove_element (app->chat->messages, index);
+  app->chat->dirty = TRUE;
   if (app->chat->edit_from != G_MAXUINT)
     {
       if (index == app->chat->edit_from)
@@ -1328,6 +1334,7 @@ on_edit_message (GtkButton *button G_GNUC_UNUSED,
   /* The normal draft and the edit draft are separate; truncate the history only
      on send. */
   app->chat->edit_from = index;
+  app->chat->dirty = TRUE;
   g_free (app->chat->edit_text);
   app->chat->edit_text = g_strdup (content);
   g_clear_pointer (&app->chat->edit_images, json_array_unref);
@@ -1450,6 +1457,7 @@ on_rename_response (AdwAlertDialog *dialog,
 
   g_free (chat->title);
   chat->title = g_strdup (text);
+  chat->dirty = TRUE;
   rebuild_sidebar ();
   if (chat == app->chat)
     update_title ();
@@ -1499,6 +1507,7 @@ on_row_pin (GtkButton *button G_GNUC_UNUSED,
   if (app->busy)
     return;
   chat->pinned = !chat->pinned;
+  chat->dirty = TRUE;
   rebuild_sidebar ();
   save_session ();
 }
@@ -1599,6 +1608,7 @@ on_delete_chat_response (AdwAlertDialog *dialog,
     return;
   Chat *chat = g_ptr_array_index (app->chats, index);
   gboolean was_current = (chat == app->chat);
+  g_ptr_array_add (app->deleted_chat_ids, g_strdup (chat->id));
   g_ptr_array_remove_index (app->chats, index); /* This also frees the chat. */
   if (was_current)
     {
@@ -1940,6 +1950,7 @@ drop_reply (void)
     }
   json_array_remove_element (app->chat->messages,
                              json_array_get_length (app->chat->messages) - 1);
+  app->chat->dirty = TRUE;
   if (!json_array_get_length (app->chat->messages))
     gtk_stack_set_visible_child_name (GTK_STACK (app->stack), "empty");
   clear_stream_state ();
@@ -1951,6 +1962,7 @@ record_reply (void)
   if (!app->answer->len && !app->reasoning->len)
     return FALSE;
   json_object_set_string_member (app->reply_msg, "content", app->answer->str);
+  app->chat->dirty = TRUE;
   if (app->reasoning->len)
     {
       json_object_set_string_member (app->reply_msg, "reasoning",
@@ -2549,6 +2561,7 @@ start_request (gchar *body,
   JsonObject *reply_msg = assistant_msg;
   json_array_add_object_element (app->chat->messages,
                                  g_steal_pointer (&assistant_msg));
+  app->chat->dirty = TRUE;
   guint turns = json_array_get_length (app->chat->messages) - 1;
 
   clear_messages ();
@@ -2839,6 +2852,7 @@ on_input_changed (GtkTextBuffer *buffer,
                                                         : &app->chat->edit_text;
       g_free (*draft);
       *draft = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+      app->chat->dirty = TRUE;
       if (app->draft_save_source)
         g_source_remove (app->draft_save_source);
       app->draft_save_source = g_timeout_add (750, save_drafts, NULL);
@@ -2875,6 +2889,7 @@ on_remove_image (GtkButton *button G_GNUC_UNUSED,
   json_array_remove_element (*images, index);
   if (json_array_get_length (*images) == 0)
     g_clear_pointer (images, json_array_unref);
+  app->chat->dirty = TRUE;
   refresh_images ();
   save_session ();
   gtk_widget_grab_focus (app->input);
@@ -3068,6 +3083,7 @@ import_image_done (GObject      *source G_GNUC_UNUSED,
         *images = json_array_new ();
       for (guint i = 0; i < ids->len; i++)
         json_array_add_string_element (*images, g_ptr_array_index (ids, i));
+      app->chat->dirty = TRUE;
       refresh_images ();
       save_session ();
     }
@@ -3373,8 +3389,11 @@ flush_stream (void)
   if (!app->busy || app->reply_msg == NULL)
     return;
   if (!record_reply ())
-    json_array_remove_element (app->chat->messages,
-                               json_array_get_length (app->chat->messages) - 1);
+    {
+      guint count = json_array_get_length (app->chat->messages);
+      json_array_remove_element (app->chat->messages, count - 1);
+      app->chat->dirty = TRUE;
+    }
   clear_stream_state ();
 }
 
@@ -4017,19 +4036,23 @@ main (int     argc,
       g_printerr ("%s\n", error->message);
       return 1;
     }
-  g_autoptr (GPtrArray) chats =
-      store_load (path, &current_id, &model, &effort, &error);
+  g_autoptr (sqlite3) db = store_open (path, &error);
+  g_autoptr (GPtrArray) chats = NULL;
+  if (db != NULL)
+    chats = store_load (db, &current_id, &model, &effort, &error);
   if (chats == NULL)
     {
-      g_printerr (
-          _ ("Unable to load conversations; original files preserved: %s\n"),
-          error->message);
+      g_printerr (_ ("Unable to open conversation database: %s\n"),
+                  error->message);
+      g_clear_pointer (&db, sqlite3_close);
       close (lock);
       return 1;
     }
 
-  store_cleanup_images (path);
+  store_cleanup_images (path, chats);
   app = g_new0 (App, 1);
+  app->db = g_steal_pointer (&db);
+  app->deleted_chat_ids = g_ptr_array_new_with_free_func (g_free);
   app->answer = g_string_new (NULL);
   app->reasoning = g_string_new (NULL);
   app->chats = g_steal_pointer (&chats);
@@ -4090,6 +4113,8 @@ main (int     argc,
   g_object_unref (app->session);
   g_clear_object (&app->image_cancel);
   g_ptr_array_unref (app->chats);
+  g_ptr_array_unref (app->deleted_chat_ids);
+  sqlite3_close (app->db);
   g_string_free (app->answer, TRUE);
   g_string_free (app->reasoning, TRUE);
   g_free (app->model);

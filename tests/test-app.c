@@ -70,6 +70,12 @@ static void
 setup (void)
 {
   app = g_new0 (App, 1);
+  g_autofree gchar *path = store_session_path ();
+  g_autoptr (GError) error = NULL;
+  app->db = store_open (path, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (app->db);
+  app->deleted_chat_ids = g_ptr_array_new_with_free_func (g_free);
   app->answer = g_string_new (NULL);
   app->reasoning = g_string_new (NULL);
   app->model = g_strdup ("deepseek-flash");
@@ -97,6 +103,8 @@ teardown (void)
   g_clear_object (&app->image_cancel);
   g_clear_object (&app->session);
   g_ptr_array_unref (app->chats);
+  g_ptr_array_unref (app->deleted_chat_ids);
+  sqlite3_close (app->db);
   g_string_free (app->answer, TRUE);
   g_string_free (app->reasoning, TRUE);
   g_free (app->model);
@@ -107,9 +115,7 @@ teardown (void)
   chat_stick = (Stick){ 0 };
   input_stick = (Stick){ 0 };
   g_autofree gchar *path = store_session_path ();
-  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_unlink (path);
-  g_unlink (bak);
 }
 
 static gboolean
@@ -501,13 +507,12 @@ choice_selection (void)
                    MODELS[1].label);
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->chip_effort)), ==,
                    _ (EFFORTS[0].label));
-  g_autofree gchar *path = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) loaded =
-      store_load (path, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_cmpstr (model, ==, MODELS[1].value);
   g_assert_cmpstr (effort, ==, EFFORTS[0].value);
@@ -1077,21 +1082,15 @@ corrupt_startup (void)
 {
   g_autofree gchar *path = store_session_path ();
   g_autofree gchar *dir = g_path_get_dirname (path);
-  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
   g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
-  g_assert_true (g_file_set_contents (path, "{}", -1, NULL));
-  g_assert_true (g_file_set_contents (bak, "{ broken", -1, NULL));
+  g_assert_true (g_file_set_contents (path, "not a database", -1, NULL));
   gchar *argv[] = { "gchat", NULL };
   g_assert_cmpint (gchat_main (1, argv), ==, 1);
   g_assert_null (app);
-  g_autofree gchar *primary = NULL;
-  g_autofree gchar *backup = NULL;
-  g_assert_true (g_file_get_contents (path, &primary, NULL, NULL));
-  g_assert_true (g_file_get_contents (bak, &backup, NULL, NULL));
-  g_assert_cmpstr (primary, ==, "{}");
-  g_assert_cmpstr (backup, ==, "{ broken");
+  g_autofree gchar *contents = NULL;
+  g_assert_true (g_file_get_contents (path, &contents, NULL, NULL));
+  g_assert_cmpstr (contents, ==, "not a database");
   g_unlink (path);
-  g_unlink (bak);
 }
 
 static void
@@ -1195,13 +1194,12 @@ fork_message (gconstpointer data)
       g_assert_cmpstr (json_object_get_string_member (reply, "content"), ==,
                        "answer one");
     }
-  g_autofree gchar *path = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) loaded =
-      store_load (path, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_cmpstr (current, ==, fork->id);
   Chat *saved = g_ptr_array_index (loaded, 1);
@@ -1304,13 +1302,12 @@ sidebar_menu (void)
   g_assert_cmpstr (json_object_get_string_member (message, "content"), ==,
                    "question one");
 
-  g_autofree gchar *path = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) loaded =
-      store_load (path, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_true (((Chat *) g_ptr_array_index (loaded, 0))->pinned);
   g_assert_false (((Chat *) g_ptr_array_index (loaded, 2))->pinned);
@@ -1429,13 +1426,12 @@ draft_lifecycle (void)
   g_assert_true (gtk_widget_get_mapped (app->edit_bar));
   g_assert_cmpuint (first->edit_from, ==, 0);
   g_assert_cmpuint (json_array_get_length (first->messages), ==, 2);
-  g_autofree gchar *path = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) loaded =
-      store_load (path, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *restored = g_ptr_array_index (loaded, 0);
   g_assert_cmpuint (restored->edit_from, ==, 0);
@@ -1476,6 +1472,7 @@ delete_confirmation (gconstpointer data)
   g_ptr_array_add (app->chats, g_steal_pointer (&owned_target));
   if (mode == 4)
     app->chat = target;
+  g_assert_true (save_session ());
   rebuild_sidebar ();
   render_chat ();
   show_window ();
@@ -1497,6 +1494,18 @@ delete_confirmation (gconstpointer data)
   g_assert_cmpuint (app->chats->len, ==,
                     mode == 1 || mode == 3 || mode == 4 ? 1 : 2);
   g_assert_cmpstr (app->chat->id, ==, "42");
+  if (mode == 1 || mode == 4)
+    {
+      g_autofree gchar *current = NULL;
+      g_autofree gchar *model = NULL;
+      g_autofree gchar *effort = NULL;
+      g_autoptr (GError) error = NULL;
+      g_autoptr (GPtrArray) chats =
+          store_load (app->db, &current, &model, &effort, &error);
+      g_assert_no_error (error);
+      g_assert_cmpuint (chats->len, ==, 1);
+      g_assert_cmpstr (current, ==, "42");
+    }
   app->busy = FALSE;
   adw_dialog_force_close (ADW_DIALOG (dialog));
   g_clear_object (&dialog_ref);
@@ -1572,13 +1581,12 @@ draft_autosave (void)
   g_timeout_add (900, layout_timeout, loop);
   g_main_loop_run (loop);
   g_assert_cmpuint (app->draft_save_source, ==, 0);
-  g_autofree gchar *path = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) loaded =
-      store_load (path, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   g_assert_cmpstr (((Chat *) g_ptr_array_index (loaded, 0))->draft, ==,
                    "自动保存的草稿");
@@ -2202,13 +2210,12 @@ clipboard_image (void)
   const gchar *attached = json_array_get_string_element (images, 0);
   g_assert_true (gtk_widget_get_visible (app->image_bar));
   g_assert_cmpstr (app->chat->draft, ==, "existing draft");
-  g_autofree gchar *session = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) loaded =
-      store_load (session, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *saved = g_ptr_array_index (loaded, 0);
   g_assert_cmpstr (json_array_get_string_element (saved->draft_images, 0), ==,
@@ -2472,13 +2479,12 @@ assert_reasoning_saved (void)
   g_assert_cmpfloat (json_object_get_double_member (msg, "duration"), >=, 1);
   g_assert_false (app->busy);
 
-  g_autofree gchar *path = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) chats =
-      store_load (path, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *chat = g_ptr_array_index (chats, 0);
   msg = json_array_get_object_element (chat->messages, 2);
@@ -2497,13 +2503,12 @@ stream_snapshot (void)
   g_assert_true (app->busy);
   g_assert_false (g_cancellable_is_cancelled (app->cancel));
   g_assert_cmpstr (app->answer->str, ==, "partial answer");
-  g_autofree gchar *path = store_session_path ();
   g_autofree gchar *current = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GPtrArray) loaded =
-      store_load (path, &current, &model, &effort, &error);
+      store_load (app->db, &current, &model, &effort, &error);
   g_assert_no_error (error);
   Chat *chat = g_ptr_array_index (loaded, 0);
   JsonObject *reply = json_array_get_object_element (chat->messages, 2);
@@ -2528,11 +2533,8 @@ quit_test_application (gpointer data)
     }
   else if (GPOINTER_TO_INT (data) == 2)
     {
-      g_autofree gchar *path = store_session_path ();
-      g_autofree gchar *dir = g_path_get_dirname (path);
-      g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
-      g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
-      g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
+      g_assert_cmpint (sqlite3_exec (app->db, "PRAGMA query_only = ON",
+                                     NULL, NULL, NULL), ==, SQLITE_OK);
     }
   g_application_quit (
       G_APPLICATION (gtk_window_get_application (GTK_WINDOW (app->window))));
@@ -2560,20 +2562,18 @@ shutdown_snapshot (gconstpointer data)
   g_signal_connect (gtk_app, "activate", G_CALLBACK (activate), NULL);
   g_signal_connect (gtk_app, "shutdown", G_CALLBACK (on_shutdown), NULL);
   if (GPOINTER_TO_INT (data) == 2)
-    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
+    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING,
+                           "cannot save conversations: *");
   g_timeout_add (20, quit_test_application, (gpointer) data);
   gchar *argv[] = { "gchat-shutdown-test", NULL };
   g_assert_cmpint (g_application_run (G_APPLICATION (gtk_app), 1, argv), ==, 0);
   g_assert_cmpuint (app->draft_save_source, ==, 0);
   g_assert_cmpuint (fit_source, ==, 0);
   g_assert_cmpuint (sync_tick, ==, 0);
-  g_autofree gchar *path = store_session_path ();
   if (GPOINTER_TO_INT (data) == 2)
     {
       g_test_assert_expected_messages ();
       g_assert_false (app->closing);
-      g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
-      g_assert_cmpint (g_rmdir (tmp), ==, 0);
     }
   else
     {
@@ -2583,7 +2583,7 @@ shutdown_snapshot (gconstpointer data)
       g_autofree gchar *effort = NULL;
       g_autoptr (GError) error = NULL;
       g_autoptr (GPtrArray) loaded =
-          store_load (path, &current, &model, &effort, &error);
+          store_load (app->db, &current, &model, &effort, &error);
       g_assert_no_error (error);
       Chat *chat = g_ptr_array_index (loaded, 0);
       g_assert_cmpstr (chat->draft, ==, "退出前的草稿");
@@ -2595,11 +2595,11 @@ shutdown_snapshot (gconstpointer data)
           g_assert_cmpstr (json_object_get_string_member (reply, "reasoning"),
                            ==, "已收到的推理");
         }
-      g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
-      g_assert_false (g_file_test (bak, G_FILE_TEST_EXISTS));
+      /* A second close must not attempt another database write. */
+      g_assert_cmpint (sqlite3_exec (app->db, "PRAGMA query_only = ON",
+                                     NULL, NULL, NULL), ==, SQLITE_OK);
       g_assert_false (on_close (NULL, NULL));
       on_shutdown (G_APPLICATION (gtk_app), NULL);
-      g_assert_false (g_file_test (bak, G_FILE_TEST_EXISTS));
     }
   teardown ();
 }
@@ -2787,18 +2787,17 @@ close_save_failure (void)
   (void) g_steal_pointer (&lines);
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
   gtk_text_buffer_set_text (buffer, "不能丢失的草稿", -1);
-  g_autofree gchar *path = store_session_path ();
-  g_autofree gchar *dir = g_path_get_dirname (path);
-  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
-  g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
-  g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
-  g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
+  g_assert_cmpint (sqlite3_exec (app->db, "PRAGMA query_only = ON",
+                                 NULL, NULL, NULL), ==, SQLITE_OK);
+  g_test_expect_message (NULL, G_LOG_LEVEL_WARNING,
+                         "cannot save conversations: *");
   g_assert_true (on_close (NULL, NULL));
   g_test_assert_expected_messages ();
   g_assert_false (app->closing);
   g_assert_false (app->busy);
   g_assert_cmpstr (app->chat->draft, ==, "不能丢失的草稿");
-  g_assert_cmpint (g_rmdir (tmp), ==, 0);
+  g_assert_cmpint (sqlite3_exec (app->db, "PRAGMA query_only = OFF",
+                                 NULL, NULL, NULL), ==, SQLITE_OK);
   /* After a new request starts inside the window, the cancel callback of the
      previous request must not end it. */
   begin_reply (FALSE);
@@ -3389,7 +3388,7 @@ main (int    argc,
   g_test_add_data_func ("/app/stream/eof", GINT_TO_POINTER (3), stream_layout);
   int status = g_test_run ();
   g_autofree gchar *lock =
-      g_build_filename (test_dir, "gchat", "session.json.lock", NULL);
+      g_build_filename (test_dir, "gchat", "session.db.lock", NULL);
   g_unlink (lock);
   g_autofree gchar *dir = g_build_filename (test_dir, "gchat", NULL);
   g_rmdir (dir);

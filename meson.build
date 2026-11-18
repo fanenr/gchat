@@ -32,7 +32,10 @@ i18n_dep = declare_dependency(
   sources: 'i18n.c',
   dependencies: dependency('glib-2.0', version: '>=2.66'),
 )
-store_deps = [dependency('json-glib-1.0', version: '>=1.6')]
+store_deps = [
+  dependency('json-glib-1.0', version: '>=1.6'),
+  dependency('sqlite3', version: '>=3.37'),
+]
 md_deps = [
   dependency('gtk4', version: '>=4.12'),
   dependency('libadwaita-1', version: '>=1.5'),

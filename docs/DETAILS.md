@@ -45,9 +45,8 @@ This page covers what [README](../README.md) does not.
 - Images are sent again with the history on each request. This can increase upload time and cost. Selected files are sent unchanged, including any metadata.
 - Images require `deepseek-flash`. If the current message or history contains an image, switch back to Flash before sending or regenerating.
 - Wait for the current batch to finish before adding more images or sending. Switching sessions, starting an edit, or canceling an edit cancels the current import. If any file in a batch cannot be imported, none of that batch is added. On a missing image or request limit error, the client reports the error without committing the draft.
-- Image copies are stored in the data directory under `images/`, with `0600` permissions and no encryption. Editing, copying, and forking retain image references.
-- Older clients do not understand image fields and may ignore images or lose draft references. Do not open and save image sessions with an older client.
-- At startup, the client removes images no longer referenced by the session file or its backup. It skips cleanup if it cannot inspect the backup. After deletion, an image can remain until the backup rotates and the app starts again.
+- Image copies are stored in the data directory under `attachments/`, with `0600` permissions and no encryption. Editing, copying, and forking retain image references.
+- After a successful database load at startup, the client removes unreferenced image files from `attachments/`. It does not scan the old `images/` directory.
 - Dragging images is not supported. Request construction and history previews read images on the UI thread, so long conversations can briefly pause the UI.
 
 ### Code blocks
@@ -65,7 +64,7 @@ This page covers what [README](../README.md) does not.
 - The sidebar groups pinned sessions first, then other sessions as "Today / Yesterday / Earlier". Each group is sorted by creation time, newest first.
 - The "New chat" button is on the top row. A delete button appears at a session row end on hover. Right-click a session to pin or unpin, copy, or rename it.
 - Copying opens a new, unpinned session with independent messages, reasoning, and drafts, including any edit in progress.
-- History, the current session, the model, the reasoning level, and each session draft are stored in `~/.local/share/gchat/session.json`.
+- History, the current session, the model, the reasoning level, and each session draft are stored in `~/.local/share/gchat/session.db`.
 - History includes reasoning and think time.
 - You must confirm a deletion. The default action is cancel.
 - A deletion also removes the messages and the draft of that session.
@@ -115,16 +114,15 @@ The rules are:
 
 ### Reliability
 
-- To save a session, the client writes a temporary file and then renames it. The previous copy stays as `.bak`.
-- If the main file does not parse, or the session structure is invalid, the client restores from a valid backup.
-- Validation covers unique session IDs, message types, and edit targets.
-- If both the main file and the backup are unusable, the client stops at startup with a message. It keeps the original files.
+- A SQLite transaction saves changed sessions, deletions, and the current session state together.
+- Validation covers unique session IDs, message types, attachment IDs, and edit targets.
+- If the database cannot be loaded, the client reports the error and stops. It does not recreate the database or restore a separate backup.
 - One locked process writes to a data directory at a time.
 - On a second start, the new process reports the lock failure and exits, so the two do not overwrite each other.
 - When a request fails, the client shows a toast with a Retry button.
 - After you switch to another session, an old toast does not retry the current session.
 - If you close the window or quit during generation, the client saves the text and reasoning received so far.
-- A repeated quit notice does not rotate the backup again.
+- A repeated quit notice does not save again.
 - If the save at window close fails, the client keeps the window and does not drop the in-memory draft.
 - If an app-level quit cannot be stopped, the client reports the save failure and returns a non-zero status.
 
@@ -142,7 +140,7 @@ The rules are:
 - Each session stores a normal draft and an edit draft separately. The edit draft is the body held while you edit a message.
 - The client writes to disk 750ms after typing stops.
 - The client saves at once on a session switch, on send, and on a normal quit.
-- When the client saves a draft during generation, the same snapshot also holds the text and reasoning received so far.
+- When the client saves a draft during generation, the same transaction also saves the text and reasoning received so far.
 - After an edit and resend, the client restores the previous normal draft. It does not send the draft to the API.
 - If a new empty session has a draft, the "New chat" button creates another empty session.
 
@@ -184,37 +182,18 @@ To update the template and the catalogs:
 meson compile -C build gchat-update-po
 ```
 
-## Session file format
+## Storage
 
-The root of a session file must have `chats`, `current`, `model`, and `effort`.
-Each session must contain `id`, `title`, `draft`, `created`, and `messages`. Optional boolean `pinned` defaults to false.
-`role` and `content` of a message are required. `reasoning`, `duration`, and the user message field `images` are optional.
-The normal draft field `draft_images` and the edit draft field `images` are optional. Each list contains UUIDs of files under `images/`, in attachment order. Legacy `image` and `draft_image` strings still load as single-image lists.
-`edit` exists only on an edited message.
-`current` must point to an existing session. It is the string `""` for an empty list.
-A missing required field makes the file invalid. If the backup is invalid too, the client stops at startup and does not overwrite the original data.
+See [gchat storage](STORAGE.md) for file locations, backups, the database format, and upgrades.
 
-## Local data and security
-
-The default data directory is `~/.local/share/gchat/`. The default configuration directory is `~/.config/gchat/`.
-Setting `XDG_DATA_HOME` or `XDG_CONFIG_HOME` changes the matching directory.
-
-- `session.json` holds messages, reasoning, and drafts. `session.json.bak` holds the previous session data.
-- `config.json` holds the API key, the theme, and the language. Updates are atomic and create no backup.
-- The UI shows the actual configuration file path.
-- An existing `config.json.bak` is neither read nor deleted automatically. The key in an old copy is not encrypted, so you must treat the file as sensitive.
-- Files are written with `0600` permissions. Directories are created with `0700` permissions. The content is not encrypted.
-- If the configuration is not a valid JSON object, or holds a non-string value, a settings save fails and keeps the original file.
-- The theme and the language fall back to the last choice saved in the dialog. The client does not read values from the broken configuration.
-- `session.json.lock` is the process lock file. The lock is released after an exit or a crash. You must not delete this file to bypass the lock.
-- When you send a message, the text and image history of the current session goes to DeepSeek. Local drafts and reasoning records are not sent back.
+When you send a message, the text and image history of the current session goes to DeepSeek. Local drafts and reasoning records are not sent back.
 
 ## Regression tests
 
 The test code lives in `tests/`, split as follows:
 
 - `test-app.c`: SSE parsing, and lookup of models and reasoning levels.
-- `test-store.c`: session storage and backup restore.
+- `test-store.c`: SQLite storage, upgrades, and configuration.
 - `test-md.c`: Markdown rendering.
 - `test-i18n.c`: language matching, English fallback, manual choice, and catalog loading under the C locale.
 
@@ -239,8 +218,9 @@ A separate check validates the format of the translation files.
 
 The regression tests also cover the following areas:
 
-- Session structure validation and backup protection.
-- Duplicate IDs and invalid message roles.
+- Database initialization, reopen, and refusal of unsupported versions.
+- Incremental writes, rollback on upgrade or save failure, and image cleanup.
+- Session structure validation, including invalid message roles and edit targets.
 - The process lock.
 - Protection of a broken configuration.
 - Theme and language fallback on a failed save.
@@ -277,12 +257,12 @@ GTK tests need a display backend. They skip when no backend is available.
 | File | Responsibility |
 | --- | --- |
 | `meson.build` | Project version, build directory configuration, direct dependencies of the app and of each test. The version also feeds the About page and the User-Agent |
-| `main.c` | Window layout, sidebar and message area, settings panel, streaming requests and cancellation, session snapshots, and the quit lifecycle |
+| `main.c` | Window layout, sidebar and message area, settings panel, streaming requests and cancellation, session saves, and the quit lifecycle |
 | `ui/` | Blueprint layouts, CSS, and the GResource manifest. The layouts compile to GtkBuilder XML and are embedded in the app |
 | `i18n.c` / `i18n.h` | Language matching and gettext setup at startup |
 | `po/` | gettext template, Simplified Chinese catalog, and build rules |
 | `md.c` / `md.h` | md4c callbacks to GTK widgets. Body text and tables share inline styles and text decoding |
-| `store.c` / `store.h` | Session validation, process lock, atomic replace and backup restore, configuration validation and merged writes |
+| `store.c` / `store.h` | SQLite session validation, upgrades and transactions, process lock, configuration validation and merged writes |
 | `tests/` | Regression tests for session storage, app state and requests, and Markdown rendering |
 
 ## Known limits
@@ -295,4 +275,4 @@ GTK tests need a display backend. They skip when no backend is available.
 - A selection cannot cross messages. A GTK selection range is limited to one widget. Code blocks and tables are separate widgets, so a drag selection breaks there.
 - The client expects DeepSeek JSON data and the `[DONE]` marker in SSE events. It ignores invalid JSON and does not process `event`, `id`, or `retry` fields. An event without its final blank line is discarded. This is not a general SSE client.
 - The client decodes only common named entities and numeric entities. A named entity outside the table stays as source text.
-- Draft autosave has a 750ms delay. A forced process kill loses input not yet written and the current streaming reply. `.bak` keeps only the previous copy and is not a separate backup. The temporary-file replace does not guarantee durability after a sudden power loss.
+- Draft autosave has a 750ms delay. A forced process kill loses input or streaming output not yet committed. SQLite transactions are not a separate backup.

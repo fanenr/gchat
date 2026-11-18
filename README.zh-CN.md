@@ -15,6 +15,7 @@
 - libadwaita 1.5 或更高
 - libsoup 3
 - JSON-GLib 1.6 或更高
+- SQLite 3.37 或更高
 - md4c
 - GtkSourceView 5
 - gettext
@@ -22,7 +23,8 @@
 1. 安装依赖。在 macOS 上运行：
 
    ```sh
-   brew install meson ninja blueprint-compiler gtk4 libadwaita libsoup json-glib md4c gtksourceview5 gettext
+   brew install meson ninja blueprint-compiler gtk4 libadwaita libsoup json-glib sqlite md4c gtksourceview5 gettext
+   export PKG_CONFIG_PATH="$(brew --prefix sqlite)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
    ```
 
 2. 编译：
@@ -49,7 +51,7 @@
 - 模型与推理级别：`deepseek-flash` 与 `deepseek-v4-pro`，推理级别四档。
 - 草稿：每个会话独立保存。输入停顿 750ms 后自动写盘。
 - 界面语言：English 与简体中文。切换后重启客户端生效。
-- 数据可靠性：原子写入、备份恢复、单进程锁。
+- 数据可靠性：SQLite 事务、启动时数据库升级、单进程锁。
 
 ## 快捷键
 
@@ -68,7 +70,8 @@ macOS 使用 Cmd，也支持 Ctrl。Linux 使用 Ctrl。
 
 ## 数据
 
-- 会话：`~/.local/share/gchat/session.json`。图片副本位于同目录的 `images/`。
+- 会话：`~/.local/share/gchat/session.db`。图片副本位于同目录的 `attachments/`。
+- 客户端不导入或删除旧的 `session.json` 和 `images/`。
 - 配置：`~/.config/gchat/config.json`。保存 API 密钥、主题和语言。
 - API 密钥优先读环境变量 `DEEPSEEK_API_KEY`。
 - 文件以 `0600` 权限写入。内容不加密。
@@ -83,10 +86,5 @@ GTK 测试需要显示后端。无桌面环境时用 `xvfb-run -a meson test -C 
 
 ## 更多
 
-以下内容见 [docs/DETAILS.zh-CN.md](docs/DETAILS.zh-CN.md)：
-
-- 会话文件格式
-- 本地数据与安全
-- 回归测试覆盖
-- 代码结构
-- 已知限制
+- [存储](docs/STORAGE.zh-CN.md)：数据路径、备份、数据库格式和升级。
+- [实现细节](docs/DETAILS.zh-CN.md)：功能行为、回归测试、代码结构和已知限制。

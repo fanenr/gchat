@@ -15,6 +15,7 @@ The client needs these packages:
 - libadwaita 1.5 or later
 - libsoup 3
 - JSON-GLib 1.6 or later
+- SQLite 3.37 or later
 - md4c
 - GtkSourceView 5
 - gettext
@@ -22,7 +23,8 @@ The client needs these packages:
 1. Install the dependencies. On macOS, run:
 
    ```sh
-   brew install meson ninja blueprint-compiler gtk4 libadwaita libsoup json-glib md4c gtksourceview5 gettext
+   brew install meson ninja blueprint-compiler gtk4 libadwaita libsoup json-glib sqlite md4c gtksourceview5 gettext
+   export PKG_CONFIG_PATH="$(brew --prefix sqlite)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
    ```
 
 2. Compile:
@@ -49,7 +51,7 @@ The client needs these packages:
 - Models and reasoning levels: `deepseek-flash` and `deepseek-v4-pro`, with four reasoning levels.
 - Drafts: each session keeps its own draft. It is written to disk 750ms after typing stops.
 - Interface language: English and Simplified Chinese. A change applies after a client restart.
-- Data safety: atomic writes, backup restore, and a single-process lock.
+- Data safety: SQLite transactions, startup database upgrades, and a single-process lock.
 
 ## Shortcuts
 
@@ -68,7 +70,8 @@ macOS uses Cmd. Ctrl also works. Linux uses Ctrl.
 
 ## Data
 
-- Sessions: `~/.local/share/gchat/session.json`. Image copies are in `images/` beside it.
+- Sessions: `~/.local/share/gchat/session.db`. Image copies are in `attachments/` beside it.
+- The client does not import or delete the old `session.json` and `images/`.
 - Configuration: `~/.config/gchat/config.json`. It holds the API key, the theme, and the language.
 - The `DEEPSEEK_API_KEY` environment variable overrides the stored API key.
 - Files are written with `0600` permissions. The content is not encrypted.
@@ -83,10 +86,5 @@ GTK tests need a display backend. Without a desktop environment, run `xvfb-run -
 
 ## More
 
-These topics are in [docs/DETAILS.md](docs/DETAILS.md):
-
-- Session file format
-- Local data and security
-- Regression test coverage
-- Code structure
-- Known limits
+- [Storage](docs/STORAGE.md): data paths, backups, database format, and upgrades.
+- [Details](docs/DETAILS.md): feature behavior, regression tests, code structure, and known limits.

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <json-glib/json-glib.h>
+#include <sqlite3.h>
 
 typedef struct
 {
@@ -16,6 +17,7 @@ typedef struct
   guint      edit_from; /* Use G_MAXUINT for a normal draft; otherwise edit
                            the indexed user message. */
   gboolean   pinned;
+  gboolean   dirty;     /* Set after changes; clear only after commit. */
   gint64     created;   /* Store Unix milliseconds for sidebar grouping. */
   JsonArray *messages;  /* Store message objects with role and content
                            fields. */
@@ -32,25 +34,37 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC (Chat, chat_free)
 JsonArray *image_array_member (JsonObject  *object,
                                const gchar *name);
 
-/* Return an owned array and owned output strings. Return an empty array when
-   there is no file. A file must match the current session structure; a missing
-   required field is not filled in. Return NULL when neither the main file nor
-   the backup is usable, and keep the original data. */
-GPtrArray *store_load         (const gchar *path,
-                               gchar      **current_id,
-                               gchar      **model,
-                               gchar      **effort,
-                               GError     **error);
-gboolean   store_save         (const gchar *path,
-                               GPtrArray   *chats,
-                               const gchar *current_id,
-                               const gchar *model,
-                               const gchar *effort);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (sqlite3, sqlite3_close)
+
+/* Return an owned connection. Hold the process lock until it is closed. */
+sqlite3 *  store_open           (const gchar *path,
+                                 GError     **error);
+
+/* Return an owned array and owned output strings. An empty store has no
+   current ID. Return NULL if the database cannot be read or is invalid. */
+GPtrArray *store_load           (sqlite3  *db,
+                                 gchar   **current_id,
+                                 gchar   **model,
+                                 gchar   **effort,
+                                 GError  **error);
+
+/* On commit, clear dirty flags and empty the owned-string deletion queue. */
+gboolean   store_save           (sqlite3     *db,
+                                 GPtrArray   *chats,
+                                 GPtrArray   *deleted_ids,
+                                 const gchar *current_id,
+                                 const gchar *model,
+                                 const gchar *effort,
+                                 GError     **error);
+
 /* Return newly allocated paths; the caller frees them. */
-gchar *    store_session_path (void);
-gchar *    store_config_path  (void);
-/* Remove unreferenced images only when both snapshots can be inspected. */
-void       store_cleanup_images (const gchar *path);
+gchar *    store_session_path   (void);
+gchar *    store_config_path    (void);
+gchar *    store_image_dir      (const gchar *path);
+
+/* Remove unreferenced images after a complete, successful load. */
+void       store_cleanup_images (const gchar *path,
+                                 GPtrArray   *chats);
 
 /* Return the locked fd, or -1 on failure. Close it before the process exits;
    do not delete the .lock file. */
