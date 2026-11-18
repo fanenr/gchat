@@ -409,6 +409,119 @@ config_roundtrip (void)
   g_rmdir (dir);
 }
 
+static void
+image_storage (Fixture      *f,
+               gconstpointer data G_GNUC_UNUSED)
+{
+  Chat *chat = g_ptr_array_index (f->chats, 0);
+  JsonObject *msg = json_array_get_object_element (chat->messages, 0);
+  json_object_set_string_member (msg, "role", "user");
+  g_autofree gchar *id = g_uuid_string_random ();
+  g_autofree gchar *second = g_uuid_string_random ();
+  g_autofree gchar *orphan = g_uuid_string_random ();
+  g_autoptr (JsonArray) images = json_array_new ();
+  json_array_add_string_element (images, id);
+  json_array_add_string_element (images, second);
+  chat->draft_images = json_array_ref (images);
+  chat->edit_images = json_array_ref (images);
+  chat->edit_from = 0;
+  json_object_set_array_member (msg, "images", json_array_ref (images));
+  g_autofree gchar *dir = g_build_filename (f->dir, "images", NULL);
+  g_assert_cmpint (g_mkdir (dir, 0700), ==, 0);
+  g_autofree gchar *image = g_build_filename (dir, id, NULL);
+  g_autofree gchar *other = g_build_filename (dir, second, NULL);
+  g_autofree gchar *unused = g_build_filename (dir, orphan, NULL);
+  g_assert_true (g_file_set_contents (image, "a", 1, NULL));
+  g_assert_true (g_file_set_contents (other, "b", 1, NULL));
+  g_assert_true (g_file_set_contents (unused, "c", 1, NULL));
+  g_assert_true (
+      store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
+  g_assert_true (
+      store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
+
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  Chat *restored = g_ptr_array_index (loaded, 0);
+  JsonObject *restored_msg = json_array_get_object_element (restored->messages,
+                                                            0);
+  JsonArray *refs[] = { restored->draft_images, restored->edit_images,
+                        image_array_member (restored_msg, "images") };
+  for (guint i = 0; i < G_N_ELEMENTS (refs); i++)
+    {
+      g_assert_cmpuint (json_array_get_length (refs[i]), ==, 2);
+      g_assert_cmpstr (json_array_get_string_element (refs[i], 0), ==, id);
+      g_assert_cmpstr (json_array_get_string_element (refs[i], 1), ==, second);
+    }
+  store_cleanup_images (f->path);
+  g_assert_true (g_file_test (image, G_FILE_TEST_EXISTS));
+  g_assert_true (g_file_test (other, G_FILE_TEST_EXISTS));
+  g_assert_false (g_file_test (unused, G_FILE_TEST_EXISTS));
+
+  g_clear_pointer (&chat->draft_images, json_array_unref);
+  g_clear_pointer (&chat->edit_images, json_array_unref);
+  json_object_remove_member (msg, "images");
+  g_assert_true (
+      store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
+  store_cleanup_images (f->path);
+  g_assert_true (g_file_test (image, G_FILE_TEST_EXISTS));
+  g_assert_true (g_file_set_contents (f->bak, "invalid", -1, NULL));
+  store_cleanup_images (f->path);
+  g_assert_true (g_file_test (image, G_FILE_TEST_EXISTS));
+  g_assert_true (
+      store_save (f->path, f->chats, "42", "deepseek-flash", "high"));
+  store_cleanup_images (f->path);
+  g_assert_false (g_file_test (image, G_FILE_TEST_EXISTS));
+  g_assert_false (g_file_test (other, G_FILE_TEST_EXISTS));
+  g_assert_cmpint (g_rmdir (dir), ==, 0);
+}
+
+static void
+legacy_image_storage (Fixture      *f,
+                      gconstpointer data G_GNUC_UNUSED)
+{
+  g_autofree gchar *id = g_uuid_string_random ();
+  g_autofree gchar *legacy = g_strdup_printf (
+      "{\"current\":\"42\",\"model\":\"deepseek-flash\",\"effort\":\"high\","
+      "\"chats\":[{\"id\":\"42\",\"title\":\"old\",\"draft\":\"\","
+      "\"created\":0,\"draft_image\":\"%s\","
+      "\"edit\":{\"index\":0,\"text\":\"\",\"image\":\"%s\"},"
+      "\"messages\":[{\"role\":\"user\",\"content\":\"\",\"image\":\"%s\"}]}]}",
+      id, id, id);
+  g_assert_true (g_file_set_contents (f->path, legacy, -1, NULL));
+
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (f->path, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  Chat *chat = g_ptr_array_index (loaded, 0);
+  JsonObject *msg = json_array_get_object_element (chat->messages, 0);
+  g_assert_false (json_object_has_member (msg, "image"));
+  JsonArray *refs[] = { chat->draft_images, chat->edit_images,
+                        image_array_member (msg, "images") };
+  for (guint i = 0; i < G_N_ELEMENTS (refs); i++)
+    {
+      g_assert_cmpuint (json_array_get_length (refs[i]), ==, 1);
+      g_assert_cmpstr (json_array_get_string_element (refs[i], 0), ==, id);
+    }
+
+  g_autofree gchar *dir = g_build_filename (f->dir, "images", NULL);
+  g_assert_cmpint (g_mkdir (dir, 0700), ==, 0);
+  g_autofree gchar *image = g_build_filename (dir, id, NULL);
+  g_assert_true (g_file_set_contents (image, "a", 1, NULL));
+  g_assert_true (store_save (f->path, f->chats, current, model, effort));
+  store_cleanup_images (f->path);
+  g_assert_cmpint (g_unlink (image), ==, 0);
+  g_assert_cmpint (g_rmdir (dir), ==, 0);
+}
+
 int
 main (int    argc,
       char **argv)
@@ -459,6 +572,13 @@ main (int    argc,
     { INVALID_MESSAGE, "reasoning", "null" },
     { INVALID_MESSAGE, "duration", "-1" },
     { INVALID_MESSAGE, "duration", "\"bad\"" },
+    { INVALID_CHAT, "draft_image", "\"../outside\"" },
+    { INVALID_CHAT, "draft_image", "null" },
+    { INVALID_MESSAGE, "image", "\"../outside\"" },
+    { INVALID_EDIT, "image", "\"../outside\"" },
+    { INVALID_CHAT, "draft_images", "null" },
+    { INVALID_MESSAGE, "images", "[\"../outside\"]" },
+    { INVALID_EDIT, "images", "[1]" },
     { INVALID_EDIT, "index", NULL },
     { INVALID_EDIT, "index", "-1" },
     { INVALID_EDIT, "index", "0.5" },
@@ -490,6 +610,9 @@ main (int    argc,
   g_test_add ("/store/draft", Fixture, NULL, setup, drafts, teardown);
   g_test_add ("/store/edit-draft", Fixture, GINT_TO_POINTER (1), setup, drafts,
               teardown);
+  g_test_add ("/store/images", Fixture, NULL, setup, image_storage, teardown);
+  g_test_add ("/store/images-legacy", Fixture, NULL, setup,
+              legacy_image_storage, teardown);
   static const gchar *configs[] = { "{ broken", "[]", "null",
                                     "{\"api_key\":42}", "{\"api_key\":null}" };
   for (guint i = 0; i < G_N_ELEMENTS (configs); i++)

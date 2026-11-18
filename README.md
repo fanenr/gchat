@@ -45,6 +45,7 @@ The client needs these packages:
 - Multiple sessions: search, pin, duplicate, rename, and delete sessions from the sidebar.
 - Adaptive layout: messages and the input area widen together on wide windows. The window requests a minimum size of 640 × 480 logical pixels.
 - Message actions: copy, edit and resend, fork into a new session, regenerate, and delete.
+- Image input: select or paste multiple images with `deepseek-flash`. Preview or remove them in the input box, then send with or without text.
 - Models and reasoning levels: `deepseek-flash` and `deepseek-v4-pro`, with four reasoning levels.
 - Drafts: each session keeps its own draft. It is written to disk 750ms after typing stops.
 - Interface language: English and Simplified Chinese. A change applies after a client restart.
@@ -67,7 +68,7 @@ macOS uses Cmd. Ctrl also works. Linux uses Ctrl.
 
 ## Data
 
-- Sessions: `~/.local/share/gchat/session.json`.
+- Sessions: `~/.local/share/gchat/session.json`. Image copies are in `images/` beside it.
 - Configuration: `~/.config/gchat/config.json`. It holds the API key, the theme, and the language.
 - The `DEEPSEEK_API_KEY` environment variable overrides the stored API key.
 - Files are written with `0600` permissions. The content is not encrypted.

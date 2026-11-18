@@ -45,6 +45,7 @@
 - 多会话：可以在侧栏搜索、置顶、复制、重命名和删除会话。
 - 自适应布局：宽窗口下，消息区与输入区一起变宽。窗口最小尺寸请求为 640 × 480 逻辑像素。
 - 消息操作：整条复制、编辑后重发、分叉新会话、重新生成、删除单条。
+- 图片输入：使用 `deepseek-flash` 选择或粘贴多张图片。在输入框内预览或逐张移除，支持图文或纯图片消息。
 - 模型与推理级别：`deepseek-flash` 与 `deepseek-v4-pro`，推理级别四档。
 - 草稿：每个会话独立保存。输入停顿 750ms 后自动写盘。
 - 界面语言：English 与简体中文。切换后重启客户端生效。
@@ -67,7 +68,7 @@ macOS 使用 Cmd，也支持 Ctrl。Linux 使用 Ctrl。
 
 ## 数据
 
-- 会话：`~/.local/share/gchat/session.json`。
+- 会话：`~/.local/share/gchat/session.json`。图片副本位于同目录的 `images/`。
 - 配置：`~/.config/gchat/config.json`。保存 API 密钥、主题和语言。
 - API 密钥优先读环境变量 `DEEPSEEK_API_KEY`。
 - 文件以 `0600` 权限写入。内容不加密。

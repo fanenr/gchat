@@ -45,6 +45,8 @@ chat_free (Chat *chat)
   g_free (chat->title);
   g_free (chat->draft);
   g_free (chat->edit_text);
+  g_clear_pointer (&chat->draft_images, json_array_unref);
+  g_clear_pointer (&chat->edit_images, json_array_unref);
   json_array_unref (chat->messages);
   g_free (chat);
 }
@@ -145,12 +147,64 @@ write_json (const gchar *path,
 }
 
 static gboolean
+string_node_valid (JsonNode *node)
+{
+  return node != NULL && JSON_NODE_HOLDS_VALUE (node) &&
+         json_node_get_value_type (node) == G_TYPE_STRING;
+}
+
+static gboolean
 string_member_valid (JsonObject  *obj,
                      const gchar *name)
 {
+  return string_node_valid (json_object_get_member (obj, name));
+}
+
+JsonArray *
+image_array_member (JsonObject  *object,
+                    const gchar *name)
+{
+  JsonNode *node = json_object_get_member (object, name);
+  return node != NULL ? json_node_get_array (node) : NULL;
+}
+
+static gboolean
+image_id_valid (JsonNode *node)
+{
+  return string_node_valid (node) &&
+         g_uuid_string_is_valid (json_node_get_string (node));
+}
+
+/* Turn the legacy single UUID into the array used by current sessions. */
+static gboolean
+normalize_image_member (JsonObject  *obj,
+                        const gchar *name,
+                        const gchar *legacy_name)
+{
   JsonNode *node = json_object_get_member (obj, name);
-  return node != NULL && JSON_NODE_HOLDS_VALUE (node) &&
-         json_node_get_value_type (node) == G_TYPE_STRING;
+  JsonNode *legacy = json_object_get_member (obj, legacy_name);
+  if (legacy != NULL)
+    {
+      if (node != NULL || !image_id_valid (legacy))
+        return FALSE;
+      g_autoptr (JsonArray) images = json_array_new ();
+      json_array_add_string_element (images, json_node_get_string (legacy));
+      json_object_set_array_member (obj, name, g_steal_pointer (&images));
+      json_object_remove_member (obj, legacy_name);
+      return TRUE;
+    }
+  if (node == NULL)
+    return TRUE;
+  if (!JSON_NODE_HOLDS_ARRAY (node))
+    return FALSE;
+  JsonArray *images = json_node_get_array (node);
+  guint count = json_array_get_length (images);
+  for (guint i = 0; i < count; i++)
+    if (!image_id_valid (json_array_get_element (images, i)))
+      return FALSE;
+  if (count == 0)
+    json_object_remove_member (obj, name);
+  return TRUE;
 }
 
 static gboolean
@@ -169,7 +223,7 @@ number_member_valid (JsonObject  *obj,
 }
 
 static gboolean
-session_valid (JsonNode *node)
+normalize_session (JsonNode *node)
 {
   if (node == NULL || !JSON_NODE_HOLDS_OBJECT (node))
     return FALSE;
@@ -195,6 +249,7 @@ session_valid (JsonNode *node)
           !*json_object_get_string_member (chat, "id") ||
           !string_member_valid (chat, "title") ||
           !string_member_valid (chat, "draft") ||
+          !normalize_image_member (chat, "draft_images", "draft_image") ||
           !number_member_valid (chat, "created", TRUE))
         {
           return FALSE;
@@ -218,7 +273,8 @@ session_valid (JsonNode *node)
             return FALSE;
           JsonObject *edit = json_node_get_object (edit_node);
           if (!number_member_valid (edit, "index", TRUE) ||
-              !string_member_valid (edit, "text"))
+              !string_member_valid (edit, "text") ||
+              !normalize_image_member (edit, "images", "image"))
             {
               return FALSE;
             }
@@ -243,6 +299,7 @@ session_valid (JsonNode *node)
           JsonObject *msg = json_node_get_object (msg_node);
           if (!string_member_valid (msg, "role") ||
               !string_member_valid (msg, "content") ||
+              !normalize_image_member (msg, "images", "image") ||
               (json_object_has_member (msg, "reasoning") &&
                !string_member_valid (msg, "reasoning")) ||
               (json_object_has_member (msg, "duration") &&
@@ -253,11 +310,86 @@ session_valid (JsonNode *node)
           const gchar *role = json_object_get_string_member (msg, "role");
           if (!g_str_equal (role, "user") && !g_str_equal (role, "assistant"))
             return FALSE;
+          if (g_str_equal (role, "assistant") &&
+              json_object_has_member (msg, "images"))
+            {
+              return FALSE;
+            }
         }
     }
   const gchar *current = json_object_get_string_member (root, "current");
   return json_array_get_length (array) ? g_hash_table_contains (ids, current)
                                        : !*current;
+}
+
+static void
+collect_image_array (GHashTable *refs,
+                     JsonArray  *images)
+{
+  if (images == NULL)
+    return;
+  for (guint i = 0; i < json_array_get_length (images); i++)
+    g_hash_table_add (refs, g_strdup (json_array_get_string_element (images,
+                                                                     i)));
+}
+
+static gboolean
+collect_image_refs (const gchar *path,
+                    GHashTable  *refs,
+                    gboolean     optional)
+{
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  g_autoptr (GError) error = NULL;
+  if (!json_parser_load_from_file (parser, path, &error))
+    return optional && g_error_matches (error, G_FILE_ERROR,
+                                        G_FILE_ERROR_NOENT);
+  JsonNode *root = json_parser_get_root (parser);
+  if (!normalize_session (root))
+    return FALSE;
+  JsonArray *chats = json_object_get_array_member (json_node_get_object (root),
+                                                   "chats");
+  for (guint i = 0; i < json_array_get_length (chats); i++)
+    {
+      JsonObject *chat = json_array_get_object_element (chats, i);
+      collect_image_array (refs, image_array_member (chat, "draft_images"));
+      if (json_object_has_member (chat, "edit"))
+        {
+          JsonObject *edit = json_object_get_object_member (chat, "edit");
+          collect_image_array (refs, image_array_member (edit, "images"));
+        }
+      JsonArray *messages = json_object_get_array_member (chat, "messages");
+      for (guint j = 0; j < json_array_get_length (messages); j++)
+        {
+          JsonObject *msg = json_array_get_object_element (messages, j);
+          collect_image_array (refs, image_array_member (msg, "images"));
+        }
+    }
+  return TRUE;
+}
+
+void
+store_cleanup_images (const gchar *path)
+{
+  g_autoptr (GHashTable) refs =
+      g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  g_autofree gchar *bak = g_strconcat (path, ".bak", NULL);
+  if (!collect_image_refs (path, refs, FALSE) ||
+      !collect_image_refs (bak, refs, TRUE))
+    return;
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_autofree gchar *images = g_build_filename (dir, "images", NULL);
+  g_autoptr (GDir) folder = g_dir_open (images, 0, NULL);
+  if (folder == NULL)
+    return;
+  const gchar *name;
+  while ((name = g_dir_read_name (folder)) != NULL)
+    if (g_uuid_string_is_valid (name) && !g_hash_table_contains (refs, name))
+      {
+        g_autofree gchar *file = g_build_filename (images, name, NULL);
+        if (g_unlink (file) != 0)
+          g_warning ("cannot remove unused image %s: %s", file,
+                     g_strerror (errno));
+      }
 }
 
 static gboolean
@@ -267,7 +399,7 @@ load_session (JsonParser  *parser,
 {
   if (!json_parser_load_from_file (parser, path, error))
     return FALSE;
-  if (session_valid (json_parser_get_root (parser)))
+  if (normalize_session (json_parser_get_root (parser)))
     return TRUE;
   g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                _ ("Invalid conversation file structure: %s"), path);
@@ -336,6 +468,9 @@ store_load (const gchar *path,
               json_object_get_string_member (obj, "title"));
           g_free (chat->draft);
           chat->draft = g_strdup (json_object_get_string_member (obj, "draft"));
+          JsonArray *images = image_array_member (obj, "draft_images");
+          if (images != NULL)
+            chat->draft_images = json_array_ref (images);
           if (json_object_has_member (obj, "edit"))
             {
               JsonObject *edit = json_object_get_object_member (obj, "edit");
@@ -344,6 +479,9 @@ store_load (const gchar *path,
               g_free (chat->edit_text);
               chat->edit_text =
                   g_strdup (json_object_get_string_member (edit, "text"));
+              images = image_array_member (edit, "images");
+              if (images != NULL)
+                chat->edit_images = json_array_ref (images);
             }
           chat->created = json_object_get_int_member (obj, "created");
           chat->pinned = json_object_get_boolean_member_with_default (
@@ -372,11 +510,17 @@ store_save (const gchar *path,
       json_object_set_string_member (obj, "id", chat->id);
       json_object_set_string_member (obj, "title", chat->title);
       json_object_set_string_member (obj, "draft", chat->draft);
+      if (chat->draft_images != NULL)
+        json_object_set_array_member (obj, "draft_images",
+                                      json_array_ref (chat->draft_images));
       if (chat->edit_from != G_MAXUINT)
         {
           g_autoptr (JsonObject) edit = json_object_new ();
           json_object_set_int_member (edit, "index", chat->edit_from);
           json_object_set_string_member (edit, "text", chat->edit_text);
+          if (chat->edit_images != NULL)
+            json_object_set_array_member (edit, "images",
+                                          json_array_ref (chat->edit_images));
           json_object_set_object_member (obj, "edit", g_steal_pointer (&edit));
         }
       json_object_set_int_member (obj, "created", chat->created);

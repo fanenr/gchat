@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gchat\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-13 22:16+0800\n"
+"POT-Creation-Date: 2026-11-18 12:12+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,348 +17,446 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: main.c:25
+#: main.c:137
 msgid "Off"
 msgstr ""
 
-#: main.c:26
+#: main.c:138
 msgid "Low"
 msgstr ""
 
-#: main.c:27
+#: main.c:139
 msgid "High"
 msgstr ""
 
-#: main.c:28
+#: main.c:140
 msgid "Max"
 msgstr ""
 
-#: main.c:110
+#: main.c:253 main.c:2972
+msgid "Image exceeds the 8 MiB limit."
+msgstr ""
+
+#: main.c:329 main.c:369
+msgid "Unsupported image format."
+msgstr ""
+
+#: main.c:349 main.c:3180
+msgid "Image dimensions are too large."
+msgstr ""
+
+#: main.c:399
 msgid "Retry"
 msgstr ""
 
-#: main.c:357
+#: main.c:678
 msgid "Copied"
 msgstr ""
 
-#: main.c:398
-msgid "Copy message"
-msgstr ""
-
-#: main.c:398
-msgid "Copy reply"
-msgstr ""
-
-#: main.c:459
-msgid "Edit and resend"
-msgstr ""
-
-#: main.c:476 main.c:1248
-msgid "Regenerate"
-msgstr ""
-
-#: main.c:479 main.c:1250
-msgid "Delete message"
-msgstr ""
-
-#: main.c
+#: main.c:725
 msgid "Fork conversation"
 msgstr ""
 
-#: main.c
+#: main.c:810
+msgid "Copy message"
+msgstr ""
+
+#: main.c:810
+msgid "Copy reply"
+msgstr ""
+
+#: main.c:885 main.c:890
+msgid "Image unavailable"
+msgstr ""
+
+#: main.c:914
+msgid "Attached image"
+msgstr ""
+
+#: main.c:947
+msgid "Edit and resend"
+msgstr ""
+
+#: main.c:967 main.c:1999
+msgid "Regenerate"
+msgstr ""
+
+#: main.c:971 main.c:2002
+msgid "Delete message"
+msgstr ""
+
+#: main.c:1039 main.c:3421
+msgid "Failed to save conversation"
+msgstr ""
+
+#: main.c:1050
+msgid "Stop generating (Ctrl/Cmd+.)"
+msgstr ""
+
+#: main.c:1050 ui/content.blp:221
+msgid "Send"
+msgstr ""
+
+#: main.c:1076
+msgid "Earlier"
+msgstr ""
+
+#: main.c:1080
+msgid "Today"
+msgstr ""
+
+#: main.c:1082
+msgid "Yesterday"
+msgstr ""
+
+#: main.c:1119 main.c:1227 main.c:1624 ui/sidebar.blp:48
+msgid "New chat"
+msgstr ""
+
+#: main.c:1214
+msgid "Pinned"
+msgstr ""
+
+#: main.c:1233
+msgid "Delete conversation"
+msgstr ""
+
+#: main.c:1261
+msgid "Right-click for conversation menu"
+msgstr ""
+
+#: main.c:1369
 #, c-format
 msgid "%s (Fork)"
 msgstr ""
 
-#: main.c
+#: main.c:1370
 msgid "Fork"
 msgstr ""
 
-#: main.c:538 main.c:1945
-msgid "Failed to save conversation"
-msgstr ""
-
-#: main.c:549
-msgid "Stop generating (Ctrl/Cmd+.)"
-msgstr ""
-
-#: main.c:549 main.c:2515
-msgid "Send"
-msgstr ""
-
-#: main.c:571
-msgid "Earlier"
-msgstr ""
-
-#: main.c:575
-msgid "Today"
-msgstr ""
-
-#: main.c:577
-msgid "Yesterday"
-msgstr ""
-
-#: main.c:613 main.c:686 main.c:908 main.c:2316
-msgid "New chat"
-msgstr ""
-
-#: main.c:691
-msgid "Delete conversation"
-msgstr ""
-
-#: main.c:718
-msgid "Right-click to rename"
-msgstr ""
-
-#: main.c:854
+#: main.c:1478
 msgid "Rename conversation"
 msgstr ""
 
-#: main.c:861 main.c:911 main.c:2455
+#: main.c:1486 main.c:1627 ui/content.blp:95
 msgid "Cancel"
 msgstr ""
 
-#: main.c:861 main.c:1075
+#: main.c:1486 main.c:1819
 msgid "Save"
 msgstr ""
 
-#: main.c:907
+#: main.c:1517
+#, c-format
+msgid "%s (Copy)"
+msgstr ""
+
+#: main.c:1518 main.c:1562
+msgid "Copy"
+msgstr ""
+
+#: main.c:1561
+msgid "Unpin"
+msgstr ""
+
+#: main.c:1561
+msgid "Pin"
+msgstr ""
+
+#: main.c:1562
+msgid "Rename"
+msgstr ""
+
+#: main.c:1623
 #, c-format
 msgid "Delete “%s” and all its messages and drafts? This cannot be undone."
 msgstr ""
 
-#: main.c:909
+#: main.c:1626
 msgid "Delete conversation?"
 msgstr ""
 
-#: main.c:911
+#: main.c:1628
 msgid "Delete"
 msgstr ""
 
-#: main.c:1009
+#: main.c:1746
 msgid "Model"
 msgstr ""
 
-#: main.c:1019
+#: main.c:1757
 msgid "Reasoning level"
 msgstr ""
 
-#: main.c:1045
+#: main.c:1786
 msgid "Failed to save API key"
 msgstr ""
 
-#: main.c:1060 main.c:2125
+#: main.c:1803 main.c:3552
 msgid "API key saved"
 msgstr ""
 
-#: main.c:1067
+#: main.c:1811
 #, c-format
 msgid "Your key is saved in %s for future use."
 msgstr ""
 
-#: main.c:1068
+#: main.c:1813
 msgid "DeepSeek API key required"
 msgstr ""
 
-#: main.c:1075
+#: main.c:1819
 msgid "Later"
 msgstr ""
 
-#: main.c:1102
+#: main.c:1857
 msgid "Thought"
 msgstr ""
 
-#: main.c:1103
+#: main.c:1858
 #, c-format
 msgid "Thought (%.0f s)"
 msgstr ""
 
-#: main.c:1104
+#: main.c:1859
 #, c-format
 msgid "Thought (%.1f s)"
 msgstr ""
 
-#: main.c:1232
+#: main.c:1974
 msgid "No response received"
 msgstr ""
 
-#: main.c:1302
-msgid "Connection interrupted. The response may be incomplete."
-msgstr ""
-
-#: main.c:1331 main.c:1338
+#: main.c:2043 main.c:2052
 msgid "Thinking…"
 msgstr ""
 
-#: main.c:1416
+#: main.c:2100
+msgid "Connection interrupted. The response may be incomplete."
+msgstr ""
+
+#: main.c:2200
 msgid "Request failed"
 msgstr ""
 
-#: main.c:1570
+#: main.c:2249 main.c:3094 main.c:3230
+msgid "A request can contain at most 600 images."
+msgstr ""
+
+#: main.c:2256
+msgid "Invalid image reference."
+msgstr ""
+
+#: main.c:2273
+msgid "With 15 or more images, each side must be at most 4096 pixels."
+msgstr ""
+
+#: main.c:2282 main.c:2376
+msgid "The conversation is too large to send."
+msgstr ""
+
+#: main.c:2327
+msgid "Images require the DeepSeek-Flash model."
+msgstr ""
+
+#: main.c:2442 main.c:3148 main.c:3329
+msgid "Wait for images to finish loading."
+msgstr ""
+
+#: main.c:2499
 msgid "Finish or cancel editing before regenerating."
 msgstr ""
 
-#: main.c:1663
+#: main.c:2608 main.c:3275 main.c:3324
 msgid "Generating. Click ■ to stop."
 msgstr ""
 
-#: main.c:2065
+#: main.c:2904
+#, c-format
+msgid "Remove image %u"
+msgstr ""
+
+#: main.c:3153
+msgid "Select images"
+msgstr ""
+
+#: main.c:3155
+msgid "Images"
+msgstr ""
+
+#: main.c:3192
+msgid "Unable to encode clipboard image."
+msgstr ""
+
+#: main.c:3305
+msgid "Only local image files can be pasted."
+msgstr ""
+
+#: main.c:3475
 msgid "System default"
 msgstr ""
 
-#: main.c:2066
+#: main.c:3476
 msgid "Light"
 msgstr ""
 
-#: main.c:2067
+#: main.c:3477
 msgid "Dark"
 msgstr ""
 
-#: main.c:2068
+#: main.c:3478
 msgid "System language"
 msgstr ""
 
-#: main.c:2104
+#: main.c:3523
 msgid "Failed to save theme"
 msgstr ""
 
-#: main.c:2112
+#: main.c:3536
 msgid "Failed to save language"
 msgstr ""
 
-#: main.c:2113 main.c:2190
+#: main.c:3538 ui/settings.blp:34
 msgid "Restart the app to apply language changes."
 msgstr ""
 
-#: main.c:2121
+#: main.c:3548
 msgid "API key cannot be empty"
 msgstr ""
 
-#: main.c:2149
-msgid "API key"
-msgstr ""
-
-#: main.c:2159
+#: main.c:3584
 msgid "DEEPSEEK_API_KEY environment variable (overrides this setting)"
 msgstr ""
 
-#: main.c:2160
+#: main.c:3586
 #, c-format
 msgid "Local configuration file: %s"
 msgstr ""
 
-#: main.c:2161
-msgid "Key source"
-msgstr ""
-
-#: main.c:2168
-msgid "Appearance"
-msgstr ""
-
-#: main.c:2171
-msgid "Theme"
-msgstr ""
-
-#: main.c:2189
-msgid "Language"
-msgstr ""
-
-#: main.c:2210
-msgid "About"
-msgstr ""
-
-#: main.c:2214
-msgid "Conversation data"
-msgstr ""
-
-#: main.c:2218 main.c:2363
-msgid "Settings"
-msgstr ""
-
-#: main.c:2321
-msgid "New chat (Ctrl+N)"
-msgstr ""
-
-#: main.c:2328 main.c:2331
+#: main.c:3727 ui/sidebar.blp:55
 msgid "Search conversations"
 msgstr ""
 
-#: main.c:2332
-msgid "Search conversations (Ctrl/Cmd+F)"
-msgstr ""
-
-#: main.c:2338
+#: main.c:3733
 msgid "No conversations found"
 msgstr ""
 
-#: main.c:2368
-msgid "Settings (Ctrl/Cmd+,)"
-msgstr ""
-
-#: main.c:2383
-msgid "Conversations"
-msgstr ""
-
-#: main.c:2415
-msgid "Start a conversation with DeepSeek"
-msgstr ""
-
-#: main.c:2417
-msgid "Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat"
-msgstr ""
-
-#: main.c:2451
-msgid "Editing message"
-msgstr ""
-
-#: main.c:2457
-msgid "Cancel editing (Esc)"
-msgstr ""
-
-#: main.c:2475
-msgid "Focus input (Ctrl/Cmd+L)"
-msgstr ""
-
-#: main.c:2480
+#: main.c:3805
 msgid "Message DeepSeek. Enter to send, Shift+Enter for a new line."
 msgstr ""
 
-#: main.c:2487
-msgid "Message DeepSeek"
-msgstr ""
-
-#: main.c:2522
-msgid "Model and reasoning level"
-msgstr ""
-
-#: main.c:2550
-msgid "AI-generated content. Please verify important information."
-msgstr ""
-
-#: main.c:2718
+#: main.c:4025
 #, c-format
 msgid "Unable to load conversations; original files preserved: %s\n"
 msgstr ""
 
-#: md.c:251
+#: ui/content.blp:16
+msgid "Conversations"
+msgstr ""
+
+#: ui/content.blp:69
+msgid "Start a conversation with DeepSeek"
+msgstr ""
+
+#: ui/content.blp:70
+msgid "Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat"
+msgstr ""
+
+#: ui/content.blp:89
+msgid "Editing message"
+msgstr ""
+
+#: ui/content.blp:96
+msgid "Cancel editing (Esc)"
+msgstr ""
+
+#: ui/content.blp:133
+msgid "Focus input (Ctrl/Cmd+L)"
+msgstr ""
+
+#: ui/content.blp:148
+msgid "Message DeepSeek"
+msgstr ""
+
+#: ui/content.blp:173
+msgid "Attach images"
+msgstr ""
+
+#: ui/content.blp:188
+msgid "Model and reasoning level"
+msgstr ""
+
+#: ui/content.blp:236
+msgid "AI-generated content. Please verify important information."
+msgstr ""
+
+#: ui/settings.blp:7 ui/sidebar.blp:99
+msgid "Settings"
+msgstr ""
+
+#: ui/settings.blp:15
+msgid "API key"
+msgstr ""
+
+#: ui/settings.blp:20
+msgid "Key source"
+msgstr ""
+
+#: ui/settings.blp:26
+msgid "Appearance"
+msgstr ""
+
+#: ui/settings.blp:29
+msgid "Theme"
+msgstr ""
+
+#: ui/settings.blp:33
+msgid "Language"
+msgstr ""
+
+#: ui/settings.blp:39
+msgid "About"
+msgstr ""
+
+#: ui/settings.blp:47
+msgid "Conversation data"
+msgstr ""
+
+#: ui/sidebar.blp:32
+msgid "New chat (Ctrl+N)"
+msgstr ""
+
+#: ui/sidebar.blp:56
+msgid "Search conversations (Ctrl/Cmd+F)"
+msgstr ""
+
+#: ui/sidebar.blp:83
+msgid "Settings (Ctrl/Cmd+,)"
+msgstr ""
+
+#: md.c:252
 msgid "Code copied"
 msgstr ""
 
-#: md.c:274
+#: md.c:277
 msgid "Copy code"
 msgstr ""
 
-#: store.c:72
+#: md.c:497
+msgid "Image"
+msgstr ""
+
+#: store.c:81
 #, c-format
 msgid "Cannot lock conversation file %s: %s"
 msgstr ""
 
-#: store.c:241
+#: store.c:405
 #, c-format
 msgid "Invalid conversation file structure: %s"
 msgstr ""
 
-#: store.c:277
+#: store.c:445
 #, c-format
 msgid "Neither the conversation file nor its backup is usable: %s; %s"
 msgstr ""

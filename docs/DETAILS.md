@@ -34,6 +34,22 @@ This page covers what [README](../README.md) does not.
 - Links open only HTTP, HTTPS, and mailto.
 - Local files, relative links, and other app schemes show as plain text. The client does not launch external programs.
 
+### Image input
+
+- Use the attachment button to select one or more local images. You can also paste image pixels, a screenshot, or multiple copied local image files into the input box. Each import appends to the current draft.
+- Review attachments in the thumbnail strip inside the input box. Scroll horizontally if needed, and use the close button on a thumbnail to remove just that image.
+- If the clipboard contains both an image and text, the image takes priority. Plain text still pastes normally. Pasted image pixels are converted to PNG and may lose metadata; pasted image files are stored unchanged.
+- You can send an image without text. Images appear in messages. Normal and edit drafts keep their own images.
+- PNG, JPEG, GIF, and WebP work when their system decoders are available. The format is detected from the contents. GIF and WebP previews are static.
+- Each image is limited to 8 MiB, 8192 pixels per side, and 16 million pixels total. For pasted image pixels, the size is measured after PNG encoding; GTK may decode the image before the client checks its dimensions. A request can contain up to 600 images. With 15 or more images, each side of every image is limited to 4096 pixels. These limits include history. The full request body is limited to 48 MiB, including image history and Base64 overhead.
+- Images are sent again with the history on each request. This can increase upload time and cost. Selected files are sent unchanged, including any metadata.
+- Images require `deepseek-flash`. If the current message or history contains an image, switch back to Flash before sending or regenerating.
+- Wait for the current batch to finish before adding more images or sending. Switching sessions, starting an edit, or canceling an edit cancels the current import. If any file in a batch cannot be imported, none of that batch is added. On a missing image or request limit error, the client reports the error without committing the draft.
+- Image copies are stored in the data directory under `images/`, with `0600` permissions and no encryption. Editing, copying, and forking retain image references.
+- Older clients do not understand image fields and may ignore images or lose draft references. Do not open and save image sessions with an older client.
+- At startup, the client removes images no longer referenced by the session file or its backup. It skips cleanup if it cannot inspect the backup. After deletion, an image can remain until the backup rotates and the app starts again.
+- Dragging images is not supported. Request construction and history previews read images on the UI thread, so long conversations can briefly pause the UI.
+
 ### Code blocks
 
 - A code block shows as a separate card with a language label and a copy button.
@@ -91,7 +107,7 @@ The rules are:
 - The edit state survives a session switch and a restart.
 - Click Cancel, or press `Esc` in the input box, to restore the previous normal draft.
 - User messages and replies both render as Markdown. Pasted code blocks, tables, and lists show correctly.
-- Sending keeps the indentation and trailing whitespace of the body. The client rejects only blank messages.
+- Sending keeps the indentation and trailing whitespace of the body. Without an image, the client rejects blank messages.
 - A user bubble shrinks to the width of the body. Padding is fixed at 16px left and right, 10px top and bottom.
 - The action row does not widen the background. Multi-line text stays left-aligned.
 - You can drag a selection across paragraphs. `Ctrl/Cmd+A` selects the whole message.
@@ -172,7 +188,8 @@ meson compile -C build gchat-update-po
 
 The root of a session file must have `chats`, `current`, `model`, and `effort`.
 Each session must contain `id`, `title`, `draft`, `created`, and `messages`. Optional boolean `pinned` defaults to false.
-`role` and `content` of a message are required. `reasoning` and `duration` are optional.
+`role` and `content` of a message are required. `reasoning`, `duration`, and the user message field `images` are optional.
+The normal draft field `draft_images` and the edit draft field `images` are optional. Each list contains UUIDs of files under `images/`, in attachment order. Legacy `image` and `draft_image` strings still load as single-image lists.
 `edit` exists only on an edited message.
 `current` must point to an existing session. It is the string `""` for an empty list.
 A missing required field makes the file invalid. If the backup is invalid too, the client stops at startup and does not overwrite the original data.
@@ -190,7 +207,7 @@ Setting `XDG_DATA_HOME` or `XDG_CONFIG_HOME` changes the matching directory.
 - If the configuration is not a valid JSON object, or holds a non-string value, a settings save fails and keeps the original file.
 - The theme and the language fall back to the last choice saved in the dialog. The client does not read values from the broken configuration.
 - `session.json.lock` is the process lock file. The lock is released after an exit or a crash. You must not delete this file to bypass the lock.
-- When you send a message, the body history of the current session goes to DeepSeek. Local drafts and reasoning records are not sent back.
+- When you send a message, the text and image history of the current session goes to DeepSeek. Local drafts and reasoning records are not sent back.
 
 ## Regression tests
 
@@ -279,4 +296,3 @@ GTK tests need a display backend. They skip when no backend is available.
 - The client expects DeepSeek JSON data and the `[DONE]` marker in SSE events. It ignores invalid JSON and does not process `event`, `id`, or `retry` fields. An event without its final blank line is discarded. This is not a general SSE client.
 - The client decodes only common named entities and numeric entities. A named entity outside the table stays as source text.
 - Draft autosave has a 750ms delay. A forced process kill loses input not yet written and the current streaming reply. `.bak` keeps only the previous copy and is not a separate backup. The temporary-file replace does not guarantee durability after a sudden power loss.
-- Image input is not connected yet. `deepseek-flash` supports image input.

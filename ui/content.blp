@@ -101,104 +101,133 @@ Adw.ToolbarView content {
           }
         }
 
-        Gtk.Overlay {
-          child: Gtk.ScrolledWindow input_frame {
-            hexpand: true;
-            hscrollbar-policy: never;
-            vscrollbar-policy: external;
+        Gtk.Box {
+          orientation: vertical;
 
-            styles [
-              "card",
-              "input-frame",
-            ]
+          styles [
+            "card",
+            "input-frame",
+          ]
 
-            child: Gtk.TextView input {
-              tooltip-text: _("Focus input (Ctrl/Cmd+L)");
-              wrap-mode: word_char;
-              margin-top: 14;
-              margin-bottom: 42;
-              margin-start: 14;
-              margin-end: 14;
+          Gtk.ScrolledWindow image_bar {
+            visible: false;
+            hscrollbar-policy: automatic;
+            vscrollbar-policy: never;
+            margin-top: 10;
+            margin-start: 14;
+            margin-end: 14;
 
-              styles [
-                "chat-input",
-              ]
+            child: Gtk.Box image_preview {
+              spacing: 8;
+              margin-bottom: 4;
             };
-          };
-
-          [overlay]
-          Gtk.Label placeholder {
-            label: _("Message DeepSeek");
-            can-target: false;
-            halign: start;
-            valign: start;
-            margin-top: 14;
-            margin-start: 16;
-
-            styles [
-              "dimmed",
-              "chat-input",
-            ]
           }
 
-          [overlay]
-          Gtk.Box {
-            orientation: horizontal;
-            spacing: 4;
-            valign: end;
-            halign: fill;
-            margin-start: 10;
-            margin-end: 8;
-            margin-bottom: 8;
+          Gtk.Overlay {
+            child: Gtk.ScrolledWindow input_frame {
+              hexpand: true;
+              hscrollbar-policy: never;
+              vscrollbar-policy: external;
 
+              child: Gtk.TextView input {
+                tooltip-text: _("Focus input (Ctrl/Cmd+L)");
+                wrap-mode: word_char;
+                margin-top: 14;
+                margin-bottom: 42;
+                margin-start: 14;
+                margin-end: 14;
+
+                styles [
+                  "chat-input",
+                ]
+              };
+            };
+
+            [overlay]
+            Gtk.Label placeholder {
+              label: _("Message DeepSeek");
+              can-target: false;
+              halign: start;
+              valign: start;
+              margin-top: 14;
+              margin-start: 16;
+
+              styles [
+                "dimmed",
+                "chat-input",
+              ]
+            }
+
+            [overlay]
             Gtk.Box {
               orientation: horizontal;
-              hexpand: true;
-            }
+              spacing: 4;
+              valign: end;
+              halign: fill;
+              margin-start: 10;
+              margin-end: 8;
+              margin-bottom: 8;
 
-            Gtk.MenuButton model_chip {
-              tooltip-text: _("Model and reasoning level");
+              Gtk.Button attach {
+                icon-name: "mail-attachment-symbolic";
+                tooltip-text: _("Attach images");
+                valign: center;
 
-              styles [
-                "input-chip",
-              ]
+                styles [
+                  "flat",
+                  "circular",
+                ]
+              }
 
-              popover: Gtk.Popover choice_popover {};
-
-              child: Gtk.Box {
+              Gtk.Box {
                 orientation: horizontal;
-                spacing: 6;
+                hexpand: true;
+              }
 
-                Gtk.Label chip_model {}
+              Gtk.MenuButton model_chip {
+                tooltip-text: _("Model and reasoning level");
 
-                Gtk.Label chip_effort {
-                  styles [
-                    "dimmed",
-                  ]
-                }
+                styles [
+                  "input-chip",
+                ]
 
-                Gtk.Image {
-                  icon-name: "pan-down-symbolic";
-                  pixel-size: 13;
+                popover: Gtk.Popover choice_popover {};
 
-                  styles [
-                    "dimmed",
-                  ]
-                }
-              };
-            }
+                child: Gtk.Box {
+                  orientation: horizontal;
+                  spacing: 6;
 
-            Gtk.Button send {
-              icon-name: "go-up-symbolic";
-              tooltip-text: _("Send");
-              valign: center;
-              width-request: 32;
-              height-request: 32;
+                  Gtk.Label chip_model {}
 
-              styles [
-                "suggested-action",
-                "circular",
-              ]
+                  Gtk.Label chip_effort {
+                    styles [
+                      "dimmed",
+                    ]
+                  }
+
+                  Gtk.Image {
+                    icon-name: "pan-down-symbolic";
+                    pixel-size: 13;
+
+                    styles [
+                      "dimmed",
+                    ]
+                  }
+                };
+              }
+
+              Gtk.Button send {
+                icon-name: "go-up-symbolic";
+                tooltip-text: _("Send");
+                valign: center;
+                width-request: 32;
+                height-request: 32;
+
+                styles [
+                  "suggested-action",
+                  "circular",
+                ]
+              }
             }
           }
         }

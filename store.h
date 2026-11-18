@@ -11,6 +11,7 @@ typedef struct
   gchar     *id;
   gchar     *title;
   gchar     *draft, *edit_text;
+  JsonArray *draft_images, *edit_images;
 
   guint      edit_from; /* Use G_MAXUINT for a normal draft; otherwise edit
                            the indexed user message. */
@@ -26,6 +27,10 @@ Chat *     chat_new_empty     (void);
 void       chat_free          (Chat *chat);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (Chat, chat_free)
+
+/* Return the borrowed array for a validated attachment field, or NULL. */
+JsonArray *image_array_member (JsonObject  *object,
+                               const gchar *name);
 
 /* Return an owned array and owned output strings. Return an empty array when
    there is no file. A file must match the current session structure; a missing
@@ -44,6 +49,8 @@ gboolean   store_save         (const gchar *path,
 /* Return newly allocated paths; the caller frees them. */
 gchar *    store_session_path (void);
 gchar *    store_config_path  (void);
+/* Remove unreferenced images only when both snapshots can be inspected. */
+void       store_cleanup_images (const gchar *path);
 
 /* Return the locked fd, or -1 on failure. Close it before the process exits;
    do not delete the .lock file. */

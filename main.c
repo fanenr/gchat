@@ -9,15 +9,21 @@
 #include "store.h"
 
 #include <adwaita.h>
+#include <errno.h>
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
+#include <string.h>
 #include <unistd.h>
 
 #define API_URL "https://api.deepseek.com/chat/completions"
 
 #define INPUT_MIN_HEIGHT 92
 #define INPUT_MAX_HEIGHT 210
+#define ATTACHMENT_THUMB_SIZE 64
+#define IMAGE_MAX_SIZE (8 * 1024 * 1024)
+#define REQUEST_MAX_SIZE (48 * 1024 * 1024)
+#define REQUEST_MAX_IMAGES 600
 
 /* Keep content aligned and transition smoothly from 85% to 75%. */
 typedef struct
@@ -141,13 +147,14 @@ typedef struct
                *stack, *placeholder;
   GtkWidget    *model_chip, *chip_model, *chip_effort, *choice_popover;
   GtkWidget    *new_btn, *title_label, *edit_bar;
+  GtkWidget    *image_bar, *image_preview, *attach;
   GtkWidget    *reply_bubble, *reply_body, *reply_label;
   GtkWidget    *reason_box, *reason_view, *reason_title;
 
   JsonObject   *reply_msg;
   GString      *answer, *reasoning;
   SoupSession  *session;
-  GCancellable *cancel;
+  GCancellable *cancel, *image_cancel;
 
   GPtrArray    *chats;
   Chat         *chat;
@@ -182,8 +189,11 @@ static void on_row_menu (GtkGestureClick *gesture,
                          double           y,
                          gpointer         data);
 static void regenerate (void);
-static void start_request (void);
+static void start_request (gchar *body,
+                           gsize  len);
 static void refresh_input (void);
+static void refresh_images (void);
+static JsonArray **current_images (void);
 static void render_chat (void);
 static void update_send_state (void);
 static void fit_input_height (void);
@@ -210,6 +220,161 @@ static void refresh_choices (void);
 static gboolean save_session (void);
 static gboolean record_reply (void);
 static void rebuild_sidebar (void);
+
+/* Return an owned path for a UUID, never a path from the session file. */
+static gchar *
+image_path (const gchar *id)
+{
+  if (id == NULL || !g_uuid_string_is_valid (id))
+    return NULL;
+  g_autofree gchar *session = store_session_path ();
+  g_autofree gchar *dir = g_path_get_dirname (session);
+  return g_build_filename (dir, "images", id, NULL);
+}
+
+/* Return the owned bytes, bounded independently of the source file size. */
+static GBytes *
+read_image_bytes (GFile         *file,
+                  GCancellable  *cancellable,
+                  GError       **error)
+{
+  g_autoptr (GFileInputStream) stream = g_file_read (file, cancellable, error);
+  if (stream == NULL)
+    return NULL;
+  g_autoptr (GByteArray) data = g_byte_array_new ();
+  guint8 buffer[16384];
+  gssize count;
+  while ((count = g_input_stream_read (G_INPUT_STREAM (stream), buffer,
+                                       sizeof buffer, cancellable, error)) > 0)
+    {
+      if (data->len + (gsize) count > IMAGE_MAX_SIZE)
+        {
+          g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                               _ ("Image exceeds the 8 MiB limit."));
+          return NULL;
+        }
+      g_byte_array_append (data, buffer, (guint) count);
+    }
+  if (count < 0)
+    return NULL;
+  return g_byte_array_free_to_bytes (g_steal_pointer (&data));
+}
+
+static gboolean
+image_dimensions_valid (gint width,
+                        gint height)
+{
+  return width > 0 && height > 0 && width <= 8192 && height <= 8192 &&
+         (gint64) width * height <= 16000000;
+}
+
+typedef struct
+{
+  gint     longest_side;
+  gboolean invalid;
+} ImageDimensions;
+
+static void
+image_size_prepared (GdkPixbufLoader *loader,
+                     gint             width,
+                     gint             height,
+                     gpointer         data)
+{
+  ImageDimensions *dimensions = data;
+  dimensions->longest_side = MAX (width, height);
+  dimensions->invalid = !image_dimensions_valid (width, height);
+  /* Decode a small preview, not the original-sized bitmap. */
+  if (dimensions->invalid)
+    gdk_pixbuf_loader_set_size (loader, 1, 1);
+  else if (width > 320 || height > 240)
+    {
+      gdouble scale = MIN (320.0 / width, 240.0 / height);
+      gdk_pixbuf_loader_set_size (loader, MAX (1, (gint) (width * scale)),
+                                  MAX (1, (gint) (height * scale)));
+    }
+}
+
+/* Return an owned preview and optionally the borrowed MIME type and the
+   longest side before scaling. */
+static GdkPixbuf *
+decode_image (GBytes       *bytes,
+              const gchar **mime,
+              gint         *longest_side,
+              GError      **error)
+{
+  gsize length;
+  const guint8 *data = g_bytes_get_data (bytes, &length);
+  const gchar *expected = NULL;
+  if (length >= 8 && memcmp (data, "\x89PNG\r\n\x1a\n", 8) == 0)
+    {
+      expected = "png";
+    }
+  else if (length >= 3 && memcmp (data, "\xff\xd8\xff", 3) == 0)
+    {
+      expected = "jpeg";
+    }
+  else if (length >= 6 && (memcmp (data, "GIF87a", 6) == 0 ||
+                           memcmp (data, "GIF89a", 6) == 0))
+    {
+      expected = "gif";
+    }
+  else if (length >= 12 && memcmp (data, "RIFF", 4) == 0 &&
+           memcmp (data + 8, "WEBP", 4) == 0)
+    {
+      expected = "webp";
+    }
+  if (expected == NULL)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           _ ("Unsupported image format."));
+      return NULL;
+    }
+  g_autoptr (GdkPixbufLoader) loader = gdk_pixbuf_loader_new ();
+  ImageDimensions dimensions = { 0 };
+  g_signal_connect (loader, "size-prepared", G_CALLBACK (image_size_prepared),
+                    &dimensions);
+  gboolean written = gdk_pixbuf_loader_write (loader, data, length, error);
+  g_autoptr (GError) close_error = NULL;
+  gboolean closed = gdk_pixbuf_loader_close (loader, &close_error);
+  if (!written)
+    return NULL;
+  if (!closed)
+    {
+      g_propagate_error (error, g_steal_pointer (&close_error));
+      return NULL;
+    }
+  if (dimensions.invalid)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           _ ("Image dimensions are too large."));
+      return NULL;
+    }
+  GdkPixbufFormat *format = gdk_pixbuf_loader_get_format (loader);
+  g_autofree gchar *name = format != NULL
+                               ? gdk_pixbuf_format_get_name (format)
+                               : NULL;
+  const gchar *type = NULL;
+  if (g_strcmp0 (name, "png") == 0)
+    type = "image/png";
+  else if (g_strcmp0 (name, "jpeg") == 0)
+    type = "image/jpeg";
+  else if (g_strcmp0 (name, "gif") == 0)
+    type = "image/gif";
+  else if (g_strcmp0 (name, "webp") == 0)
+    type = "image/webp";
+  GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf (loader);
+  if (type == NULL || pixbuf == NULL || g_strcmp0 (name, expected) != 0)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           _ ("Unsupported image format."));
+      return NULL;
+    }
+  if (mime != NULL)
+    *mime = type;
+  if (longest_side != NULL)
+    *longest_side = dimensions.longest_side;
+  return g_object_ref (pixbuf);
+}
 
 void
 app_toast (const gchar *msg)
@@ -704,6 +869,55 @@ layout_user_bubble (GtkWidget   *body,
   gtk_widget_set_size_request (body, MIN (width + 2, 520), -1);
 }
 
+static GtkWidget *
+image_widget (const gchar *id,
+              gboolean     thumbnail)
+{
+  g_autofree gchar *path = image_path (id);
+  g_autoptr (GFile) file = path != NULL ? g_file_new_for_path (path) : NULL;
+  g_autoptr (GBytes) bytes =
+      file != NULL ? read_image_bytes (file, NULL, NULL) : NULL;
+  g_autoptr (GdkPixbuf) pixbuf =
+      bytes != NULL ? decode_image (bytes, NULL, NULL, NULL) : NULL;
+  if (pixbuf == NULL)
+    {
+      if (!thumbnail)
+        return gtk_label_new (_ ("Image unavailable"));
+      GtkWidget *missing = gtk_image_new_from_icon_name (
+          "image-missing-symbolic");
+      gtk_widget_set_size_request (missing, ATTACHMENT_THUMB_SIZE,
+                                   ATTACHMENT_THUMB_SIZE);
+      gtk_widget_set_tooltip_text (missing, _ ("Image unavailable"));
+      return missing;
+    }
+  if (thumbnail)
+    {
+      gint width = gdk_pixbuf_get_width (pixbuf);
+      gint height = gdk_pixbuf_get_height (pixbuf);
+      gint side = MIN (width, height);
+      g_autoptr (GdkPixbuf) square = gdk_pixbuf_new_subpixbuf (
+          pixbuf, (width - side) / 2, (height - side) / 2, side, side);
+      g_clear_object (&pixbuf);
+      pixbuf = gdk_pixbuf_scale_simple (square, ATTACHMENT_THUMB_SIZE,
+                                        ATTACHMENT_THUMB_SIZE,
+                                        GDK_INTERP_BILINEAR);
+    }
+  g_autoptr (GBytes) pixels = gdk_pixbuf_read_pixel_bytes (pixbuf);
+  GdkMemoryFormat format = gdk_pixbuf_get_has_alpha (pixbuf)
+                               ? GDK_MEMORY_R8G8B8A8
+                               : GDK_MEMORY_R8G8B8;
+  g_autoptr (GdkTexture) texture = gdk_memory_texture_new (
+      gdk_pixbuf_get_width (pixbuf), gdk_pixbuf_get_height (pixbuf), format,
+      pixels, gdk_pixbuf_get_rowstride (pixbuf));
+  GtkWidget *picture = gtk_picture_new_for_paintable (GDK_PAINTABLE (texture));
+  gtk_picture_set_alternative_text (GTK_PICTURE (picture),
+                                    _ ("Attached image"));
+  gtk_widget_set_size_request (picture, gdk_pixbuf_get_width (pixbuf),
+                               gdk_pixbuf_get_height (pixbuf));
+  gtk_widget_set_halign (picture, GTK_ALIGN_START);
+  return picture;
+}
+
 static void
 render_history (guint count)
 {
@@ -717,6 +931,15 @@ render_history (guint count)
       GtkBox *body = GTK_BOX (g_object_get_data (G_OBJECT (bubble), "body"));
       if (g_str_equal (role, "user"))
         {
+          JsonArray *images = image_array_member (msg, "images");
+          if (images != NULL)
+            {
+              for (guint j = 0; j < json_array_get_length (images); j++)
+                {
+                  const gchar *id = json_array_get_string_element (images, j);
+                  gtk_box_append (body, image_widget (id, FALSE));
+                }
+            }
           /* User messages and replies share the same Markdown rendering. */
           md_render (body, content);
           layout_user_bubble (GTK_WIDGET (body), content);
@@ -754,6 +977,9 @@ render_history (guint count)
 static void
 restore_input (void)
 {
+  if (app->image_cancel != NULL)
+    g_cancellable_cancel (app->image_cancel);
+  g_clear_object (&app->image_cancel);
   gboolean editing = app->chat->edit_from != G_MAXUINT;
   app->restoring_input = TRUE;
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
@@ -764,6 +990,7 @@ restore_input (void)
   gtk_text_buffer_place_cursor (buffer, &end);
   app->restoring_input = FALSE;
   gtk_widget_set_visible (app->edit_bar, editing);
+  refresh_images ();
   refresh_input ();
 }
 
@@ -773,6 +1000,7 @@ clear_edit (Chat *chat)
   chat->edit_from = G_MAXUINT;
   g_free (chat->edit_text);
   chat->edit_text = g_strdup ("");
+  g_clear_pointer (&chat->edit_images, json_array_unref);
 }
 
 static void
@@ -824,6 +1052,8 @@ set_busy (gboolean busy)
   gtk_widget_set_sensitive (app->search, !busy);
   gtk_widget_set_sensitive (app->model_chip, !busy);
   gtk_widget_set_sensitive (app->new_btn, !busy);
+  if (app->attach != NULL)
+    gtk_widget_set_sensitive (app->attach, !busy);
   update_send_state ();
 }
 
@@ -1072,6 +1302,19 @@ on_delete_message (GtkButton *button G_GNUC_UNUSED,
   save_session ();
 }
 
+/* Copy a draft independently of the message or session it came from. */
+static JsonArray *
+copy_images (JsonArray *images)
+{
+  if (images == NULL)
+    return NULL;
+  g_autoptr (JsonArray) copy = json_array_new ();
+  for (guint i = 0; i < json_array_get_length (images); i++)
+    json_array_add_string_element (copy,
+                                   json_array_get_string_element (images, i));
+  return g_steal_pointer (&copy);
+}
+
 static void
 on_edit_message (GtkButton *button G_GNUC_UNUSED,
                  gpointer   data)
@@ -1087,6 +1330,8 @@ on_edit_message (GtkButton *button G_GNUC_UNUSED,
   app->chat->edit_from = index;
   g_free (app->chat->edit_text);
   app->chat->edit_text = g_strdup (content);
+  g_clear_pointer (&app->chat->edit_images, json_array_unref);
+  app->chat->edit_images = copy_images (image_array_member (msg, "images"));
   render_chat ();
   save_session ();
   gtk_widget_grab_focus (app->input);
@@ -1128,6 +1373,8 @@ on_fork_message (GtkButton *button G_GNUC_UNUSED,
       g_free (fork->draft);
       fork->draft = g_strdup (json_object_get_string_member (selected,
                                                              "content"));
+      fork->draft_images = copy_images (image_array_member (selected,
+                                                            "images"));
     }
   for (guint i = 0; i < index + !is_user; i++)
     {
@@ -1173,7 +1420,8 @@ on_new_chat (void)
       return;
     }
   gtk_editable_set_text (GTK_EDITABLE (app->search), "");
-  if (json_array_get_length (app->chat->messages) == 0 && !*app->chat->draft)
+  if (json_array_get_length (app->chat->messages) == 0 && !*app->chat->draft &&
+      app->chat->draft_images == NULL)
     {
       gtk_widget_grab_focus (app->input);
       return;
@@ -1270,6 +1518,8 @@ on_row_copy (GtkButton *button G_GNUC_UNUSED,
                     : g_strdup (_ ("Copy"));
   g_free (copy->draft);
   copy->draft = g_strdup (source->draft);
+  copy->draft_images = copy_images (source->draft_images);
+  copy->edit_images = copy_images (source->edit_images);
   copy->edit_from = source->edit_from;
   g_free (copy->edit_text);
   copy->edit_text = g_strdup (source->edit_text);
@@ -1979,24 +2229,124 @@ send_request (SoupMessage *request)
   soup_session_send_async (app->session, request, G_PRIORITY_DEFAULT,
                            app->cancel, response_cb, request);
 }
+typedef struct
+{
+  gsize total;
+  guint count;
+  gint  longest_side;
+} RequestImages;
 
-/* Send the body history only; do not feed reasoning-only records or
-   placeholders back to the API. */
+/* Return an owned content part after checking the shared request limits. */
+static JsonObject *
+request_image_part (const gchar   *id,
+                    RequestImages *stats,
+                    GError       **error)
+{
+  stats->count++;
+  if (stats->count > REQUEST_MAX_IMAGES)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                           _ ("A request can contain at most 600 images."));
+      return NULL;
+    }
+  g_autofree gchar *path = image_path (id);
+  if (path == NULL)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           _ ("Invalid image reference."));
+      return NULL;
+    }
+  g_autoptr (GFile) file = g_file_new_for_path (path);
+  g_autoptr (GBytes) bytes = read_image_bytes (file, NULL, error);
+  if (bytes == NULL)
+    return NULL;
+  const gchar *mime;
+  gint side;
+  g_autoptr (GdkPixbuf) preview = decode_image (bytes, &mime, &side, error);
+  if (preview == NULL)
+    return NULL;
+  stats->longest_side = MAX (stats->longest_side, side);
+  if (stats->count >= 15 && stats->longest_side > 4096)
+    {
+      g_set_error_literal (
+          error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+          _ ("With 15 or more images, each side must be at most 4096 pixels."));
+      return NULL;
+    }
+  gsize size;
+  const guchar *data = g_bytes_get_data (bytes, &size);
+  stats->total += 4 * ((size + 2) / 3);
+  if (stats->total > REQUEST_MAX_SIZE)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                           _ ("The conversation is too large to send."));
+      return NULL;
+    }
+  g_autofree gchar *base64 = g_base64_encode (data, size);
+  g_autofree gchar *url = g_strdup_printf ("data:%s;base64,%s", mime, base64);
+  g_autoptr (JsonObject) image_url = json_object_new ();
+  json_object_set_string_member (image_url, "url", url);
+  g_autoptr (JsonObject) part = json_object_new ();
+  json_object_set_string_member (part, "type", "image_url");
+  json_object_set_object_member (part, "image_url",
+                                 g_steal_pointer (&image_url));
+  return g_steal_pointer (&part);
+}
+
+/* Return an owned request body without reasoning records. */
 static gchar *
-request_body (guint  turns,
-              gsize *len)
+request_body (guint        turns,
+              JsonObject  *extra,
+              gsize       *len,
+              GError     **error)
 {
   g_autoptr (JsonArray) payload = json_array_new ();
-  for (guint i = 0; i < turns; i++)
+  RequestImages stats = { 0 };
+  for (guint i = 0; i < turns + (extra != NULL); i++)
     {
-      JsonObject *msg = json_array_get_object_element (app->chat->messages, i);
+      JsonObject *msg = extra;
+      if (i < turns)
+        msg = json_array_get_object_element (app->chat->messages, i);
       const gchar *role = json_object_get_string_member (msg, "role");
       const gchar *content = json_object_get_string_member (msg, "content");
       if (g_str_equal (role, "assistant") && !*content)
         continue;
       g_autoptr (JsonObject) clean = json_object_new ();
       json_object_set_string_member (clean, "role", role);
-      json_object_set_string_member (clean, "content", content);
+      JsonArray *images = image_array_member (msg, "images");
+      if (images == NULL)
+        {
+          json_object_set_string_member (clean, "content", content);
+        }
+      else
+        {
+          if (!g_str_equal (app->model, "deepseek-flash"))
+            {
+              g_set_error_literal (
+                  error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                  _ ("Images require the DeepSeek-Flash model."));
+              return NULL;
+            }
+          g_autoptr (JsonArray) parts = json_array_new ();
+          if (*content)
+            {
+              g_autoptr (JsonObject) text = json_object_new ();
+              json_object_set_string_member (text, "type", "text");
+              json_object_set_string_member (text, "text", content);
+              json_array_add_object_element (parts, g_steal_pointer (&text));
+            }
+          for (guint j = 0; j < json_array_get_length (images); j++)
+            {
+              const gchar *id = json_array_get_string_element (images, j);
+              g_autoptr (JsonObject) part = request_image_part (id, &stats,
+                                                                error);
+              if (part == NULL)
+                return NULL;
+              json_array_add_object_element (parts, g_steal_pointer (&part));
+            }
+          json_object_set_array_member (clean, "content",
+                                        g_steal_pointer (&parts));
+        }
       json_array_add_object_element (payload, g_steal_pointer (&clean));
     }
 
@@ -2019,7 +2369,27 @@ request_body (guint  turns,
   json_node_take_object (node, g_steal_pointer (&root));
   g_autoptr (JsonGenerator) gen = json_generator_new ();
   json_generator_set_root (gen, node);
-  return json_generator_to_data (gen, len);
+  g_autofree gchar *body = json_generator_to_data (gen, len);
+  if (*len > REQUEST_MAX_SIZE)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                           _ ("The conversation is too large to send."));
+      return NULL;
+    }
+  return g_steal_pointer (&body);
+}
+
+/* Return an owned message with a reference to the current attachments. */
+static JsonObject *
+new_user_message (const gchar *text)
+{
+  JsonArray *images = *current_images ();
+  g_autoptr (JsonObject) msg = json_object_new ();
+  json_object_set_string_member (msg, "role", "user");
+  json_object_set_string_member (msg, "content", text);
+  if (images != NULL)
+    json_object_set_array_member (msg, "images", json_array_ref (images));
+  return g_steal_pointer (&msg);
 }
 
 /* Truncate the history when the edit draft is sent; a normal draft is
@@ -2028,6 +2398,7 @@ static void
 commit_message (const gchar *text)
 {
   gboolean editing = app->chat->edit_from != G_MAXUINT;
+  g_autoptr (JsonObject) user_msg = new_user_message (text);
   while (editing &&
          json_array_get_length (app->chat->messages) > app->chat->edit_from)
     json_array_remove_element (app->chat->messages, app->chat->edit_from);
@@ -2036,10 +2407,8 @@ commit_message (const gchar *text)
     {
       g_free (app->chat->draft);
       app->chat->draft = g_strdup ("");
+      g_clear_pointer (&app->chat->draft_images, json_array_unref);
     }
-  g_autoptr (JsonObject) user_msg = json_object_new ();
-  json_object_set_string_member (user_msg, "role", "user");
-  json_object_set_string_member (user_msg, "content", text);
   json_array_add_object_element (app->chat->messages,
                                  g_steal_pointer (&user_msg));
 }
@@ -2068,6 +2437,11 @@ send_message (void)
       g_cancellable_cancel (app->cancel);
       return;
     }
+  if (app->image_cancel != NULL)
+    {
+      app_toast (_ ("Wait for images to finish loading."));
+      return;
+    }
   if (app->api_key == NULL)
     {
       prompt_api_key ();
@@ -2075,12 +2449,26 @@ send_message (void)
     }
 
   g_autofree gchar *text = input_message ();
-  if (text == NULL)
+  if (text == NULL && *current_images () == NULL)
     return;
+  if (text == NULL)
+    text = g_strdup ("");
+  g_autoptr (JsonObject) extra = new_user_message (text);
+  guint turns = app->chat->edit_from == G_MAXUINT
+                    ? json_array_get_length (app->chat->messages)
+                    : app->chat->edit_from;
+  gsize len;
+  g_autoptr (GError) error = NULL;
+  g_autofree gchar *body = request_body (turns, extra, &len, &error);
+  if (body == NULL)
+    {
+      app_toast (error->message);
+      return;
+    }
 
   commit_message (text);
 
-  if (!*app->chat->title)
+  if (!*app->chat->title && *text)
     {
       /* Take the first 30 characters of the first line; cutting by bytes
          would break UTF-8. */
@@ -2095,7 +2483,7 @@ send_message (void)
 
   restore_input ();
   rebuild_sidebar ();
-  start_request ();
+  start_request (g_steal_pointer (&body), len);
   save_session ();
 }
 
@@ -2129,18 +2517,31 @@ regenerate (void)
   if (!keep)
     return;
 
+  gsize len;
+  g_autoptr (GError) error = NULL;
+  g_autofree gchar *body = request_body (keep, NULL, &len, &error);
+  if (body == NULL)
+    {
+      app_toast (error->message);
+      return;
+    }
   while (json_array_get_length (app->chat->messages) > keep)
     json_array_remove_element (app->chat->messages, keep);
-  start_request ();
+  start_request (g_steal_pointer (&body), len);
 }
 
 /* Start a request from the last user message in the session and add a
    placeholder bubble for the reply. */
+/* Consume the request body; the request owns it until the stream ends. */
 static void
-start_request (void)
+start_request (gchar *body,
+               gsize  len)
 {
   if (app->busy)
-    return;
+    {
+      g_free (body);
+      return;
+    }
 
   g_autoptr (JsonObject) assistant_msg = json_object_new ();
   json_object_set_string_member (assistant_msg, "role", "assistant");
@@ -2170,15 +2571,12 @@ start_request (void)
   set_busy (TRUE);
   scroll_bottom ();
 
-  gsize len;
-  g_autofree gchar *body = request_body (turns, &len);
-
   g_autoptr (SoupMessage) request =
       soup_message_new (SOUP_METHOD_POST, API_URL);
   g_autofree gchar *auth = g_strdup_printf ("Bearer %s", app->api_key);
   soup_message_headers_append (soup_message_get_request_headers (request),
                                "Authorization", auth);
-  g_autoptr (GBytes) bytes = g_bytes_new_take (g_steal_pointer (&body), len);
+  g_autoptr (GBytes) bytes = g_bytes_new_take (body, len);
   soup_message_set_request_body_from_bytes (request, "application/json", bytes);
   send_request (g_steal_pointer (&request));
 }
@@ -2248,7 +2646,8 @@ update_send_state (void)
 {
   gboolean has_text = gtk_text_buffer_get_char_count (gtk_text_view_get_buffer (
                           GTK_TEXT_VIEW (app->input))) > 0;
-  gtk_widget_set_sensitive (app->send, app->busy || has_text);
+  gboolean has_images = app->chat != NULL && *current_images () != NULL;
+  gtk_widget_set_sensitive (app->send, app->busy || has_text || has_images);
   /* The buffer is empty during composition, and the placeholder would
      collapse with the preedit text. */
   if (app->placeholder != NULL)
@@ -2457,6 +2856,506 @@ on_frame_width (GObject    *frame G_GNUC_UNUSED,
   schedule_geometry_sync ();
 }
 
+/* Return the address of the active draft's owned image array. */
+static JsonArray **
+current_images (void)
+{
+  return app->chat->edit_from == G_MAXUINT ? &app->chat->draft_images
+                                           : &app->chat->edit_images;
+}
+
+static void
+on_remove_image (GtkButton *button G_GNUC_UNUSED,
+                 gpointer   data)
+{
+  JsonArray **images = current_images ();
+  guint index = GPOINTER_TO_UINT (data);
+  if (*images == NULL || index >= json_array_get_length (*images))
+    return;
+  json_array_remove_element (*images, index);
+  if (json_array_get_length (*images) == 0)
+    g_clear_pointer (images, json_array_unref);
+  refresh_images ();
+  save_session ();
+  gtk_widget_grab_focus (app->input);
+}
+
+static void
+refresh_images (void)
+{
+  if (app->image_bar == NULL)
+    return;
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child (app->image_preview)) != NULL)
+    gtk_box_remove (GTK_BOX (app->image_preview), child);
+  JsonArray *images = *current_images ();
+  gtk_widget_set_visible (app->image_bar, images != NULL);
+  if (images != NULL)
+    {
+      for (guint i = 0; i < json_array_get_length (images); i++)
+        {
+          const gchar *id = json_array_get_string_element (images, i);
+          GtkWidget *tile = gtk_overlay_new ();
+          gtk_widget_set_overflow (tile, GTK_OVERFLOW_HIDDEN);
+          gtk_widget_add_css_class (tile, "attachment-tile");
+          gtk_overlay_set_child (GTK_OVERLAY (tile), image_widget (id, TRUE));
+          GtkWidget *remove = gtk_button_new_from_icon_name (
+              "window-close-symbolic");
+          g_autofree gchar *label = g_strdup_printf (_ ("Remove image %u"),
+                                                     i + 1);
+          gtk_widget_set_tooltip_text (remove, label);
+          gtk_accessible_update_property (GTK_ACCESSIBLE (remove),
+                                          GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                          label, -1);
+          gtk_widget_set_halign (remove, GTK_ALIGN_END);
+          gtk_widget_set_valign (remove, GTK_ALIGN_START);
+          gtk_widget_add_css_class (remove, "attachment-remove");
+          gtk_overlay_add_overlay (GTK_OVERLAY (tile), remove);
+          g_signal_connect (remove, "clicked", G_CALLBACK (on_remove_image),
+                            GUINT_TO_POINTER (i));
+          gtk_box_append (GTK_BOX (app->image_preview), tile);
+        }
+    }
+  update_send_state ();
+}
+
+typedef struct
+{
+  GCancellable *cancel;
+  GPtrArray    *files;
+
+  gboolean      has_texture;
+} ImagePick;
+
+static ImagePick *
+image_pick_new (void)
+{
+  g_assert_null (app->image_cancel);
+  app->image_cancel = g_cancellable_new ();
+  ImagePick *pick = g_new0 (ImagePick, 1);
+  pick->cancel = g_object_ref (app->image_cancel);
+  return pick;
+}
+
+static gboolean
+image_pick_current (ImagePick *pick)
+{
+  return !app->closing && app->image_cancel == pick->cancel &&
+         !g_cancellable_is_cancelled (pick->cancel);
+}
+
+static void
+image_pick_free (ImagePick *pick)
+{
+  g_clear_object (&pick->cancel);
+  g_clear_pointer (&pick->files, g_ptr_array_unref);
+  g_free (pick);
+}
+
+static void
+image_pick_finished (ImagePick *pick)
+{
+  if (app->image_cancel == pick->cancel)
+    g_clear_object (&app->image_cancel);
+  g_application_release (g_application_get_default ());
+}
+
+/* Return an owned UUID after storing a private copy. */
+static gchar *
+save_image_bytes (GBytes        *bytes,
+                  GCancellable  *cancellable,
+                  GError       **error)
+{
+  if (g_bytes_get_size (bytes) > IMAGE_MAX_SIZE)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                           _ ("Image exceeds the 8 MiB limit."));
+      return NULL;
+    }
+  g_autoptr (GdkPixbuf) preview = decode_image (bytes, NULL, NULL, error);
+  if (preview == NULL)
+    return NULL;
+  if (g_cancellable_set_error_if_cancelled (cancellable, error))
+    return NULL;
+  g_autofree gchar *id = g_uuid_string_random ();
+  g_autofree gchar *path = image_path (id);
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  if (g_mkdir_with_parents (dir, 0700) != 0)
+    {
+      g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (errno), "%s",
+                   g_strerror (errno));
+      return NULL;
+    }
+  gsize length;
+  const gchar *contents = g_bytes_get_data (bytes, &length);
+  if (!g_file_set_contents_full (path, contents, (gssize) length,
+                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, error))
+    return NULL;
+  if (g_cancellable_set_error_if_cancelled (cancellable, error))
+    {
+      g_unlink (path);
+      return NULL;
+    }
+  return g_steal_pointer (&id);
+}
+
+/* Return an owned UUID for the imported file. */
+static gchar *
+import_image (GFile         *file,
+              GCancellable  *cancellable,
+              GError       **error)
+{
+  g_autoptr (GBytes) bytes = read_image_bytes (file, cancellable, error);
+  return bytes != NULL ? save_image_bytes (bytes, cancellable, error) : NULL;
+}
+
+/* Only discard files from a batch that was never committed to a draft. */
+static void
+discard_imported_images (GPtrArray *ids)
+{
+  for (guint i = 0; i < ids->len; i++)
+    {
+      g_autofree gchar *path = image_path (g_ptr_array_index (ids, i));
+      g_unlink (path);
+    }
+}
+
+static void
+import_image_thread (GTask        *task,
+                     gpointer      source G_GNUC_UNUSED,
+                     gpointer      task_data,
+                     GCancellable *cancellable)
+{
+  ImagePick *pick = task_data;
+  g_autoptr (GPtrArray) ids = g_ptr_array_new_with_free_func (g_free);
+  for (guint i = 0; i < pick->files->len; i++)
+    {
+      GFile *file = g_ptr_array_index (pick->files, i);
+      g_autoptr (GError) error = NULL;
+      g_autofree gchar *id = import_image (file, cancellable, &error);
+      if (id == NULL)
+        {
+          g_autofree gchar *name = g_file_get_basename (file);
+          if (name != NULL)
+            {
+              g_autofree gchar *label = g_filename_display_name (name);
+              g_prefix_error (&error, "%s: ", label);
+            }
+          discard_imported_images (ids);
+          g_task_return_error (task, g_steal_pointer (&error));
+          return;
+        }
+      g_ptr_array_add (ids, g_steal_pointer (&id));
+    }
+  g_task_return_pointer (task, g_steal_pointer (&ids),
+                         (GDestroyNotify) g_ptr_array_unref);
+}
+
+static void
+import_image_done (GObject      *source G_GNUC_UNUSED,
+                   GAsyncResult *result,
+                   gpointer      data G_GNUC_UNUSED)
+{
+  GTask *task = G_TASK (result);
+  ImagePick *pick = g_task_get_task_data (task);
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) ids = g_task_propagate_pointer (task, &error);
+  gboolean current = !app->busy && image_pick_current (pick);
+  if (ids != NULL && current)
+    {
+      JsonArray **images = current_images ();
+      if (*images == NULL)
+        *images = json_array_new ();
+      for (guint i = 0; i < ids->len; i++)
+        json_array_add_string_element (*images, g_ptr_array_index (ids, i));
+      refresh_images ();
+      save_session ();
+    }
+  else if (ids != NULL)
+    {
+      discard_imported_images (ids);
+    }
+  else if (current)
+    {
+      app_toast (error->message);
+    }
+  image_pick_finished (pick);
+}
+
+/* Consume pick; the task holds its own reference to the supplied files. */
+static void
+start_file_import (GPtrArray *files,
+                   ImagePick *pick)
+{
+  JsonArray *images = *current_images ();
+  guint count = images != NULL ? json_array_get_length (images) : 0;
+  if (count >= REQUEST_MAX_IMAGES || files->len > REQUEST_MAX_IMAGES - count)
+    {
+      app_toast (_ ("A request can contain at most 600 images."));
+      image_pick_finished (pick);
+      image_pick_free (pick);
+      return;
+    }
+  pick->files = g_ptr_array_ref (files);
+  g_autoptr (GTask) task =
+      g_task_new (NULL, pick->cancel, import_image_done, NULL);
+  g_task_set_check_cancellable (task, FALSE);
+  g_task_set_task_data (task, pick, (GDestroyNotify) image_pick_free);
+  g_task_run_in_thread (task, import_image_thread);
+}
+
+static void
+image_selected (GObject      *source,
+                GAsyncResult *result,
+                gpointer      data)
+{
+  ImagePick *pick = data;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GListModel) selection = gtk_file_dialog_open_multiple_finish (
+      GTK_FILE_DIALOG (source), result, &error);
+  gboolean current = !app->busy && image_pick_current (pick);
+  if (selection != NULL && current)
+    {
+      g_autoptr (GPtrArray) files =
+          g_ptr_array_new_with_free_func (g_object_unref);
+      for (guint i = 0; i < g_list_model_get_n_items (selection); i++)
+        g_ptr_array_add (files, g_list_model_get_item (selection, i));
+      if (files->len > 0)
+        {
+          start_file_import (files, pick);
+          return;
+        }
+    }
+  if (selection == NULL && current &&
+      !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+      !g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED) &&
+      !g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED))
+    {
+      app_toast (error->message);
+    }
+  image_pick_finished (pick);
+  image_pick_free (pick);
+}
+
+static void
+on_attach_image (GtkButton *button G_GNUC_UNUSED,
+                 gpointer   data G_GNUC_UNUSED)
+{
+  if (app->busy)
+    return;
+  if (app->image_cancel != NULL)
+    {
+      app_toast (_ ("Wait for images to finish loading."));
+      return;
+    }
+  ImagePick *pick = image_pick_new ();
+  g_autoptr (GtkFileDialog) dialog = gtk_file_dialog_new ();
+  gtk_file_dialog_set_title (dialog, _ ("Select images"));
+  g_autoptr (GtkFileFilter) filter = gtk_file_filter_new ();
+  gtk_file_filter_set_name (filter, _ ("Images"));
+  gtk_file_filter_add_mime_type (filter, "image/png");
+  gtk_file_filter_add_mime_type (filter, "image/jpeg");
+  gtk_file_filter_add_mime_type (filter, "image/gif");
+  gtk_file_filter_add_mime_type (filter, "image/webp");
+  g_autoptr (GListStore) filters = g_list_store_new (GTK_TYPE_FILE_FILTER);
+  g_list_store_append (filters, filter);
+  gtk_file_dialog_set_filters (dialog, G_LIST_MODEL (filters));
+  g_application_hold (g_application_get_default ());
+  gtk_file_dialog_open_multiple (dialog, GTK_WINDOW (app->window), pick->cancel,
+                                 image_selected, pick);
+}
+
+static void
+import_texture_thread (GTask        *task,
+                       gpointer      source,
+                       gpointer      task_data G_GNUC_UNUSED,
+                       GCancellable *cancellable)
+{
+  GdkTexture *texture = GDK_TEXTURE (source);
+  g_autoptr (GError) error = NULL;
+  if (!image_dimensions_valid (gdk_texture_get_width (texture),
+                               gdk_texture_get_height (texture)))
+    {
+      g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                               "%s", _ ("Image dimensions are too large."));
+      return;
+    }
+  if (g_cancellable_set_error_if_cancelled (cancellable, &error))
+    {
+      g_task_return_error (task, g_steal_pointer (&error));
+      return;
+    }
+  g_autoptr (GBytes) bytes = gdk_texture_save_to_png_bytes (texture);
+  if (bytes == NULL)
+    {
+      g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s",
+                               _ ("Unable to encode clipboard image."));
+      return;
+    }
+  g_autofree gchar *id = save_image_bytes (bytes, cancellable, &error);
+  if (id == NULL)
+    {
+      g_task_return_error (task, g_steal_pointer (&error));
+    }
+  else
+    {
+      g_autoptr (GPtrArray) ids = g_ptr_array_new_with_free_func (g_free);
+      g_ptr_array_add (ids, g_steal_pointer (&id));
+      g_task_return_pointer (task, g_steal_pointer (&ids),
+                             (GDestroyNotify) g_ptr_array_unref);
+    }
+}
+
+static void
+clipboard_image_ready (GObject      *source,
+                       GAsyncResult *result,
+                       gpointer      data)
+{
+  ImagePick *pick = data;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GdkTexture) texture = gdk_clipboard_read_texture_finish (
+      GDK_CLIPBOARD (source), result, &error);
+  gboolean current = !app->busy && image_pick_current (pick);
+  if (texture == NULL || !current)
+    {
+      if (texture == NULL && current)
+        app_toast (error->message);
+      image_pick_finished (pick);
+      image_pick_free (pick);
+      return;
+    }
+  JsonArray *images = *current_images ();
+  if (images != NULL && json_array_get_length (images) >= REQUEST_MAX_IMAGES)
+    {
+      app_toast (_ ("A request can contain at most 600 images."));
+      image_pick_finished (pick);
+      image_pick_free (pick);
+      return;
+    }
+  g_autoptr (GTask) task =
+      g_task_new (texture, pick->cancel, import_image_done, NULL);
+  /* Keep the UUID visible when cancellation races with the file write. */
+  g_task_set_check_cancellable (task, FALSE);
+  g_task_set_task_data (task, pick, (GDestroyNotify) image_pick_free);
+  g_task_run_in_thread (task, import_texture_thread);
+}
+
+static void
+clipboard_files_ready (GObject      *source,
+                       GAsyncResult *result,
+                       gpointer      data)
+{
+  ImagePick *pick = data;
+  GdkClipboard *clipboard = GDK_CLIPBOARD (source);
+  g_autoptr (GError) error = NULL;
+  const GValue *value = gdk_clipboard_read_value_finish (clipboard, result,
+                                                         &error);
+  if (!image_pick_current (pick))
+    {
+      image_pick_finished (pick);
+      image_pick_free (pick);
+      return;
+    }
+  GdkFileList *list = value != NULL ? g_value_get_boxed (value) : NULL;
+  g_autoptr (GSList) files =
+      list != NULL ? gdk_file_list_get_files (list) : NULL;
+  g_autoptr (GPtrArray) local = g_ptr_array_new_with_free_func (g_object_unref);
+  GSList *entry;
+  for (entry = files; entry != NULL; entry = entry->next)
+    {
+      if (!g_file_is_native (G_FILE (entry->data)))
+        break;
+      g_ptr_array_add (local, g_object_ref (entry->data));
+    }
+  gboolean local_files = entry == NULL && local->len > 0;
+  if (local_files || pick->has_texture)
+    {
+      if (app->busy)
+        {
+          app_toast (_ ("Generating. Click ■ to stop."));
+        }
+      else if (local_files)
+        {
+          start_file_import (local, pick);
+          return;
+        }
+      else
+        {
+          gdk_clipboard_read_texture_async (clipboard, pick->cancel,
+                                            clipboard_image_ready, pick);
+          return;
+        }
+    }
+  else if (value == NULL)
+    {
+      app_toast (error->message);
+    }
+  else
+    {
+      const GdkContentFormats *formats = gdk_clipboard_get_formats (clipboard);
+      if (files != NULL && files->next == NULL &&
+          gdk_content_formats_contain_gtype (formats, G_TYPE_STRING))
+        {
+          GtkTextBuffer *buffer =
+              gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+          gtk_text_buffer_paste_clipboard (buffer, clipboard, NULL, TRUE);
+        }
+      else
+        {
+          app_toast (_ ("Only local image files can be pasted."));
+        }
+    }
+  image_pick_finished (pick);
+  image_pick_free (pick);
+}
+
+static gboolean
+paste_image (GdkClipboard *clipboard)
+{
+  const GdkContentFormats *formats = gdk_clipboard_get_formats (clipboard);
+  gboolean texture =
+      gdk_content_formats_contain_gtype (formats, GDK_TYPE_TEXTURE);
+  gboolean files =
+      gdk_content_formats_contain_gtype (formats, GDK_TYPE_FILE_LIST);
+  if (!texture && !files)
+    return FALSE;
+  if (texture && app->busy)
+    {
+      app_toast (_ ("Generating. Click ■ to stop."));
+      return TRUE;
+    }
+  if (app->image_cancel != NULL)
+    {
+      app_toast (_ ("Wait for images to finish loading."));
+      return TRUE;
+    }
+  ImagePick *pick = image_pick_new ();
+  pick->has_texture = texture;
+  g_application_hold (g_application_get_default ());
+  /* Prefer the originals when the clipboard also offers a bitmap. */
+  if (files)
+    {
+      gdk_clipboard_read_value_async (clipboard, GDK_TYPE_FILE_LIST,
+                                      G_PRIORITY_DEFAULT, pick->cancel,
+                                      clipboard_files_ready, pick);
+    }
+  else
+    {
+      gdk_clipboard_read_texture_async (clipboard, pick->cancel,
+                                        clipboard_image_ready, pick);
+    }
+  return TRUE;
+}
+
+static void
+on_input_paste (GtkTextView *view,
+                gpointer     data G_GNUC_UNUSED)
+{
+  GdkClipboard *clipboard = gtk_widget_get_clipboard (GTK_WIDGET (view));
+  if (paste_image (clipboard))
+    g_signal_stop_emission_by_name (view, "paste-clipboard");
+}
+
 static void
 on_send_clicked (GtkButton *button G_GNUC_UNUSED,
                  gpointer   data G_GNUC_UNUSED)
@@ -2503,6 +3402,8 @@ on_close (GtkWindow *window G_GNUC_UNUSED,
     return FALSE;
   if (app->cancel != NULL)
     g_cancellable_cancel (app->cancel);
+  if (app->image_cancel != NULL)
+    g_cancellable_cancel (app->image_cancel);
   flush_stream ();
   if (!save_session ())
     return TRUE; /* The draft is still in memory; do not lose it on a close. */
@@ -2860,6 +3761,10 @@ build_content (void)
   app->messages = GTK_WIDGET (gtk_builder_get_object (builder, "messages"));
   app->chat_bar = GTK_WIDGET (gtk_builder_get_object (builder, "chat_bar"));
   app->edit_bar = GTK_WIDGET (gtk_builder_get_object (builder, "edit_bar"));
+  app->image_bar = GTK_WIDGET (gtk_builder_get_object (builder, "image_bar"));
+  app->image_preview =
+      GTK_WIDGET (gtk_builder_get_object (builder, "image_preview"));
+  app->attach = GTK_WIDGET (gtk_builder_get_object (builder, "attach"));
   app->input_frame =
       GTK_WIDGET (gtk_builder_get_object (builder, "input_frame"));
   app->input = GTK_WIDGET (gtk_builder_get_object (builder, "input"));
@@ -2893,6 +3798,7 @@ build_content (void)
   g_signal_connect (vadj, "value-changed", G_CALLBACK (on_value_changed), NULL);
 
   g_signal_connect (cancel_edit, "clicked", G_CALLBACK (on_cancel_edit), NULL);
+  g_signal_connect (app->attach, "clicked", G_CALLBACK (on_attach_image), NULL);
   gtk_widget_set_size_request (app->input_frame, -1, INPUT_MIN_HEIGHT);
   gtk_accessible_update_property (
       GTK_ACCESSIBLE (app->input), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
@@ -2902,6 +3808,8 @@ build_content (void)
   gtk_widget_add_controller (app->input, keys);
   g_signal_connect (app->input, "preedit-changed",
                     G_CALLBACK (on_input_preedit), NULL);
+  g_signal_connect (app->input, "paste-clipboard", G_CALLBACK (on_input_paste),
+                    NULL);
 
   GtkAdjustment *input_adj = gtk_scrolled_window_get_vadjustment (
       GTK_SCROLLED_WINDOW (app->input_frame));
@@ -3120,6 +4028,7 @@ main (int     argc,
       return 1;
     }
 
+  store_cleanup_images (path);
   app = g_new0 (App, 1);
   app->answer = g_string_new (NULL);
   app->reasoning = g_string_new (NULL);
@@ -3179,6 +4088,7 @@ main (int     argc,
     }
   g_clear_object (&gtk_app);
   g_object_unref (app->session);
+  g_clear_object (&app->image_cancel);
   g_ptr_array_unref (app->chats);
   g_string_free (app->answer, TRUE);
   g_string_free (app->reasoning, TRUE);

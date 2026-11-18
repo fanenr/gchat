@@ -96,6 +96,25 @@ undershoot.right {
   border-radius: 18px;
   box-shadow: none;
 }
+.attachment-tile {
+  border-radius: 10px;
+  background-color: alpha(@window_fg_color, .09);
+}
+.attachment-remove {
+  min-width: 20px;
+  min-height: 20px;
+  margin: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background-color: rgba(0, 0, 0, .66);
+  color: white;
+  box-shadow: none;
+  -gtk-icon-size: 11px;
+}
+.attachment-remove:hover, .attachment-remove:focus-visible {
+  background-color: rgba(0, 0, 0, .86);
+}
 .input-chip {
   padding: 3px 6px;
   min-height: 0;

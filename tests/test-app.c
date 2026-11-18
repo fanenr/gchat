@@ -94,6 +94,7 @@ teardown (void)
       g_object_unref (app->window);
     }
   g_clear_object (&app->cancel);
+  g_clear_object (&app->image_cancel);
   g_clear_object (&app->session);
   g_ptr_array_unref (app->chats);
   g_string_free (app->answer, TRUE);
@@ -1917,7 +1918,7 @@ payload_filters_reasoning (void)
   json_object_set_string_member (reason, "reasoning", "仅推理");
   add_message ("user", "next");
   gsize len;
-  g_autofree gchar *body = request_body (4, &len);
+  g_autofree gchar *body = request_body (4, NULL, &len, NULL);
   g_autoptr (JsonParser) parser = json_parser_new ();
   g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
   JsonObject *root = json_node_get_object (json_parser_get_root (parser));
@@ -1928,6 +1929,535 @@ payload_filters_reasoning (void)
                    ==, "next");
   g_assert_false (json_object_has_member (
       json_array_get_object_element (messages, 1), "reasoning"));
+  teardown ();
+}
+
+static JsonArray *
+image_ids (const gchar *first,
+           const gchar *second)
+{
+  JsonArray *ids = json_array_new ();
+  json_array_add_string_element (ids, first);
+  if (second != NULL)
+    json_array_add_string_element (ids, second);
+  return ids;
+}
+
+static void
+image_payload (void)
+{
+  setup ();
+  g_autofree gchar *id = g_uuid_string_random ();
+  g_autofree gchar *path = image_path (id);
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
+  g_autoptr (GdkPixbuf) pixbuf =
+      gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, 2, 2);
+  gdk_pixbuf_fill (pixbuf, 0xff0000ff);
+  g_autoptr (GError) error = NULL;
+  g_assert_true (gdk_pixbuf_save (pixbuf, path, "png", &error, NULL));
+  g_assert_no_error (error);
+  g_autofree gchar *second = g_uuid_string_random ();
+  g_autofree gchar *second_path = image_path (second);
+  gdk_pixbuf_fill (pixbuf, 0x22ff11ff);
+  g_assert_true (gdk_pixbuf_save (pixbuf, second_path, "png", &error, NULL));
+  g_assert_no_error (error);
+  JsonObject *msg = json_array_get_object_element (app->chat->messages, 0);
+  json_object_set_array_member (msg, "images", image_ids (id, second));
+  gsize len;
+  g_autofree gchar *body = request_body (2, NULL, &len, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (body);
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  g_assert_true (json_parser_load_from_data (parser, body, len, &error));
+  JsonObject *root = json_node_get_object (json_parser_get_root (parser));
+  JsonArray *messages = json_object_get_array_member (root, "messages");
+  JsonArray *parts = json_object_get_array_member (
+      json_array_get_object_element (messages, 0), "content");
+  g_assert_cmpuint (json_array_get_length (parts), ==, 3);
+  JsonObject *text = json_array_get_object_element (parts, 0);
+  g_assert_cmpstr (json_object_get_string_member (text, "text"), ==,
+                   "question one");
+  const gchar *paths[] = { path, second_path };
+  for (guint i = 0; i < G_N_ELEMENTS (paths); i++)
+    {
+      JsonObject *part = json_array_get_object_element (parts, i + 1);
+      JsonObject *image_url = json_object_get_object_member (part, "image_url");
+      const gchar *url = json_object_get_string_member (image_url, "url");
+      const gchar *prefix = "data:image/png;base64,";
+      g_assert_true (g_str_has_prefix (url, prefix));
+      gsize decoded_len, image_len;
+      g_autofree guchar *decoded = g_base64_decode (url + strlen (prefix),
+                                                    &decoded_len);
+      g_autofree gchar *bytes = NULL;
+      g_assert_true (g_file_get_contents (paths[i], &bytes, &image_len, NULL));
+      g_assert_cmpmem (decoded, decoded_len, bytes, image_len);
+    }
+  g_autoptr (JsonObject) extra = json_object_new ();
+  json_object_set_string_member (extra, "role", "user");
+  json_object_set_string_member (extra, "content", "");
+  json_object_set_array_member (extra, "images", image_ids (id, second));
+  g_autofree gchar *image_only = request_body (0, extra, &len, &error);
+  g_assert_no_error (error);
+  g_assert_true (json_parser_load_from_data (parser, image_only, len, &error));
+  root = json_node_get_object (json_parser_get_root (parser));
+  messages = json_object_get_array_member (root, "messages");
+  parts = json_object_get_array_member (
+      json_array_get_object_element (messages, 0), "content");
+  g_assert_cmpuint (json_array_get_length (parts), ==, 2);
+  g_free (app->model);
+  app->model = g_strdup ("deepseek-v4-pro");
+  g_autofree gchar *unsupported = request_body (2, NULL, &len, &error);
+  g_assert_null (unsupported);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_clear_error (&error);
+  g_free (app->model);
+  app->model = g_strdup ("deepseek-flash");
+  g_assert_cmpint (g_unlink (path), ==, 0);
+  g_autofree gchar *missing = request_body (2, NULL, &len, &error);
+  g_assert_null (missing);
+  g_assert_nonnull (error);
+  g_assert_cmpint (g_unlink (second_path), ==, 0);
+  g_rmdir (dir);
+  teardown ();
+}
+
+static void
+image_payload_limits (void)
+{
+  setup ();
+  g_autofree gchar *edge_id = g_uuid_string_random ();
+  g_autofree gchar *wide_id = g_uuid_string_random ();
+  g_autofree gchar *edge_path = image_path (edge_id);
+  g_autofree gchar *wide_path = image_path (wide_id);
+  g_autofree gchar *dir = g_path_get_dirname (edge_path);
+  g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
+  g_autoptr (GdkPixbuf) wide =
+      gdk_pixbuf_new (GDK_COLORSPACE_RGB, FALSE, 8, 4097, 1);
+  gdk_pixbuf_fill (wide, 0x336699ff);
+  g_autoptr (GdkPixbuf) edge = gdk_pixbuf_new_subpixbuf (wide, 0, 0, 4096, 1);
+  g_assert_true (gdk_pixbuf_save (wide, wide_path, "png", NULL, NULL));
+  g_assert_true (gdk_pixbuf_save (edge, edge_path, "png", NULL, NULL));
+
+  JsonArray *messages = app->chat->messages;
+  guint text_turns = json_array_get_length (messages);
+  g_autoptr (JsonObject) extra = json_object_new ();
+  json_object_set_string_member (extra, "role", "user");
+  json_object_set_string_member (extra, "content", "");
+  json_object_set_array_member (extra, "images", image_ids (edge_id, NULL));
+  for (guint i = 0; i < 600; i++)
+    copy_message (messages, extra);
+  JsonObject *first = json_array_get_object_element (messages, text_turns);
+  json_object_set_array_member (first, "images", image_ids (wide_id, NULL));
+  json_object_set_array_member (extra, "images", image_ids (edge_id, edge_id));
+
+  gsize len;
+  g_autoptr (GError) error = NULL;
+  g_autofree gchar *below_threshold =
+      request_body (text_turns + 12, extra, &len, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (below_threshold);
+  g_autofree gchar *too_wide =
+      request_body (text_turns + 13, extra, &len, &error);
+  g_assert_null (too_wide);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error (&error);
+
+  json_object_set_array_member (first, "images", image_ids (edge_id, NULL));
+  g_autofree gchar *at_limit =
+      request_body (text_turns + 600, NULL, &len, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (at_limit);
+  g_autofree gchar *too_many =
+      request_body (text_turns + 599, extra, &len, &error);
+  g_assert_null (too_many);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE);
+
+  g_assert_cmpint (g_unlink (wide_path), ==, 0);
+  g_assert_cmpint (g_unlink (edge_path), ==, 0);
+  g_rmdir (dir);
+  teardown ();
+}
+
+static void
+image_import (void)
+{
+  setup ();
+  g_autofree gchar *input = g_build_filename (test_dir, "input.png", NULL);
+  g_autoptr (GdkPixbuf) pixbuf =
+      gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, 2, 2);
+  gdk_pixbuf_fill (pixbuf, 0x123456ff);
+  g_autoptr (GError) error = NULL;
+  g_assert_true (gdk_pixbuf_save (pixbuf, input, "png", &error, NULL));
+  g_autoptr (GFile) file = g_file_new_for_path (input);
+  g_autoptr (GCancellable) cancel = g_cancellable_new ();
+  g_autofree gchar *id = import_image (file, cancel, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (id);
+  g_autofree gchar *path = image_path (id);
+  g_autofree gchar *original = NULL;
+  g_autofree gchar *copied = NULL;
+  gsize original_len, copied_len;
+  g_assert_true (g_file_get_contents (input, &original, &original_len, NULL));
+  g_assert_true (g_file_get_contents (path, &copied, &copied_len, NULL));
+  g_assert_cmpmem (original, original_len, copied, copied_len);
+  GStatBuf statbuf;
+  g_assert_cmpint (g_stat (path, &statbuf), ==, 0);
+  g_assert_cmpint (statbuf.st_mode & 0777, ==, 0600);
+  g_cancellable_cancel (cancel);
+  g_autofree gchar *cancelled = import_image (file, cancel, &error);
+  g_assert_null (cancelled);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error (&error);
+  g_assert_true (g_file_set_contents (input, "not an image", -1, NULL));
+  g_autofree gchar *invalid = import_image (file, NULL, &error);
+  g_assert_null (invalid);
+  g_assert_nonnull (error);
+  g_clear_error (&error);
+  const gchar broken_png[] = "\x89PNG\r\n\x1a\n";
+  g_assert_true (g_file_set_contents (input, broken_png, 8, NULL));
+  g_autofree gchar *broken = import_image (file, NULL, &error);
+  g_assert_null (broken);
+  g_assert_nonnull (error);
+  g_clear_error (&error);
+  g_autoptr (GdkPixbuf) wide =
+      gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, 8193, 1);
+  gdk_pixbuf_fill (wide, 0xffffffff);
+  g_assert_true (gdk_pixbuf_save (wide, input, "png", &error, NULL));
+  g_autofree gchar *dimensions = import_image (file, NULL, &error);
+  g_assert_null (dimensions);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error (&error);
+  g_autofree gchar *large = g_malloc0 (IMAGE_MAX_SIZE + 1);
+  g_assert_true (g_file_set_contents (input, large, IMAGE_MAX_SIZE + 1, NULL));
+  g_autofree gchar *oversize = import_image (file, NULL, &error);
+  g_assert_null (oversize);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE);
+  g_clear_error (&error);
+  g_autoptr (GBytes) large_bytes =
+      g_bytes_new_static (large, IMAGE_MAX_SIZE + 1);
+  g_autofree gchar *large_clipboard =
+      save_image_bytes (large_bytes, NULL, &error);
+  g_assert_null (large_clipboard);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE);
+  g_assert_cmpint (g_unlink (input), ==, 0);
+  g_assert_cmpint (g_unlink (path), ==, 0);
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_rmdir (dir);
+  teardown ();
+}
+
+static void
+wait_for_image_import (void)
+{
+  gint64 deadline = g_get_monotonic_time () + 5 * G_TIME_SPAN_SECOND;
+  while (app->image_cancel != NULL && g_get_monotonic_time () < deadline)
+    {
+      while (g_main_context_iteration (NULL, FALSE))
+        {
+        }
+      g_usleep (1000);
+    }
+  g_assert_null (app->image_cancel);
+}
+
+static void
+clipboard_image (void)
+{
+  if (!setup_ui ())
+    return;
+  g_autoptr (GApplication) application =
+      g_application_new (NULL, G_APPLICATION_NON_UNIQUE);
+  g_application_set_default (application);
+  g_autoptr (GdkClipboard) clipboard = g_object_new (
+      GDK_TYPE_CLIPBOARD, "display", gtk_widget_get_display (app->input), NULL);
+  gulong handler = g_signal_handler_find (app->input, G_SIGNAL_MATCH_FUNC, 0, 0,
+                                          NULL, on_input_paste, NULL);
+  g_assert_cmpuint (handler, >, 0);
+  gdk_clipboard_set_text (clipboard, "plain text");
+  g_assert_false (paste_image (clipboard));
+  g_assert_null (app->chat->draft_images);
+
+  const guint8 rgba[] = {
+    255, 0, 0, 255, 0, 255, 0, 255,
+    0, 0, 255, 255, 255, 255, 255, 255,
+  };
+  g_autoptr (GBytes) pixels = g_bytes_new_static (rgba, sizeof rgba);
+  g_autoptr (GdkTexture) texture = gdk_memory_texture_new (
+      2, 2, GDK_MEMORY_R8G8B8A8, pixels, 8);
+  GdkContentProvider *providers[] = {
+    gdk_content_provider_new_typed (GDK_TYPE_TEXTURE, texture),
+    gdk_content_provider_new_typed (G_TYPE_STRING, "also text"),
+  };
+  g_autoptr (GdkContentProvider) combined =
+      gdk_content_provider_new_union (providers, G_N_ELEMENTS (providers));
+  g_assert_true (gdk_clipboard_set_content (clipboard, combined));
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  gtk_text_buffer_set_text (buffer, "existing draft", -1);
+  g_assert_true (paste_image (clipboard));
+  wait_for_image_import ();
+  JsonArray *images = app->chat->draft_images;
+  g_assert_nonnull (images);
+  g_assert_cmpuint (json_array_get_length (images), ==, 1);
+  const gchar *attached = json_array_get_string_element (images, 0);
+  g_assert_true (gtk_widget_get_visible (app->image_bar));
+  g_assert_cmpstr (app->chat->draft, ==, "existing draft");
+  g_autofree gchar *session = store_session_path ();
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) loaded =
+      store_load (session, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  Chat *saved = g_ptr_array_index (loaded, 0);
+  g_assert_cmpstr (json_array_get_string_element (saved->draft_images, 0), ==,
+                   attached);
+  g_autofree gchar *path = image_path (attached);
+  g_autoptr (GFile) file = g_file_new_for_path (path);
+  g_autoptr (GBytes) bytes = read_image_bytes (file, NULL, &error);
+  g_assert_no_error (error);
+  const gchar *mime = NULL;
+  g_autoptr (GdkPixbuf) preview = decode_image (bytes, &mime, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (preview);
+  g_assert_cmpstr (mime, ==, "image/png");
+  g_assert_true (paste_image (clipboard));
+  restore_input ();
+  while (g_main_context_iteration (NULL, FALSE))
+    {
+    }
+  g_assert_cmpuint (json_array_get_length (images), ==, 1);
+  g_autoptr (GdkContentProvider) png =
+      gdk_content_provider_new_for_bytes ("image/png", bytes);
+  g_assert_true (gdk_clipboard_set_content (clipboard, png));
+  g_assert_true (paste_image (clipboard));
+  wait_for_image_import ();
+  g_assert_true (app->chat->draft_images == images);
+  g_assert_cmpuint (json_array_get_length (images), ==, 2);
+  g_assert_cmpstr (json_array_get_string_element (images, 0), ==, attached);
+  const gchar *second = json_array_get_string_element (images, 1);
+  g_assert_cmpstr (second, !=, attached);
+  g_autofree gchar *second_path = image_path (second);
+  g_autofree guint8 *wide_pixels = g_malloc0 (8193 * 4);
+  g_autoptr (GBytes) wide_bytes = g_bytes_new_take (
+      g_steal_pointer (&wide_pixels), 8193 * 4);
+  g_autoptr (GdkTexture) wide = gdk_memory_texture_new (
+      8193, 1, GDK_MEMORY_R8G8B8A8, wide_bytes, 8193 * 4);
+  g_autoptr (GTask) task = g_task_new (wide, NULL, NULL, NULL);
+  import_texture_thread (task, wide, NULL, NULL);
+  g_autofree gchar *invalid = g_task_propagate_pointer (task, &error);
+  g_assert_null (invalid);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error (&error);
+  ImagePick *pick = image_pick_new ();
+  g_assert_true (image_pick_current (pick));
+  restore_input ();
+  g_assert_false (image_pick_current (pick));
+  image_pick_free (pick);
+  g_assert_cmpint (g_unlink (path), ==, 0);
+  g_assert_cmpint (g_unlink (second_path), ==, 0);
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_rmdir (dir);
+  teardown ();
+  g_application_set_default (NULL);
+}
+
+static void
+clipboard_image_file (void)
+{
+  if (!setup_ui ())
+    return;
+  g_autoptr (GApplication) application =
+      g_application_new (NULL, G_APPLICATION_NON_UNIQUE);
+  g_application_set_default (application);
+  g_autoptr (GdkClipboard) clipboard = g_object_new (
+      GDK_TYPE_CLIPBOARD, "display", gtk_widget_get_display (app->input), NULL);
+  g_autofree gchar *input = g_build_filename (test_dir, "image.png", NULL);
+  g_autoptr (GdkPixbuf) pixbuf =
+      gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, 2, 2);
+  gdk_pixbuf_fill (pixbuf, 0x33aa55ff);
+  g_assert_true (gdk_pixbuf_save (pixbuf, input, "png", NULL, NULL));
+  g_autoptr (GFile) file = g_file_new_for_path (input);
+  g_autofree gchar *uri = g_file_get_uri (file);
+  g_autofree gchar *uris = g_strconcat (uri, "\r\n", uri, "\r\n", NULL);
+  g_autoptr (GBytes) uri_bytes = g_bytes_new (uris, strlen (uris));
+  g_autoptr (GdkTexture) texture = gdk_texture_new_from_file (file, NULL);
+  g_assert_nonnull (texture);
+  GdkContentProvider *local_formats[] = {
+    gdk_content_provider_new_for_bytes ("text/uri-list", uri_bytes),
+    gdk_content_provider_new_typed (GDK_TYPE_TEXTURE, texture),
+  };
+  g_autoptr (GdkContentProvider) local = gdk_content_provider_new_union (
+      local_formats, G_N_ELEMENTS (local_formats));
+  g_assert_true (gdk_clipboard_set_content (clipboard, local));
+  g_assert_true (paste_image (clipboard));
+  wait_for_image_import ();
+  JsonArray *images = app->chat->draft_images;
+  g_assert_nonnull (images);
+  g_assert_cmpuint (json_array_get_length (images), ==, 2);
+  const gchar *first_id = json_array_get_string_element (images, 0);
+  const gchar *second_id = json_array_get_string_element (images, 1);
+  g_autofree gchar *path = image_path (first_id);
+  g_autofree gchar *second = image_path (second_id);
+  g_assert_cmpstr (path, !=, second);
+  g_autofree gchar *original = NULL;
+  g_autofree gchar *copy = NULL;
+  gsize original_len, copy_len;
+  g_assert_true (g_file_get_contents (input, &original, &original_len, NULL));
+  g_assert_true (g_file_get_contents (path, &copy, &copy_len, NULL));
+  g_assert_cmpmem (original, original_len, copy, copy_len);
+
+  g_autofree gchar *bad = g_build_filename (test_dir, "bad.png", NULL);
+  g_assert_true (g_file_set_contents (bad, "not an image", -1, NULL));
+  g_autoptr (GFile) bad_file = g_file_new_for_path (bad);
+  g_autofree gchar *bad_uri = g_file_get_uri (bad_file);
+  g_autofree gchar *mixed = g_strconcat (uri, "\r\n", bad_uri, "\r\n", NULL);
+  g_autoptr (GBytes) mixed_bytes = g_bytes_new (mixed, strlen (mixed));
+  g_autoptr (GdkContentProvider) mixed_provider =
+      gdk_content_provider_new_for_bytes ("text/uri-list", mixed_bytes);
+  g_assert_true (gdk_clipboard_set_content (clipboard, mixed_provider));
+  g_assert_true (paste_image (clipboard));
+  wait_for_image_import ();
+  g_assert_cmpuint (json_array_get_length (app->chat->draft_images), ==, 2);
+
+  const gchar *url = "https://example.org/image.png";
+  g_autofree gchar *remote_uris = g_strconcat (url, "\r\n", NULL);
+  g_autoptr (GBytes) remote = g_bytes_new (remote_uris, strlen (remote_uris));
+  GdkContentProvider *providers[] = {
+    gdk_content_provider_new_for_bytes ("text/uri-list", remote),
+    gdk_content_provider_new_typed (G_TYPE_STRING, url),
+  };
+  g_autoptr (GdkContentProvider) combined =
+      gdk_content_provider_new_union (providers, G_N_ELEMENTS (providers));
+  g_assert_true (gdk_clipboard_set_content (clipboard, combined));
+  set_busy (TRUE);
+  g_assert_true (paste_image (clipboard));
+  gint64 deadline = g_get_monotonic_time () + 5 * G_TIME_SPAN_SECOND;
+  while (!*app->chat->draft && g_get_monotonic_time () < deadline)
+    {
+      while (g_main_context_iteration (NULL, FALSE))
+        {
+        }
+      g_usleep (1000);
+    }
+  g_assert_cmpstr (app->chat->draft, ==, url);
+  set_busy (FALSE);
+  g_assert_cmpint (g_unlink (bad), ==, 0);
+  g_assert_cmpint (g_unlink (input), ==, 0);
+  g_assert_cmpint (g_unlink (path), ==, 0);
+  g_assert_cmpint (g_unlink (second), ==, 0);
+  g_autofree gchar *dir = g_path_get_dirname (path);
+  g_assert_cmpint (g_rmdir (dir), ==, 0);
+  teardown ();
+  g_application_set_default (NULL);
+}
+
+static void
+image_lifecycle (void)
+{
+  if (!setup_ui ())
+    return;
+  g_autofree gchar *draft = g_uuid_string_random ();
+  g_autofree gchar *original = g_uuid_string_random ();
+  g_autofree gchar *replacement = g_uuid_string_random ();
+  g_autofree gchar *draft_path = image_path (draft);
+  g_autofree gchar *original_path = image_path (original);
+  g_autofree gchar *replacement_path = image_path (replacement);
+  g_autofree gchar *dir = g_path_get_dirname (draft_path);
+  g_assert_cmpint (g_mkdir_with_parents (dir, 0700), ==, 0);
+  g_autoptr (GdkPixbuf) pixbuf =
+      gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, 2, 2);
+  gdk_pixbuf_fill (pixbuf, 0xff0000ff);
+  g_assert_true (gdk_pixbuf_save (pixbuf, draft_path, "png", NULL, NULL));
+  g_assert_true (gdk_pixbuf_save (pixbuf, original_path, "png", NULL, NULL));
+  g_assert_true (gdk_pixbuf_save (pixbuf, replacement_path, "png", NULL, NULL));
+  Chat *source = app->chat;
+  source->draft_images = image_ids (draft, NULL);
+  JsonObject *first = json_array_get_object_element (source->messages, 0);
+  json_object_set_array_member (first, "images",
+                                image_ids (original, replacement));
+  render_chat ();
+  g_assert_true (gtk_widget_get_visible (app->image_bar));
+  GtkWidget *tile = gtk_widget_get_first_child (app->image_preview);
+  g_assert_true (GTK_IS_OVERLAY (tile));
+  g_assert_true (GTK_IS_PICTURE (gtk_overlay_get_child (GTK_OVERLAY (tile))));
+  GtkWidget *bubble = gtk_widget_get_first_child (app->messages);
+  on_edit_message (NULL, bubble);
+  g_assert_cmpuint (json_array_get_length (source->edit_images), ==, 2);
+  tile = gtk_widget_get_first_child (app->image_preview);
+  GtkWidget *remove = gtk_widget_get_last_child (tile);
+  g_assert_true (GTK_IS_BUTTON (remove));
+  g_signal_emit_by_name (remove, "clicked");
+  g_assert_cmpuint (json_array_get_length (source->edit_images), ==, 1);
+  g_assert_cmpstr (json_array_get_string_element (source->edit_images, 0), ==,
+                   replacement);
+  JsonArray *images = image_array_member (first, "images");
+  g_assert_cmpuint (json_array_get_length (images), ==, 2);
+  on_cancel_edit (NULL, NULL);
+  g_assert_null (source->edit_images);
+  g_assert_true (*current_images () == source->draft_images);
+
+  bubble = gtk_widget_get_first_child (app->messages);
+  on_edit_message (NULL, bubble);
+  commit_message ("edited");
+  first = json_array_get_object_element (source->messages, 0);
+  images = image_array_member (first, "images");
+  g_assert_cmpuint (json_array_get_length (images), ==, 2);
+  g_assert_cmpstr (json_array_get_string_element (source->draft_images, 0), ==,
+                   draft);
+  render_chat ();
+  bubble = gtk_widget_get_first_child (app->messages);
+  on_fork_message (NULL, bubble);
+  Chat *fork = app->chat;
+  g_assert_cmpuint (json_array_get_length (fork->draft_images), ==, 2);
+  on_row_copy (NULL, fork);
+  on_remove_image (NULL, GUINT_TO_POINTER (0));
+  g_assert_cmpuint (json_array_get_length (fork->draft_images), ==, 2);
+  g_assert_cmpuint (json_array_get_length (app->chat->draft_images), ==, 1);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  gtk_text_buffer_set_text (buffer, "", -1);
+  g_assert_true (gtk_widget_get_sensitive (app->send));
+  app->api_key = g_strdup ("unused");
+  g_assert_cmpint (g_unlink (replacement_path), ==, 0);
+  guint count = json_array_get_length (app->chat->messages);
+  send_message ();
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, count);
+  on_remove_image (NULL, GUINT_TO_POINTER (0));
+  g_assert_null (app->chat->draft_images);
+  g_assert_false (gtk_widget_get_visible (app->image_bar));
+  g_assert_false (gtk_widget_get_sensitive (app->send));
+  g_unlink (draft_path);
+  g_unlink (original_path);
+  g_rmdir (dir);
+  teardown ();
+}
+
+static void
+image_preview_layout (void)
+{
+  if (!setup_ui ())
+    return;
+  g_autofree gchar *id = g_uuid_string_random ();
+  app->chat->draft_images = json_array_new ();
+  for (guint i = 0; i < 12; i++)
+    json_array_add_string_element (app->chat->draft_images, id);
+  refresh_images ();
+  gtk_window_set_default_size (GTK_WINDOW (app->window), 640, 480);
+  fit_input_height ();
+  gtk_window_present (GTK_WINDOW (app->window));
+  wait_for_layout ();
+
+  GtkScrolledWindow *rail = GTK_SCROLLED_WINDOW (app->image_bar);
+  GtkAdjustment *scroll = gtk_scrolled_window_get_hadjustment (rail);
+  g_assert_true (gtk_widget_get_mapped (app->image_bar));
+  g_assert_cmpint (gtk_widget_get_width (app->window), ==, 640);
+  g_assert_cmpfloat (gtk_adjustment_get_page_size (scroll), >, 0);
+  g_assert_cmpfloat (gtk_adjustment_get_upper (scroll), >,
+                     gtk_adjustment_get_page_size (scroll));
+  GtkWidget *overlay = gtk_widget_get_parent (app->input_frame);
+  g_assert_true (gtk_widget_get_parent (app->image_bar) ==
+                 gtk_widget_get_parent (overlay));
   teardown ();
 }
 
@@ -2824,6 +3354,13 @@ main (int    argc,
   g_test_add_data_func ("/app/delete/current", GUINT_TO_POINTER (4),
                         delete_confirmation);
   g_test_add_func ("/app/payload-filters-reasoning", payload_filters_reasoning);
+  g_test_add_func ("/app/image-payload", image_payload);
+  g_test_add_func ("/app/image-payload-limits", image_payload_limits);
+  g_test_add_func ("/app/image-import", image_import);
+  g_test_add_func ("/app/clipboard-image", clipboard_image);
+  g_test_add_func ("/app/clipboard-image-file", clipboard_image_file);
+  g_test_add_func ("/app/image-lifecycle", image_lifecycle);
+  g_test_add_func ("/app/image-preview-layout", image_preview_layout);
   g_test_add_data_func ("/app/shutdown/draft", GINT_TO_POINTER (0),
                         shutdown_snapshot);
   g_test_add_data_func ("/app/shutdown/stream", GINT_TO_POINTER (1),
