@@ -65,9 +65,8 @@ Adw.ToolbarView content {
       Gtk.StackPage {
         name: "empty";
 
-        child: Adw.StatusPage {
+        child: Adw.StatusPage empty_status {
           title: _("Start a conversation with DeepSeek");
-          description: _("Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat");
         };
       }
     }
@@ -130,7 +129,6 @@ Adw.ToolbarView content {
               vscrollbar-policy: external;
 
               child: Gtk.TextView input {
-                tooltip-text: _("Focus input (Ctrl/Cmd+L)");
                 wrap-mode: word_char;
                 margin-top: 14;
                 margin-bottom: 42;

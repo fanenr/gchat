@@ -109,8 +109,9 @@ msgstr ""
 msgid "Failed to save conversation"
 msgstr ""
 
-#: main.c:1055
-msgid "Stop generating (Ctrl/Cmd+.)"
+#: main.c:1147
+#, c-format
+msgid "Stop generating (%s+.)"
 msgstr ""
 
 #: main.c:1055 ui/content.blp:221
@@ -402,8 +403,9 @@ msgstr ""
 msgid "Start a conversation with DeepSeek"
 msgstr ""
 
-#: ui/content.blp:70
-msgid "Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat"
+#: main.c:4403
+#, c-format
+msgid "Enter to send · Shift+Enter for a new line · %s+N for a new chat"
 msgstr ""
 
 #: ui/content.blp:89
@@ -414,8 +416,9 @@ msgstr ""
 msgid "Cancel editing (Esc)"
 msgstr ""
 
-#: ui/content.blp:133
-msgid "Focus input (Ctrl/Cmd+L)"
+#: main.c:4405
+#, c-format
+msgid "Focus input (%s+L)"
 msgstr ""
 
 #: ui/content.blp:148
@@ -494,16 +497,19 @@ msgstr ""
 msgid "Conversation data"
 msgstr ""
 
-#: ui/sidebar.blp:32
-msgid "New chat (Ctrl+N)"
+#: main.c:4335
+#, c-format
+msgid "New chat (%s+N)"
 msgstr ""
 
-#: ui/sidebar.blp:56
-msgid "Search conversations (Ctrl/Cmd+F)"
+#: main.c:4336
+#, c-format
+msgid "Search conversations (%s+F)"
 msgstr ""
 
-#: ui/sidebar.blp:83
-msgid "Settings (Ctrl/Cmd+,)"
+#: main.c:4337
+#, c-format
+msgid "Settings (%s+,)"
 msgstr ""
 
 #: md.c:252

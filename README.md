@@ -58,18 +58,18 @@ The client needs these packages:
 
 ## Shortcuts
 
-macOS uses Cmd. Ctrl also works. Linux uses Ctrl.
+App shortcuts use Cmd on macOS and Ctrl on Linux.
 
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl/Cmd+N` | New session |
-| `Ctrl/Cmd+L` | Focus the input box |
-| `Ctrl/Cmd+F` | Focus search |
-| `Ctrl/Cmd+,` | Open settings |
-| `Ctrl/Cmd+.` | Stop generation |
-| `Enter` | Send the message |
-| `Shift+Enter` | New line |
-| `Esc` | Cancel an edit, or clear the search |
+| macOS | Linux | Action |
+| --- | --- | --- |
+| `Cmd+N` | `Ctrl+N` | New session |
+| `Cmd+L` | `Ctrl+L` | Focus the input box |
+| `Cmd+F` | `Ctrl+F` | Focus search |
+| `Cmd+,` | `Ctrl+,` | Open settings |
+| `Cmd+.` | `Ctrl+.` | Stop generation |
+| `Enter` | `Enter` | Send the message |
+| `Shift+Enter` | `Shift+Enter` | New line |
+| `Esc` | `Esc` | Cancel an edit, or clear the search |
 
 ## Data
 

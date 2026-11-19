@@ -10,6 +10,9 @@
 
 #include <adwaita.h>
 #include <errno.h>
+#ifdef GDK_WINDOWING_MACOS
+#include <gdk/macos/gdkmacos.h>
+#endif
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
@@ -1109,14 +1112,41 @@ save_session (void)
   return ok;
 }
 
+static gboolean
+uses_command_shortcuts (void)
+{
+#ifdef GDK_WINDOWING_MACOS
+  return GDK_IS_MACOS_DISPLAY (gtk_widget_get_display (app->window));
+#else
+  return FALSE;
+#endif
+}
+
+/* Return an owned hint formatted with the platform shortcut modifier. */
+static gchar *
+format_shortcut_hint (const gchar *format)
+{
+  return g_strdup_printf (format, uses_command_shortcuts () ? "Cmd" : "Ctrl");
+}
+
+static void
+set_shortcut_tooltip (GtkWidget   *widget,
+                      const gchar *format)
+{
+  g_autofree gchar *hint = format_shortcut_hint (format);
+  gtk_widget_set_tooltip_text (widget, hint);
+}
+
 static void
 set_busy (gboolean busy)
 {
   app->busy = busy;
   gtk_button_set_icon_name (GTK_BUTTON (app->send),
                             busy ? "process-stop-symbolic" : "go-up-symbolic");
-  gtk_widget_set_tooltip_text (
-      app->send, busy ? _ ("Stop generating (Ctrl/Cmd+.)") : _ ("Send"));
+  if (busy)
+    set_shortcut_tooltip (app->send, _ ("Stop generating (%s+.)"));
+  else
+    gtk_widget_set_tooltip_text (app->send, _ ("Send"));
   gtk_widget_set_sensitive (app->sidebar_list, !busy);
   gtk_widget_set_sensitive (app->search, !busy);
   gtk_widget_set_sensitive (app->model_chip, !busy);
@@ -4302,6 +4332,9 @@ build_sidebar (void)
       GTK_WIDGET (gtk_builder_get_object (builder, "sidebar_list"));
   app->new_btn = new_row;
 
+  set_shortcut_tooltip (new_row, _ ("New chat (%s+N)"));
+  set_shortcut_tooltip (app->search, _ ("Search conversations (%s+F)"));
+  set_shortcut_tooltip (settings, _ ("Settings (%s+,)"));
   g_signal_connect (new_row, "clicked", G_CALLBACK (on_new_chat_clicked), NULL);
   g_signal_connect (settings, "clicked", G_CALLBACK (on_settings_clicked),
                     NULL);
@@ -4363,6 +4396,14 @@ build_content (void)
       GTK_WIDGET (gtk_builder_get_object (builder, "chip_effort"));
   app->web_toggle =
       GTK_WIDGET (gtk_builder_get_object (builder, "web_toggle"));
+
+  AdwStatusPage *empty = ADW_STATUS_PAGE (
+      gtk_builder_get_object (builder, "empty_status"));
+  g_autofree gchar *hint = format_shortcut_hint (
+      _ ("Enter to send · Shift+Enter for a new line · %s+N for a new chat"));
+  adw_status_page_set_description (empty, hint);
+  set_shortcut_tooltip (app->input, _ ("Focus input (%s+L)"));
+
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle),
                                 app->web_enabled);
   g_signal_connect (app->web_toggle, "toggled", G_CALLBACK (on_web_toggled),
@@ -4540,13 +4581,12 @@ register_actions (GtkApplication *gtk_app)
     { "win.search", "f" },    { "win.settings", "comma" },
     { "win.stop", "period" },
   };
+  /* GTK 4 parses <Primary> as Ctrl, even on macOS. */
+  const gchar *modifier = uses_command_shortcuts () ? "<Meta>" : "<Control>";
   for (guint i = 0; i < G_N_ELEMENTS (shortcuts); i++)
     {
-      g_autofree gchar *primary =
-          g_strconcat ("<Primary>", shortcuts[i].key, NULL);
-      g_autofree gchar *control =
-          g_strconcat ("<Control>", shortcuts[i].key, NULL);
-      const gchar *accels[] = { primary, control, NULL };
+      g_autofree gchar *accel = g_strconcat (modifier, shortcuts[i].key, NULL);
+      const gchar *accels[] = { accel, NULL };
       gtk_application_set_accels_for_action (gtk_app, shortcuts[i].action,
                                              accels);
     }

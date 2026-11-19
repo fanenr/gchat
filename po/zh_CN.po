@@ -105,9 +105,10 @@ msgstr "删除这条消息"
 msgid "Failed to save conversation"
 msgstr "会话保存失败"
 
-#: main.c:1055
-msgid "Stop generating (Ctrl/Cmd+.)"
-msgstr "停止生成 (Ctrl/Cmd+.)"
+#: main.c:1147
+#, c-format
+msgid "Stop generating (%s+.)"
+msgstr "停止生成 (%s+.)"
 
 #: main.c:1055 ui/content.blp:221
 msgid "Send"
@@ -398,9 +399,10 @@ msgstr "会话列表"
 msgid "Start a conversation with DeepSeek"
 msgstr "开始和 DeepSeek 对话"
 
-#: ui/content.blp:70
-msgid "Enter to send · Shift+Enter for a new line · Ctrl+N for a new chat"
-msgstr "Enter 发送 · Shift+Enter 换行 · Ctrl+N 新对话"
+#: main.c:4403
+#, c-format
+msgid "Enter to send · Shift+Enter for a new line · %s+N for a new chat"
+msgstr "Enter 发送 · Shift+Enter 换行 · %s+N 新对话"
 
 #: ui/content.blp:89
 msgid "Editing message"
@@ -410,9 +412,10 @@ msgstr "正在编辑消息"
 msgid "Cancel editing (Esc)"
 msgstr "取消编辑 (Esc)"
 
-#: ui/content.blp:133
-msgid "Focus input (Ctrl/Cmd+L)"
-msgstr "聚焦输入框 (Ctrl/Cmd+L)"
+#: main.c:4405
+#, c-format
+msgid "Focus input (%s+L)"
+msgstr "聚焦输入框 (%s+L)"
 
 #: ui/content.blp:148
 msgid "Message DeepSeek"
@@ -490,17 +493,20 @@ msgstr "关于"
 msgid "Conversation data"
 msgstr "会话数据"
 
-#: ui/sidebar.blp:32
-msgid "New chat (Ctrl+N)"
-msgstr "新对话 (Ctrl+N)"
+#: main.c:4335
+#, c-format
+msgid "New chat (%s+N)"
+msgstr "新对话 (%s+N)"
 
-#: ui/sidebar.blp:56
-msgid "Search conversations (Ctrl/Cmd+F)"
-msgstr "搜索对话 (Ctrl/Cmd+F)"
+#: main.c:4336
+#, c-format
+msgid "Search conversations (%s+F)"
+msgstr "搜索对话 (%s+F)"
 
-#: ui/sidebar.blp:83
-msgid "Settings (Ctrl/Cmd+,)"
-msgstr "设置 (Ctrl/Cmd+,)"
+#: main.c:4337
+#, c-format
+msgid "Settings (%s+,)"
+msgstr "设置 (%s+,)"
 
 #: md.c:252
 msgid "Code copied"

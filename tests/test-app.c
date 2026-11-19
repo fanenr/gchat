@@ -925,6 +925,22 @@ find_button (GtkWidget   *root,
   return NULL;
 }
 
+static GdkModifierType
+expected_shortcut_modifier (void)
+{
+#ifdef GDK_WINDOWING_MACOS
+  if (GDK_IS_MACOS_DISPLAY (gtk_widget_get_display (app->window)))
+    return GDK_META_MASK;
+#endif
+  return GDK_CONTROL_MASK;
+}
+
+static const gchar *
+expected_modifier_label (void)
+{
+  return expected_shortcut_modifier () == GDK_META_MASK ? "Cmd" : "Ctrl";
+}
+
 static void
 sidebar_builder (void)
 {
@@ -934,11 +950,22 @@ sidebar_builder (void)
   GtkWidget *sidebar = adw_overlay_split_view_get_sidebar (
       ADW_OVERLAY_SPLIT_VIEW (app->split));
   g_assert_nonnull (find_label (sidebar, _ ("New chat")));
-  g_assert_nonnull (find_label (sidebar, _ ("Settings")));
-  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->new_btn), ==,
-                   _ ("New chat (Ctrl+N)"));
-  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->search), ==,
-                   _ ("Search conversations (Ctrl/Cmd+F)"));
+  GtkWidget *settings = find_label (sidebar, _ ("Settings"));
+  g_assert_nonnull (settings);
+  GtkWidget *settings_button = gtk_widget_get_ancestor (settings,
+                                                        GTK_TYPE_BUTTON);
+  g_assert_nonnull (settings_button);
+  const gchar *modifier = expected_modifier_label ();
+  g_autofree gchar *new_hint =
+      g_strdup_printf (_ ("New chat (%s+N)"), modifier);
+  g_autofree gchar *search_hint =
+      g_strdup_printf (_ ("Search conversations (%s+F)"), modifier);
+  g_autofree gchar *settings_hint =
+      g_strdup_printf (_ ("Settings (%s+,)"), modifier);
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->new_btn), ==, new_hint);
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->search), ==, search_hint);
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (settings_button), ==,
+                   settings_hint);
   g_autofree gchar *placeholder = NULL;
   g_object_get (app->search, "placeholder-text", &placeholder, NULL);
   g_assert_cmpstr (placeholder, ==, _ ("Search conversations"));
@@ -969,6 +996,16 @@ content_builder (void)
   g_assert_true (ADW_IS_STATUS_PAGE (empty));
   g_assert_cmpstr (adw_status_page_get_title (ADW_STATUS_PAGE (empty)), ==,
                    _ ("Start a conversation with DeepSeek"));
+  const gchar *modifier = expected_modifier_label ();
+  g_autofree gchar *empty_hint = g_strdup_printf (
+      _ ("Enter to send · Shift+Enter for a new line · %s+N for a new chat"),
+      modifier);
+  g_autofree gchar *input_hint =
+      g_strdup_printf (_ ("Focus input (%s+L)"), modifier);
+  const gchar *description =
+      adw_status_page_get_description (ADW_STATUS_PAGE (empty));
+  g_assert_cmpstr (description, ==, empty_hint);
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->input), ==, input_hint);
   g_assert_true (gtk_scrollbar_get_adjustment (GTK_SCROLLBAR (app->chat_bar)) ==
                  gtk_scrolled_window_get_vadjustment (
                      GTK_SCROLLED_WINDOW (app->scroller)));
@@ -1145,8 +1182,9 @@ language_settings (void)
   wait_for_layout ();
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->placeholder)), ==,
                    _ ("Message DeepSeek"));
-  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->send), ==,
-                   _ ("Stop generating (Ctrl/Cmd+.)"));
+  g_autofree gchar *stop_hint = g_strdup_printf (_ ("Stop generating (%s+.)"),
+                                                 expected_modifier_label ());
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->send), ==, stop_hint);
   g_assert_nonnull (find_label (
       adw_overlay_split_view_get_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split)),
       _ ("New chat")));
@@ -2609,26 +2647,19 @@ keyboard_actions (void)
   show_window ();
   const gchar *actions[] = { "new-chat", "focus-input", "search", "settings",
                              "stop" };
-  const gchar *keys[] = { "n", "l", "f", "comma", "period" };
+  const guint keys[] = { GDK_KEY_n, GDK_KEY_l, GDK_KEY_f, GDK_KEY_comma,
+                         GDK_KEY_period };
   for (guint i = 0; i < G_N_ELEMENTS (actions); i++)
     {
       g_autofree gchar *name = g_strconcat ("win.", actions[i], NULL);
       g_auto (GStrv) accels =
           gtk_application_get_accels_for_action (application, name);
-      g_autofree gchar *primary = g_strconcat ("<Primary>", keys[i], NULL);
-      guint expected_key;
-      GdkModifierType expected_mods;
-      g_assert_true (
-          gtk_accelerator_parse (primary, &expected_key, &expected_mods));
-      gboolean found = FALSE;
-      for (guint j = 0; accels[j] != NULL; j++)
-        {
-          guint key;
-          GdkModifierType mods;
-          g_assert_true (gtk_accelerator_parse (accels[j], &key, &mods));
-          found |= key == expected_key && mods == expected_mods;
-        }
-      g_assert_true (found);
+      g_assert_cmpuint (g_strv_length (accels), ==, 1);
+      guint key;
+      GdkModifierType mods;
+      g_assert_true (gtk_accelerator_parse (accels[0], &key, &mods));
+      g_assert_cmpuint (key, ==, keys[i]);
+      g_assert_cmphex (mods, ==, expected_shortcut_modifier ());
     }
   adw_overlay_split_view_set_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split),
                                            FALSE);

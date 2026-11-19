@@ -129,7 +129,7 @@ The rules are:
 - Sending keeps the indentation and trailing whitespace of the body. Without an image, the client rejects blank messages.
 - A user bubble shrinks to the width of the body. Padding is fixed at 16px left and right, 10px top and bottom.
 - The action row does not widen the background. Multi-line text stays left-aligned.
-- You can drag a selection across paragraphs. `Ctrl/Cmd+A` selects the whole message. The selection background follows the text lines and excludes the extra spacing between paragraphs, headings, and list items.
+- You can drag a selection across paragraphs. `Cmd+A` on macOS and `Ctrl+A` on Linux select the whole message. The selection background follows the text lines and excludes the extra spacing between paragraphs, headings, and list items.
 - A code block has its own copy button.
 
 ### Reliability

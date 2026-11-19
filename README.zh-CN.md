@@ -58,18 +58,18 @@
 
 ## 快捷键
 
-macOS 使用 Cmd，也支持 Ctrl。Linux 使用 Ctrl。
+应用快捷键在 macOS 上使用 Cmd，在 Linux 上使用 Ctrl。
 
-| 快捷键 | 功能 |
-| --- | --- |
-| `Ctrl/Cmd+N` | 新建会话 |
-| `Ctrl/Cmd+L` | 聚焦输入框 |
-| `Ctrl/Cmd+F` | 聚焦搜索 |
-| `Ctrl/Cmd+,` | 打开设置 |
-| `Ctrl/Cmd+.` | 停止生成 |
-| `Enter` | 发送消息 |
-| `Shift+Enter` | 换行 |
-| `Esc` | 取消编辑，或清空搜索 |
+| macOS | Linux | 功能 |
+| --- | --- | --- |
+| `Cmd+N` | `Ctrl+N` | 新建会话 |
+| `Cmd+L` | `Ctrl+L` | 聚焦输入框 |
+| `Cmd+F` | `Ctrl+F` | 聚焦搜索 |
+| `Cmd+,` | `Ctrl+,` | 打开设置 |
+| `Cmd+.` | `Ctrl+.` | 停止生成 |
+| `Enter` | `Enter` | 发送消息 |
+| `Shift+Enter` | `Shift+Enter` | 换行 |
+| `Esc` | `Esc` | 取消编辑，或清空搜索 |
 
 ## 数据
 
