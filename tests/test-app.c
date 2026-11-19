@@ -663,6 +663,61 @@ selection_spacing (gconstpointer data)
 }
 
 static void
+message_focus_scroll (void)
+{
+  if (!setup_ui ())
+    return;
+
+  g_autoptr (GString) reply = g_string_new (NULL);
+  for (guint i = 0; i < 50; i++)
+    g_string_append (reply, "- Another list item\n");
+  add_message ("user", "question two");
+  add_message ("assistant", reply->str);
+  render_chat ();
+  GtkSettings *settings = gtk_widget_get_settings (app->window);
+  gboolean animations;
+  g_object_get (settings, "gtk-enable-animations", &animations, NULL);
+  g_object_set (settings, "gtk-enable-animations", FALSE, NULL);
+  show_window ();
+
+  GtkScrolledWindow *scroller = GTK_SCROLLED_WINDOW (app->scroller);
+  GtkWidget *viewport = gtk_scrolled_window_get_child (scroller);
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroller);
+  gtk_adjustment_set_value (adj, 0);
+  wait_for_layout ();
+
+  GtkWidget *first = gtk_widget_get_first_child (app->messages);
+  first = gtk_widget_get_next_sibling (first);
+  GtkWidget *last = gtk_widget_get_last_child (app->messages);
+  GtkWidget *first_body = g_object_get_data (G_OBJECT (first), "body");
+  GtkWidget *last_body = g_object_get_data (G_OBJECT (last), "body");
+  GtkWidget *view = gtk_widget_get_first_child (last_body);
+  graphene_rect_t bounds;
+  g_assert_true (gtk_widget_compute_bounds (view, viewport, &bounds));
+  int height = gtk_widget_get_height (viewport);
+  g_assert_cmpfloat (bounds.origin.y, >, 0);
+  g_assert_cmpfloat (bounds.origin.y, <, height);
+  g_assert_cmpfloat (bounds.origin.y + bounds.size.height, >, height);
+
+  GtkWidget *first_view = gtk_widget_get_first_child (first_body);
+  g_assert_true (gtk_widget_grab_focus (first_view));
+  g_assert_true (gtk_widget_grab_focus (view));
+  wait_for_layout ();
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 0);
+
+  GtkWidget *actions = g_object_get_data (G_OBJECT (last), "actions");
+  GtkWidget *button = gtk_widget_get_first_child (actions);
+  g_assert_true (gtk_widget_grab_focus (button));
+  wait_for_layout ();
+  g_assert_true (gtk_widget_compute_bounds (button, viewport, &bounds));
+  g_assert_cmpfloat (bounds.origin.y, >=, 0);
+  g_assert_cmpfloat (bounds.origin.y + bounds.size.height, <=, height);
+
+  g_object_set (settings, "gtk-enable-animations", animations, NULL);
+  teardown ();
+}
+
+static void
 begin_reply (gboolean reasoning)
 {
   add_message ("assistant", "");
@@ -4448,6 +4503,7 @@ main (int    argc,
   g_test_add_func ("/app/font-settings", font_settings);
   g_test_add_func ("/app/font-values", font_values);
   g_test_add_func ("/app/live-font-change", live_font_change);
+  g_test_add_func ("/app/message-focus-scroll", message_focus_scroll);
   g_test_add_data_func ("/app/selection-spacing/light", GINT_TO_POINTER (0),
                         selection_spacing);
   g_test_add_data_func ("/app/selection-spacing/dark", GINT_TO_POINTER (1),

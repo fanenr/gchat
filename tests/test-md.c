@@ -128,6 +128,91 @@ heading_styles (void)
 }
 
 static void
+selection_edge_scroll (void)
+{
+  g_autoptr (GtkWidget) viewport =
+      g_object_ref_sink (gtk_viewport_new (NULL, NULL));
+  GtkWidget *body = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+  gtk_viewport_set_child (GTK_VIEWPORT (viewport), body);
+  g_autoptr (GString) markdown = g_string_new (NULL);
+  for (guint i = 0; i < 50; i++)
+    g_string_append (markdown, "- List item in a long reply\n");
+  md_render (GTK_BOX (body), markdown->str);
+  GtkTextView *view = GTK_TEXT_VIEW (gtk_widget_get_first_child (body));
+  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+  /* The first allocation queues the text view's deferred resize. */
+  while (g_main_context_iteration (NULL, FALSE))
+    {
+    }
+  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+
+  GtkAdjustment *adj =
+      gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (viewport));
+  int height = gtk_widget_get_height (viewport);
+  g_assert_cmpint (gtk_widget_get_height (GTK_WIDGET (view)), >, height + 160);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  GtkTextMark *insert = gtk_text_buffer_get_insert (buffer);
+  GtkTextMark *bound = gtk_text_buffer_get_selection_bound (buffer);
+  GtkTextIter start, end;
+  gtk_text_buffer_get_start_iter (buffer, &start);
+  gtk_text_view_get_iter_at_location (view, &end, 30, height + 1);
+  int before = gtk_text_iter_get_offset (&end);
+  gtk_text_buffer_select_range (buffer, &end, &start);
+
+  graphene_point_t pointer = GRAPHENE_POINT_INIT (30, height / 2);
+  g_assert_false (scroll_selection (view, viewport, &pointer, 80));
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 0);
+  pointer.y = height + 1;
+  g_assert_true (scroll_selection (view, viewport, &pointer, 80));
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 80);
+  gtk_text_buffer_get_iter_at_mark (buffer, &end, insert);
+  g_assert_cmpint (gtk_text_iter_get_offset (&end), >, before);
+  gtk_text_buffer_get_iter_at_mark (buffer, &start, bound);
+  g_assert_true (gtk_text_iter_is_start (&start));
+  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+
+  gtk_text_buffer_get_end_iter (buffer, &start);
+  gtk_text_view_get_iter_at_location (view, &end, 30, 79);
+  before = gtk_text_iter_get_offset (&end);
+  gtk_text_buffer_select_range (buffer, &end, &start);
+  pointer.y = -1;
+  g_assert_true (scroll_selection (view, viewport, &pointer, 100));
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 0);
+  gtk_text_buffer_get_iter_at_mark (buffer, &end, insert);
+  g_assert_cmpint (gtk_text_iter_get_offset (&end), <, before);
+  gtk_text_buffer_get_iter_at_mark (buffer, &start, bound);
+  g_assert_true (gtk_text_iter_is_end (&start));
+  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+  g_assert_false (scroll_selection (view, viewport, &pointer, 80));
+
+  gtk_adjustment_set_value (adj, gtk_adjustment_get_upper (adj));
+  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+  pointer.y = height + 1;
+  g_assert_false (scroll_selection (view, viewport, &pointer, 80));
+
+  /* Give both ends enough surrounding space to test the scroll margin. */
+  const int surrounding = 96;
+  gtk_widget_set_margin_top (body, surrounding);
+  gtk_widget_set_margin_bottom (body, surrounding);
+  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+  double bottom = gtk_adjustment_get_upper (adj) -
+                  gtk_adjustment_get_page_size (adj) - surrounding;
+  for (int direction = -1; direction <= 1; direction += 2)
+    {
+      gboolean above = direction < 0;
+      double edge = above ? surrounding : bottom;
+      gtk_adjustment_set_value (adj, edge);
+      gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+      pointer.y = above ? -1 : height + 1;
+      g_assert_true (scroll_selection (view, viewport, &pointer, 80));
+      g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==,
+                         edge + direction * 48);
+      gtk_widget_allocate (viewport, 320, 240, -1, NULL);
+      g_assert_false (scroll_selection (view, viewport, &pointer, 80));
+    }
+}
+
+static void
 code_buffers_released (void)
 {
   g_autoptr (GtkWidget) box =
@@ -753,6 +838,7 @@ main (int    argc,
   g_test_add_func ("/markdown/image/timeout", image_timeout);
   g_test_add_func ("/markdown/image/cancel", image_cancel_on_destroy);
   g_test_add_func ("/markdown/language-aliases", language_aliases);
+  g_test_add_func ("/markdown/selection-edge-scroll", selection_edge_scroll);
   g_test_add_func ("/markdown/code-buffers-released", code_buffers_released);
   g_test_add_func ("/markdown/open-scopes-released", open_scopes_released);
   return g_test_run ();

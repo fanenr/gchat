@@ -565,6 +565,31 @@ on_value_changed (GtkAdjustment *adj)
   stick_on_value_changed (&chat_stick);
 }
 
+static void
+on_chat_focus_changed (GtkWindow  *window,
+                       GParamSpec *pspec G_GNUC_UNUSED,
+                       GtkWidget  *viewport)
+{
+  GtkWidget *focus = gtk_window_get_focus (window);
+  if (focus == NULL || !gtk_widget_is_ancestor (focus, viewport) ||
+      gtk_widget_get_native (focus) != gtk_widget_get_native (viewport))
+    {
+      return;
+    }
+
+  /* Keep visible text stationary while GTK starts selecting at the pointer. */
+  graphene_rect_t bounds;
+  if (GTK_IS_TEXT_VIEW (focus) &&
+      gtk_widget_compute_bounds (focus, viewport, &bounds) &&
+      bounds.origin.y < gtk_widget_get_height (viewport) &&
+      bounds.origin.y + bounds.size.height > 0)
+    {
+      return;
+    }
+
+  gtk_viewport_scroll_to (GTK_VIEWPORT (viewport), focus, NULL);
+}
+
 /* Streaming and the final pass keep the user's scroll choice and do not
    interrupt reading upward. */
 static void
@@ -4417,9 +4442,14 @@ build_content (void)
       GTK_IMAGE (gtk_button_get_child (GTK_BUTTON (toggle))), 15);
   g_signal_connect (toggle, "clicked", G_CALLBACK (on_toggle_sidebar), NULL);
 
+  GtkScrolledWindow *scroller = GTK_SCROLLED_WINDOW (app->scroller);
+  GtkWidget *viewport = gtk_scrolled_window_get_child (scroller);
+  gtk_viewport_set_scroll_to_focus (GTK_VIEWPORT (viewport), FALSE);
+  g_signal_connect_object (app->window, "notify::focus-widget",
+                           G_CALLBACK (on_chat_focus_changed), viewport, 0);
+
   /* The external scrollbar floats above the content without shifting it. */
-  GtkAdjustment *vadj =
-      gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (app->scroller));
+  GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment (scroller);
   gtk_scrollbar_set_adjustment (GTK_SCROLLBAR (app->chat_bar), vadj);
   GtkEventController *hover = gtk_event_controller_motion_new ();
   g_signal_connect (hover, "enter", G_CALLBACK (on_chat_bar_enter), NULL);

@@ -543,9 +543,206 @@ typedef struct
 
 typedef GtkTextViewClass MdTextViewClass;
 
+typedef struct
+{
+  gboolean         selecting;
+  graphene_point_t pointer;
+
+  guint            scroll_tick;
+  gint64           scroll_time;
+} MdTextViewPrivate;
+
 static GType md_text_view_get_type (void);
 
-G_DEFINE_TYPE (MdTextView, md_text_view, GTK_TYPE_TEXT_VIEW)
+G_DEFINE_TYPE_WITH_PRIVATE (MdTextView, md_text_view, GTK_TYPE_TEXT_VIEW)
+
+static gboolean
+scroll_selection (GtkTextView            *view,
+                  GtkWidget              *viewport,
+                  const graphene_point_t *pointer,
+                  double                  distance)
+{
+  int height = gtk_widget_get_height (viewport);
+  if (pointer->y >= 0 && pointer->y < height)
+    return FALSE;
+
+  graphene_rect_t bounds;
+  graphene_point_t local;
+  if (!gtk_widget_compute_bounds (GTK_WIDGET (view), viewport, &bounds) ||
+      !gtk_widget_compute_point (viewport, GTK_WIDGET (view), pointer, &local))
+    {
+      return FALSE;
+    }
+
+  gboolean above = pointer->y < 0;
+  double remaining = above ? -bounds.origin.y
+                           : bounds.origin.y + bounds.size.height - height;
+  /* Leave a small margin beyond the text block. */
+  remaining += 48;
+  if (remaining <= 0)
+    return FALSE;
+
+  GtkAdjustment *adj =
+      gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (viewport));
+  double old = gtk_adjustment_get_value (adj);
+  double delta = MIN (distance, remaining) * (above ? -1 : 1);
+  gtk_adjustment_set_value (adj, old + delta);
+  delta = gtk_adjustment_get_value (adj) - old;
+  if (delta == 0)
+    return FALSE;
+
+  /* The viewport applies the new offset on its next allocation. */
+  int x, y;
+  gtk_text_view_window_to_buffer_coords (view, GTK_TEXT_WINDOW_WIDGET,
+                                         (int) local.x, (int) (local.y + delta),
+                                         &x, &y);
+  GtkTextIter end;
+  gtk_text_view_get_iter_at_location (view, &end, x, y);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  gtk_text_buffer_move_mark (buffer, gtk_text_buffer_get_insert (buffer), &end);
+  return TRUE;
+}
+
+static gboolean
+selection_scroll_tick (GtkWidget     *widget,
+                       GdkFrameClock *clock,
+                       gpointer       data G_GNUC_UNUSED)
+{
+  MdTextViewPrivate *priv = md_text_view_get_instance_private (
+      (MdTextView *) widget);
+  GtkWidget *viewport = gtk_widget_get_ancestor (widget, GTK_TYPE_VIEWPORT);
+  gint64 now = gdk_frame_clock_get_frame_time (clock);
+  gint64 elapsed = MIN (now - priv->scroll_time, 50 * G_TIME_SPAN_MILLISECOND);
+  double distance = elapsed * (600.0 / G_USEC_PER_SEC);
+  priv->scroll_time = now;
+  if (gtk_widget_has_focus (widget) && viewport != NULL &&
+      (distance == 0 || scroll_selection (GTK_TEXT_VIEW (widget), viewport,
+                                          &priv->pointer, distance)))
+    {
+      return G_SOURCE_CONTINUE;
+    }
+
+  priv->scroll_tick = 0;
+  return G_SOURCE_REMOVE;
+}
+
+static void
+stop_selection_scroll (MdTextView *view)
+{
+  MdTextViewPrivate *priv = md_text_view_get_instance_private (view);
+  priv->selecting = FALSE;
+  if (priv->scroll_tick != 0)
+    {
+      gtk_widget_remove_tick_callback (GTK_WIDGET (view), priv->scroll_tick);
+      priv->scroll_tick = 0;
+    }
+}
+
+static gboolean
+selection_event_point (GdkEvent         *event,
+                       GtkWidget        *widget,
+                       graphene_point_t *point)
+{
+  GtkNative *native = gtk_widget_get_native (widget);
+  GdkSurface *surface = gdk_event_get_surface (event);
+  double x, y, nx, ny;
+  if (native == NULL || gtk_native_get_surface (native) != surface ||
+      !gdk_event_get_position (event, &x, &y))
+    {
+      return FALSE;
+    }
+
+  gtk_native_get_surface_transform (native, &nx, &ny);
+  graphene_point_t pos = GRAPHENE_POINT_INIT (x - nx, y - ny);
+  return gtk_widget_compute_point (GTK_WIDGET (native), widget, &pos, point);
+}
+
+static gboolean
+starts_selection (GtkTextView *view,
+                  GdkEvent    *event)
+{
+  if (gdk_event_triggers_context_menu (event))
+    return FALSE;
+
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  GtkTextIter start, end;
+  if ((gdk_event_get_modifier_state (event) & GDK_SHIFT_MASK) ||
+      !gtk_text_buffer_get_selection_bounds (buffer, &start, &end))
+    {
+      return TRUE;
+    }
+
+  /* GTK drags the selected text rather than extending it from this press. */
+  graphene_point_t point;
+  if (!selection_event_point (event, GTK_WIDGET (view), &point))
+    return FALSE;
+  int x, y;
+  gtk_text_view_window_to_buffer_coords (view, GTK_TEXT_WINDOW_WIDGET,
+                                         (int) point.x, (int) point.y, &x, &y);
+  GtkTextIter iter;
+  gtk_text_view_get_iter_at_location (view, &iter, x, y);
+  return !gtk_text_iter_in_range (&iter, &start, &end);
+}
+
+static gboolean
+on_selection_event (GtkEventControllerLegacy *controller G_GNUC_UNUSED,
+                    GdkEvent                 *event,
+                    MdTextView               *view)
+{
+  GtkWidget *widget = GTK_WIDGET (view);
+  MdTextViewPrivate *priv = md_text_view_get_instance_private (view);
+  GdkEventType type = gdk_event_get_event_type (event);
+  if (type == GDK_GRAB_BROKEN ||
+      (type == GDK_BUTTON_RELEASE &&
+       gdk_button_event_get_button (event) == GDK_BUTTON_PRIMARY))
+    {
+      stop_selection_scroll (view);
+    }
+  else if (type == GDK_BUTTON_PRESS &&
+           gdk_button_event_get_button (event) == GDK_BUTTON_PRIMARY)
+    {
+      stop_selection_scroll (view);
+      priv->selecting = starts_selection (GTK_TEXT_VIEW (view), event);
+    }
+  else if (type == GDK_MOTION_NOTIFY && priv->selecting)
+    {
+      GtkWidget *viewport = gtk_widget_get_ancestor (widget, GTK_TYPE_VIEWPORT);
+      if (!(gdk_event_get_modifier_state (event) & GDK_BUTTON1_MASK))
+        stop_selection_scroll (view);
+      else if (viewport != NULL &&
+               selection_event_point (event, viewport, &priv->pointer) &&
+               (priv->pointer.y < 0 ||
+                priv->pointer.y >= gtk_widget_get_height (viewport)) &&
+               priv->scroll_tick == 0)
+        {
+          GdkFrameClock *clock = gtk_widget_get_frame_clock (widget);
+          priv->scroll_time = gdk_frame_clock_get_frame_time (clock);
+          priv->scroll_tick = gtk_widget_add_tick_callback (
+              widget, selection_scroll_tick, NULL, NULL);
+        }
+    }
+  return GDK_EVENT_PROPAGATE;
+}
+
+static gboolean
+on_extend_selection (GtkTextView            *view,
+                     GtkTextExtendSelection  granularity G_GNUC_UNUSED,
+                     const GtkTextIter      *location G_GNUC_UNUSED,
+                     GtkTextIter            *start G_GNUC_UNUSED,
+                     GtkTextIter            *end G_GNUC_UNUSED,
+                     gpointer                data G_GNUC_UNUSED)
+{
+  /* Leave word and line selection to GTK. */
+  stop_selection_scroll ((MdTextView *) view);
+  return FALSE;
+}
+
+static void
+md_text_view_unmap (GtkWidget *widget)
+{
+  stop_selection_scroll ((MdTextView *) widget);
+  GTK_WIDGET_CLASS (md_text_view_parent_class)->unmap (widget);
+}
 
 static void
 snapshot_slice (GtkSnapshot   *snapshot,
@@ -622,11 +819,19 @@ static void
 md_text_view_class_init (MdTextViewClass *klass)
 {
   GTK_WIDGET_CLASS (klass)->snapshot = md_text_view_snapshot;
+  GTK_WIDGET_CLASS (klass)->unmap = md_text_view_unmap;
 }
 
 static void
-md_text_view_init (MdTextView *view G_GNUC_UNUSED)
+md_text_view_init (MdTextView *view)
 {
+  /* Observe the drag without competing with GTK's selection gesture. */
+  GtkEventController *events = gtk_event_controller_legacy_new ();
+  gtk_event_controller_set_propagation_phase (events, GTK_PHASE_CAPTURE);
+  g_signal_connect (events, "event", G_CALLBACK (on_selection_event), view);
+  gtk_widget_add_controller (GTK_WIDGET (view), events);
+  g_signal_connect (view, "extend-selection", G_CALLBACK (on_extend_selection),
+                    NULL);
 }
 
 typedef struct

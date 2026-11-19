@@ -130,6 +130,8 @@ The rules are:
 - A user bubble shrinks to the width of the body. Padding is fixed at 16px left and right, 10px top and bottom.
 - The action row does not widen the background. Multi-line text stays left-aligned.
 - You can drag a selection across paragraphs. `Cmd+A` on macOS and `Ctrl+A` on Linux select the whole message. The selection background follows the text lines and excludes the extra spacing between paragraphs, headings, and list items.
+- Clicking visible message text does not move the viewport. Keyboard focus still brings off-screen controls into view.
+- While dragging to select message text, move beyond the top or bottom of the chat area to scroll and extend the selection within the same text block. Scrolling can reveal up to 48 logical pixels beyond the text block. Release the mouse button to stop.
 - A code block has its own copy button.
 
 ### Reliability
@@ -262,6 +264,7 @@ The regression tests also cover the following areas:
 - Prose font size, proportional prose and code line heights at default and doubled sizes, and hanging list indents in both themes, including multi-digit numbers, task lists, and later paragraphs.
 - All six heading levels, heading precedence over inline emphasis, paragraph/list spacing, and code/table padding.
 - Selection snapshots leave paragraph spacing unpainted in both themes at default and doubled prose sizes, including wrapped text, explicit line breaks, headings, task lists, cross-paragraph selections, and right-to-left text.
+- Focus moves between visible messages without scrolling, even when the second reply extends past the viewport. Focusing an off-screen message button still scrolls it into view.
 - Independent message and code fonts, saved sizes, conditional font and size reset buttons, save-failure rollback, invalid-value fallback, and font-family CSS escaping.
 - Default-font comparison ignores case and does not depend on whether a value is explicitly saved. Resetting one setting leaves the other unchanged.
 - Font changes that preserve selections and active requests, and update list margins across code cards without replacing text buffers.
