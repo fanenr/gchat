@@ -336,6 +336,22 @@ msgstr ""
 msgid "Failed to save language"
 msgstr ""
 
+#: main.c:3893
+msgid "Failed to save setting"
+msgstr ""
+
+#: ui/settings.blp:26
+msgid "Conversation"
+msgstr ""
+
+#: ui/settings.blp:29
+msgid "Automatic conversation titles"
+msgstr ""
+
+#: ui/settings.blp:33
+msgid "Confirm conversation deletion"
+msgstr ""
+
 #: main.c:3663 ui/settings.blp:34
 msgid "Restart the app to apply language changes."
 msgstr ""
@@ -444,10 +460,6 @@ msgstr ""
 
 #: ui/settings.blp:39
 msgid "Reading"
-msgstr ""
-
-#: ui/settings.blp:41
-msgid "Fonts apply immediately; sidebar and input are unchanged."
 msgstr ""
 
 #: ui/settings.blp:45 ui/settings.blp:53

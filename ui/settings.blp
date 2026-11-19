@@ -23,6 +23,18 @@ Adw.PreferencesDialog settings_dialog {
     }
 
     Adw.PreferencesGroup {
+      title: _("Conversation");
+
+      Adw.SwitchRow auto_title {
+        title: _("Automatic conversation titles");
+      }
+
+      Adw.SwitchRow confirm_delete_chat {
+        title: _("Confirm conversation deletion");
+      }
+    }
+
+    Adw.PreferencesGroup {
       title: _("Appearance");
 
       Adw.ComboRow theme {
@@ -37,9 +49,6 @@ Adw.PreferencesDialog settings_dialog {
 
     Adw.PreferencesGroup {
       title: _("Reading");
-      description: _(
-        "Fonts apply immediately; sidebar and input are unchanged."
-      );
 
       Adw.ActionRow {
         title: _("Message font");

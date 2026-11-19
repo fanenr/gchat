@@ -76,11 +76,18 @@ This page covers what [README](../README.md) does not.
 - Copying opens a new, unpinned session with independent messages, reasoning, and drafts, including any edit in progress.
 - History, the current session, the model, the reasoning level, and each session draft are stored in `~/.local/share/gchat/session.db`.
 - History includes reasoning and think time.
-- You must confirm a deletion. The default action is cancel.
+- **Settings → Conversation → Confirm conversation deletion** is on by default. The confirmation dialog defaults to Cancel. If you turn the switch off, clicking the delete button deletes the session immediately. The change takes effect at once and persists.
 - A deletion also removes the messages and the draft of that session.
 - Sidebar search does a local, case-insensitive literal match on titles and bodies.
 - When the body matches, the client shows a nearby excerpt.
 - Search does not cover reasoning or drafts.
+
+### Automatic conversation titles
+
+- **Settings → Conversation → Automatic conversation titles** is on by default. Changes are saved and apply to requests sent after the change.
+- With the switch on, only the first send in an untitled `deepseek-flash` conversation requests a title. Existing titles, edited messages, and regenerated replies do not request a new title.
+- The client first uses up to 30 characters from the first line of the user’s text. An image without text leaves the title empty. If the stream finishes normally with a usable title, the client replaces the local title and saves it. If the title is missing or the stream is stopped or interrupted, the local title stays.
+- DeepSeek does not charge separately for the title. The answer streams as usual; after the answer, DeepSeek can wait up to five more seconds for the title. The stop button remains available.
 
 ### Settings
 
@@ -248,6 +255,7 @@ The regression tests also cover the following areas:
 - A slow HTTP error body and cancellation.
 - SSE field types, multi-line events, CRLF, and incomplete events.
 - The Web toggle, streamed tool progress, citation rendering, and replay of saved tool records.
+- The automatic title switch, first-request eligibility, fallback, and title persistence.
 - A list number on the same line as the first paragraph.
 - An ordered list that starts at 0.
 - Multiple paragraphs and nested lists.

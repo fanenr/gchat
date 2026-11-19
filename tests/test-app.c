@@ -80,6 +80,8 @@ setup (void)
   app->reasoning = g_string_new (NULL);
   app->model = g_strdup ("deepseek-flash");
   app->effort = g_strdup ("high");
+  app->auto_title = load_enabled_preference ("auto_title");
+  app->confirm_delete_chat = load_enabled_preference ("confirm_delete_chat");
   app->chats = g_ptr_array_new_with_free_func ((GDestroyNotify) chat_free);
   app->chat = chat_new ("42", "测试");
   g_ptr_array_add (app->chats, app->chat);
@@ -1237,6 +1239,64 @@ language_settings (void)
   teardown ();
 }
 
+static AdwSwitchRow *
+open_switch_setting (const gchar *title)
+{
+  on_settings_clicked (NULL, NULL);
+  wait_for_layout ();
+  AdwDialog *dialog = adw_application_window_get_visible_dialog (
+      ADW_APPLICATION_WINDOW (app->window));
+  g_assert_nonnull (dialog);
+  GtkWidget *label = find_label (GTK_WIDGET (dialog), title);
+  g_assert_nonnull (label);
+  GtkWidget *row = gtk_widget_get_ancestor (label, ADW_TYPE_SWITCH_ROW);
+  g_assert_nonnull (row);
+  return ADW_SWITCH_ROW (row);
+}
+
+static void
+switch_settings (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  const gchar *key = data;
+  gboolean title = g_str_equal (key, "auto_title");
+  const gchar *label = title ? _ ("Automatic conversation titles")
+                             : _ ("Confirm conversation deletion");
+  gboolean *enabled = title ? &app->auto_title : &app->confirm_delete_chat;
+  g_assert_null (config_get (key));
+  g_assert_true (*enabled);
+  show_window ();
+  AdwSwitchRow *row = open_switch_setting (label);
+  g_assert_true (adw_switch_row_get_active (row));
+  adw_switch_row_set_active (row, FALSE);
+  g_assert_false (*enabled);
+  g_assert_false (load_enabled_preference (key));
+  AdwDialog *dialog = adw_application_window_get_visible_dialog (
+      ADW_APPLICATION_WINDOW (app->window));
+  adw_dialog_force_close (dialog);
+  *enabled = load_enabled_preference (key);
+  row = open_switch_setting (label);
+  g_assert_false (adw_switch_row_get_active (row));
+
+  g_autofree gchar *path = store_config_path ();
+  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
+  g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
+  g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
+  adw_switch_row_set_active (row, TRUE);
+  g_test_assert_expected_messages ();
+  g_assert_false (adw_switch_row_get_active (row));
+  g_assert_false (*enabled);
+  g_assert_false (load_enabled_preference (key));
+  g_assert_cmpint (g_rmdir (tmp), ==, 0);
+
+  adw_switch_row_set_active (row, TRUE);
+  g_assert_true (*enabled);
+  g_assert_true (load_enabled_preference (key));
+  g_assert_cmpint (g_unlink (path), ==, 0);
+  teardown ();
+}
+
 static GtkFontDialogButton *
 settings_font_button (AdwDialog   *dialog,
                       const gchar *title)
@@ -2148,6 +2208,66 @@ delete_confirmation (gconstpointer data)
 }
 
 static void
+delete_without_confirmation (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  gboolean last = GPOINTER_TO_INT (data);
+  Chat *target = app->chat;
+  if (!last)
+    {
+      target = chat_new ("delete-target", "待删除会话");
+      g_ptr_array_add (app->chats, target);
+    }
+  g_autofree gchar *deleted = g_strdup (target->id);
+  g_assert_true (save_session ());
+  rebuild_sidebar ();
+  render_chat ();
+  show_window ();
+
+  AdwSwitchRow *setting = open_switch_setting (
+      _ ("Confirm conversation deletion"));
+  g_assert_true (adw_switch_row_get_active (setting));
+  adw_switch_row_set_active (setting, FALSE);
+  AdwApplicationWindow *window = ADW_APPLICATION_WINDOW (app->window);
+  adw_dialog_force_close (adw_application_window_get_visible_dialog (window));
+  wait_for_layout ();
+
+  GtkListBoxRow *row = sidebar_row (target);
+  g_assert_nonnull (row);
+  GtkWidget *overlay = gtk_list_box_row_get_child (row);
+  GtkWidget *button = gtk_widget_get_last_child (overlay);
+  g_assert_true (GTK_IS_BUTTON (button));
+  app->busy = TRUE;
+  g_signal_emit_by_name (button, "clicked");
+  g_assert_cmpuint (app->chats->len, ==, last ? 1 : 2);
+  g_assert_null (adw_application_window_get_visible_dialog (window));
+  app->busy = FALSE;
+  g_signal_emit_by_name (button, "clicked");
+  g_assert_null (adw_application_window_get_visible_dialog (window));
+  g_assert_cmpuint (app->chats->len, ==, 1);
+  g_assert_cmpstr (app->chat->id, !=, deleted);
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==,
+                    last ? 0 : 2);
+
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) chats =
+      store_load (app->db, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (chats);
+  g_assert_cmpuint (chats->len, ==, 1);
+  Chat *saved = g_ptr_array_index (chats, 0);
+  g_assert_cmpstr (saved->id, ==, app->chat->id);
+  g_assert_cmpstr (current, ==, saved->id);
+  g_autofree gchar *path = store_config_path ();
+  g_assert_cmpint (g_unlink (path), ==, 0);
+  teardown ();
+}
+
+static void
 draft_startup (gconstpointer data)
 {
   if (!have_display)
@@ -2560,7 +2680,7 @@ payload_filters_reasoning (void)
   json_object_set_string_member (reason, "reasoning", "仅推理");
   add_message ("user", "next");
   gsize len;
-  g_autofree gchar *body = request_body (4, NULL, &len, NULL);
+  g_autofree gchar *body = request_body (4, NULL, FALSE, &len, NULL);
   g_autoptr (JsonParser) parser = json_parser_new ();
   g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
   JsonObject *root = json_node_get_object (json_parser_get_root (parser));
@@ -2595,7 +2715,7 @@ web_toggle (void)
           g_assert_false (gtk_widget_get_visible (app->web_toggle));
         }
       gsize len;
-      g_autofree gchar *body = request_body (2, NULL, &len, NULL);
+      g_autofree gchar *body = request_body (2, NULL, FALSE, &len, NULL);
       g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
       JsonObject *root = json_node_get_object (json_parser_get_root (parser));
       if (i != 1)
@@ -2652,7 +2772,7 @@ image_payload (void)
   JsonObject *msg = json_array_get_object_element (app->chat->messages, 0);
   json_object_set_array_member (msg, "images", image_ids (id, second));
   gsize len;
-  g_autofree gchar *body = request_body (2, NULL, &len, &error);
+  g_autofree gchar *body = request_body (2, NULL, FALSE, &len, &error);
   g_assert_no_error (error);
   g_assert_nonnull (body);
   g_autoptr (JsonParser) parser = json_parser_new ();
@@ -2684,7 +2804,8 @@ image_payload (void)
   json_object_set_string_member (extra, "role", "user");
   json_object_set_string_member (extra, "content", "");
   json_object_set_array_member (extra, "images", image_ids (id, second));
-  g_autofree gchar *image_only = request_body (0, extra, &len, &error);
+  g_autofree gchar *image_only =
+      request_body (0, extra, FALSE, &len, &error);
   g_assert_no_error (error);
   g_assert_true (json_parser_load_from_data (parser, image_only, len, &error));
   root = json_node_get_object (json_parser_get_root (parser));
@@ -2694,14 +2815,15 @@ image_payload (void)
   g_assert_cmpuint (json_array_get_length (parts), ==, 2);
   g_free (app->model);
   app->model = g_strdup ("deepseek-v4-pro");
-  g_autofree gchar *unsupported = request_body (2, NULL, &len, &error);
+  g_autofree gchar *unsupported =
+      request_body (2, NULL, FALSE, &len, &error);
   g_assert_null (unsupported);
   g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
   g_clear_error (&error);
   g_free (app->model);
   app->model = g_strdup ("deepseek-flash");
   g_assert_cmpint (g_unlink (path), ==, 0);
-  g_autofree gchar *missing = request_body (2, NULL, &len, &error);
+  g_autofree gchar *missing = request_body (2, NULL, FALSE, &len, &error);
   g_assert_null (missing);
   g_assert_nonnull (error);
   g_assert_cmpint (g_unlink (second_path), ==, 0);
@@ -2741,22 +2863,22 @@ image_payload_limits (void)
   gsize len;
   g_autoptr (GError) error = NULL;
   g_autofree gchar *below_threshold =
-      request_body (text_turns + 12, extra, &len, &error);
+      request_body (text_turns + 12, extra, FALSE, &len, &error);
   g_assert_no_error (error);
   g_assert_nonnull (below_threshold);
   g_autofree gchar *too_wide =
-      request_body (text_turns + 13, extra, &len, &error);
+      request_body (text_turns + 13, extra, FALSE, &len, &error);
   g_assert_null (too_wide);
   g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
   g_clear_error (&error);
 
   json_object_set_array_member (first, "images", image_ids (edge_id, NULL));
   g_autofree gchar *at_limit =
-      request_body (text_turns + 600, NULL, &len, &error);
+      request_body (text_turns + 600, NULL, FALSE, &len, &error);
   g_assert_no_error (error);
   g_assert_nonnull (at_limit);
   g_autofree gchar *too_many =
-      request_body (text_turns + 599, extra, &len, &error);
+      request_body (text_turns + 599, extra, FALSE, &len, &error);
   g_assert_null (too_many);
   g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE);
 
@@ -3511,7 +3633,7 @@ web_stream (void)
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle), FALSE);
   add_message ("user", "What did the link say?");
   gsize len;
-  g_autofree gchar *body = request_body (4, NULL, &len, &error);
+  g_autofree gchar *body = request_body (4, NULL, FALSE, &len, &error);
   g_assert_no_error (error);
   g_autoptr (JsonParser) parser = json_parser_new ();
   g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
@@ -3872,6 +3994,147 @@ redirect_test_request (SoupSession *session G_GNUC_UNUSED,
   soup_message_set_uri (request, uri);
 }
 
+typedef enum
+{
+  TITLE_NEW,
+  TITLE_DISABLED,
+  TITLE_PRO,
+  TITLE_MANUAL,
+  TITLE_EDIT,
+  TITLE_MISSING,
+  TITLE_INTERRUPTED,
+  TITLE_STOPPED,
+} TitleScenario;
+
+typedef struct
+{
+  gboolean     expect_title;
+  const gchar *events;
+} TitleResponse;
+
+static void
+respond_with_title (SoupServer        *server G_GNUC_UNUSED,
+                    SoupServerMessage *msg,
+                    const gchar       *path G_GNUC_UNUSED,
+                    GHashTable        *query G_GNUC_UNUSED,
+                    gpointer           data)
+{
+  const TitleResponse *test = data;
+  SoupMessageBody *body = soup_server_message_get_request_body (msg);
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  g_assert_true (json_parser_load_from_data (parser, body->data, body->length,
+                                             NULL));
+  JsonObject *root = json_node_get_object (json_parser_get_root (parser));
+  if (test->expect_title)
+    {
+      JsonObject *title = member_object (root, "title");
+      g_assert_nonnull (title);
+      g_assert_true (json_object_get_boolean_member (title, "enabled"));
+    }
+  else
+    g_assert_false (json_object_has_member (root, "title"));
+  soup_server_message_set_status (msg, SOUP_STATUS_OK, NULL);
+  soup_server_message_set_response (msg, "text/event-stream", SOUP_MEMORY_COPY,
+                                    test->events, strlen (test->events));
+}
+
+static void
+title_request (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  TitleScenario scenario = GPOINTER_TO_INT (data);
+  if (scenario != TITLE_EDIT)
+    {
+      json_array_remove_element (app->chat->messages, 1);
+      json_array_remove_element (app->chat->messages, 0);
+    }
+  if (scenario != TITLE_MANUAL)
+    {
+      g_free (app->chat->title);
+      app->chat->title = g_strdup ("");
+    }
+  if (scenario == TITLE_EDIT)
+    app->chat->edit_from = 0;
+  if (scenario == TITLE_PRO)
+    on_model_choice (NULL, "deepseek-v4-pro");
+  if (scenario == TITLE_DISABLED)
+    app->auto_title = FALSE;
+  render_chat ();
+
+  const gchar *final = scenario == TITLE_MISSING
+                           ? "\"delta\":{}}]}\n\n"
+                           : "\"delta\":{\"title\":\"  自动标题  "
+                             "\\n忽略\"}}]}\n\n";
+  g_autofree gchar *events = g_strconcat (
+      "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n",
+      "data: {\"choices\":[{\"finish_reason\":\"stop\",", final,
+      scenario == TITLE_INTERRUPTED ? "" : "data: [DONE]\n\n", NULL);
+  TitleResponse test = {
+    .expect_title = scenario == TITLE_NEW || scenario == TITLE_MISSING ||
+                    scenario == TITLE_INTERRUPTED || scenario == TITLE_STOPPED,
+    .events = events,
+  };
+  g_autoptr (SoupServer) server = soup_server_new (NULL, NULL);
+  soup_server_add_handler (server, NULL, respond_with_title, &test, NULL);
+  g_autoptr (GError) error = NULL;
+  g_assert_true (soup_server_listen_local (server, 0,
+                                           SOUP_SERVER_LISTEN_IPV4_ONLY,
+                                           &error));
+  g_assert_no_error (error);
+  GSList *uris = soup_server_get_uris (server);
+  g_assert_nonnull (uris);
+  g_autofree gchar *url = g_uri_to_string (uris->data);
+  g_slist_free_full (uris, (GDestroyNotify) g_uri_unref);
+  app->session = soup_session_new_with_options ("timeout", 3u, NULL);
+  g_signal_connect (app->session, "request-queued",
+                    G_CALLBACK (redirect_test_request), url);
+  app->api_key = g_strdup ("test-key-not-sent-to-deepseek");
+  GtkTextBuffer *draft = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  gtk_text_buffer_set_text (draft, "本地标题\n正文", -1);
+  send_message ();
+  g_assert_true (app->busy);
+  const gchar *local = scenario == TITLE_MANUAL ? "测试" : "本地标题";
+  g_assert_cmpstr (app->chat->title, ==, local);
+  g_assert_cmpstr (gtk_window_get_title (GTK_WINDOW (app->window)), ==, local);
+  if (scenario == TITLE_STOPPED)
+    {
+      while (app->busy && app->reply_title == NULL)
+        g_main_context_iteration (NULL, TRUE);
+      g_assert_true (app->busy);
+      g_assert_cmpstr (app->reply_title, ==, "自动标题");
+      send_message ();
+    }
+  while (app->busy)
+    g_main_context_iteration (NULL, TRUE);
+  const gchar *expected = scenario == TITLE_NEW ? "自动标题" : local;
+  g_assert_cmpstr (app->chat->title, ==, expected);
+  g_assert_cmpstr (gtk_window_get_title (GTK_WINDOW (app->window)), ==,
+                   expected);
+  g_assert_nonnull (find_label (app->sidebar_list, expected));
+  JsonObject *reply = json_array_get_object_element (app->chat->messages, 1);
+  g_assert_cmpstr (member_string (reply, "content"), ==, "Answer");
+
+  if (scenario == TITLE_NEW)
+    {
+      test.expect_title = FALSE;
+      regenerate ();
+      g_assert_true (app->busy);
+      while (app->busy)
+        g_main_context_iteration (NULL, TRUE);
+    }
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GPtrArray) chats =
+      store_load (app->db, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (chats);
+  Chat *saved = g_ptr_array_index (chats, 0);
+  g_assert_cmpstr (saved->title, ==, expected);
+  teardown ();
+}
+
 static void
 stream_layout (gconstpointer data)
 {
@@ -4132,6 +4395,25 @@ main (int    argc,
   g_test_add_func ("/app/content-builder", content_builder);
   g_test_add_func ("/app/sidebar-builder", sidebar_builder);
   g_test_add_func ("/app/language-settings", language_settings);
+  g_test_add_data_func ("/app/title/settings", "auto_title", switch_settings);
+  g_test_add_data_func ("/app/delete/settings", "confirm_delete_chat",
+                        switch_settings);
+  g_test_add_data_func ("/app/title/first", GINT_TO_POINTER (TITLE_NEW),
+                        title_request);
+  g_test_add_data_func ("/app/title/disabled", GINT_TO_POINTER (TITLE_DISABLED),
+                        title_request);
+  g_test_add_data_func ("/app/title/pro", GINT_TO_POINTER (TITLE_PRO),
+                        title_request);
+  g_test_add_data_func ("/app/title/manual", GINT_TO_POINTER (TITLE_MANUAL),
+                        title_request);
+  g_test_add_data_func ("/app/title/edit", GINT_TO_POINTER (TITLE_EDIT),
+                        title_request);
+  g_test_add_data_func ("/app/title/missing", GINT_TO_POINTER (TITLE_MISSING),
+                        title_request);
+  g_test_add_data_func ("/app/title/interrupted",
+                        GINT_TO_POINTER (TITLE_INTERRUPTED), title_request);
+  g_test_add_data_func ("/app/title/stopped", GINT_TO_POINTER (TITLE_STOPPED),
+                        title_request);
   g_test_add_func ("/app/font-settings", font_settings);
   g_test_add_func ("/app/font-values", font_values);
   g_test_add_func ("/app/live-font-change", live_font_change);
@@ -4189,6 +4471,10 @@ main (int    argc,
                         delete_confirmation);
   g_test_add_data_func ("/app/delete/current", GUINT_TO_POINTER (4),
                         delete_confirmation);
+  g_test_add_data_func ("/app/delete/no-confirm/other", GINT_TO_POINTER (FALSE),
+                        delete_without_confirmation);
+  g_test_add_data_func ("/app/delete/no-confirm/last", GINT_TO_POINTER (TRUE),
+                        delete_without_confirmation);
   g_test_add_func ("/app/payload-filters-reasoning", payload_filters_reasoning);
   g_test_add_func ("/app/web/toggle", web_toggle);
   g_test_add_func ("/app/web/stream", web_stream);

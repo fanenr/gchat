@@ -154,6 +154,7 @@ typedef struct
 
   JsonObject   *reply_msg;
   GString      *answer, *reasoning;
+  gchar        *reply_title;
   SoupSession  *session;
   GCancellable *cancel, *image_cancel;
 
@@ -164,7 +165,8 @@ typedef struct
   gchar        *model, *effort, *api_key;
 
   gboolean      busy, syncing, preedit, restoring_input, closing;
-  gboolean      web_enabled;
+  gboolean      web_enabled, auto_title, confirm_delete_chat;
+  gboolean      request_title;
 
   guint         draft_save_source;
   guint         web_searches, web_reads;
@@ -193,8 +195,9 @@ static void on_row_menu (GtkGestureClick *gesture,
                          double           y,
                          gpointer         data);
 static void regenerate (void);
-static void start_request (gchar *body,
-                           gsize  len);
+static void start_request (gchar   *body,
+                           gsize    len,
+                           gboolean request_title);
 static void refresh_input (void);
 static void refresh_images (void);
 static JsonArray **current_images (void);
@@ -1655,13 +1658,10 @@ on_new_chat_clicked (GtkButton *button G_GNUC_UNUSED,
 }
 
 static void
-on_delete_chat_response (AdwAlertDialog *dialog,
-                         const gchar    *response,
-                         gpointer        data G_GNUC_UNUSED)
+delete_chat (const gchar *id)
 {
-  if (app->busy || !g_str_equal (response, "delete"))
+  if (app->busy || id == NULL)
     return;
-  const gchar *id = g_object_get_data (G_OBJECT (dialog), "chat-id");
   guint index;
   for (index = 0; index < app->chats->len; index++)
     if (g_str_equal (((Chat *) g_ptr_array_index (app->chats, index))->id, id))
@@ -1685,12 +1685,26 @@ on_delete_chat_response (AdwAlertDialog *dialog,
 }
 
 static void
+on_delete_chat_response (AdwAlertDialog *dialog,
+                         const gchar    *response,
+                         gpointer        data G_GNUC_UNUSED)
+{
+  if (g_str_equal (response, "delete"))
+    delete_chat (g_object_get_data (G_OBJECT (dialog), "chat-id"));
+}
+
+static void
 on_delete_chat (GtkButton *button G_GNUC_UNUSED,
                 gpointer   data)
 {
   if (app->busy)
     return;
   Chat *chat = data;
+  if (!app->confirm_delete_chat)
+    {
+      delete_chat (chat->id);
+      return;
+    }
   g_autofree gchar *body = g_strdup_printf (
       _ ("Delete “%s” and all its messages and drafts? This cannot be undone."),
       *chat->title ? chat->title : _ ("New chat"));
@@ -1996,10 +2010,25 @@ elapsed_seconds (void)
   return (g_get_monotonic_time () - app->request_started) / 1e6;
 }
 
+/* Return an owned title made from the first nonblank line, or NULL. */
+static gchar *
+short_title (const gchar *text)
+{
+  if (text == NULL || !g_utf8_validate (text, -1, NULL))
+    return NULL;
+  g_autofree gchar *line = g_strstrip (g_strdup (text));
+  line[strcspn (line, "\r\n")] = '\0';
+  g_autofree gchar *title = g_strstrip (
+      g_utf8_substring (line, 0, MIN (30, g_utf8_strlen (line, -1))));
+  return *title ? g_steal_pointer (&title) : NULL;
+}
+
 static void
 clear_stream_state (void)
 {
   g_clear_object (&app->cancel);
+  g_clear_pointer (&app->reply_title, g_free);
+  app->request_title = FALSE;
   app->reply_bubble = NULL;
   app->reply_body = NULL;
   app->reply_label = NULL;
@@ -2172,6 +2201,11 @@ process_sse_event (const gchar *event)
       if (annotations != NULL)
         json_object_set_array_member (app->reply_msg, "annotations",
                                       json_array_ref (annotations));
+      if (app->request_title && g_str_equal (finish, "stop"))
+        {
+          g_clear_pointer (&app->reply_title, g_free);
+          app->reply_title = short_title (member_string (delta, "title"));
+        }
     }
   if (reasoning != NULL && *reasoning)
     {
@@ -2270,6 +2304,14 @@ stream_line_cb (GObject      *src,
       g_string_truncate (event, event->len - 1);
       if (g_str_equal (event->str, "[DONE]"))
         {
+          if (app->reply_title != NULL && app->answer->len > 0 &&
+              !g_cancellable_is_cancelled (cancel))
+            {
+              g_free (app->chat->title);
+              app->chat->title = g_steal_pointer (&app->reply_title);
+              app->chat->dirty = TRUE;
+              update_title ();
+            }
           end_stream ();
           return;
         }
@@ -2442,6 +2484,7 @@ request_image_part (const gchar   *id,
 static gchar *
 request_body (guint        turns,
               JsonObject  *extra,
+              gboolean     request_title,
               gsize       *len,
               GError     **error)
 {
@@ -2507,6 +2550,12 @@ request_body (guint        turns,
   json_object_set_string_member (root, "model", app->model);
   json_object_set_boolean_member (root, "stream", TRUE);
   json_object_set_array_member (root, "messages", g_steal_pointer (&payload));
+  if (request_title)
+    {
+      g_autoptr (JsonObject) title = json_object_new ();
+      json_object_set_boolean_member (title, "enabled", TRUE);
+      json_object_set_object_member (root, "title", g_steal_pointer (&title));
+    }
   if (app->web_enabled && web_tools_supported ())
     {
       static const gchar *const types[] = { "deepseek_web_search",
@@ -2622,9 +2671,13 @@ send_message (void)
   guint turns = app->chat->edit_from == G_MAXUINT
                     ? json_array_get_length (app->chat->messages)
                     : app->chat->edit_from;
+  gboolean request_title = app->auto_title && !*app->chat->title &&
+                           g_str_equal (app->model, "deepseek-flash") &&
+                           json_array_get_length (app->chat->messages) == 0;
   gsize len;
   g_autoptr (GError) error = NULL;
-  g_autofree gchar *body = request_body (turns, extra, &len, &error);
+  g_autofree gchar *body = request_body (turns, extra, request_title, &len,
+                                         &error);
   if (body == NULL)
     {
       app_toast (error->message);
@@ -2633,22 +2686,20 @@ send_message (void)
 
   commit_message (text);
 
-  if (!*app->chat->title && *text)
+  if (!*app->chat->title)
     {
-      /* Take the first 30 characters of the first line; cutting by bytes
-         would break UTF-8. */
-      g_autofree gchar *trimmed = g_strstrip (g_strdup (text));
-      g_autofree gchar *line = g_strndup (trimmed, strcspn (trimmed, "\n"));
-      g_autofree gchar *title = g_strstrip (
-          g_utf8_substring (line, 0, MIN (30, g_utf8_strlen (line, -1))));
-      g_free (app->chat->title);
-      app->chat->title = g_steal_pointer (&title);
-      update_title ();
+      g_autofree gchar *title = short_title (text);
+      if (title != NULL)
+        {
+          g_free (app->chat->title);
+          app->chat->title = g_steal_pointer (&title);
+          update_title ();
+        }
     }
 
   restore_input ();
   rebuild_sidebar ();
-  start_request (g_steal_pointer (&body), len);
+  start_request (g_steal_pointer (&body), len, request_title);
   save_session ();
 }
 
@@ -2684,7 +2735,7 @@ regenerate (void)
 
   gsize len;
   g_autoptr (GError) error = NULL;
-  g_autofree gchar *body = request_body (keep, NULL, &len, &error);
+  g_autofree gchar *body = request_body (keep, NULL, FALSE, &len, &error);
   if (body == NULL)
     {
       app_toast (error->message);
@@ -2692,15 +2743,16 @@ regenerate (void)
     }
   while (json_array_get_length (app->chat->messages) > keep)
     json_array_remove_element (app->chat->messages, keep);
-  start_request (g_steal_pointer (&body), len);
+  start_request (g_steal_pointer (&body), len, FALSE);
 }
 
 /* Start a request from the last user message in the session and add a
    placeholder bubble for the reply. */
 /* Consume the request body; the request owns it until the stream ends. */
 static void
-start_request (gchar *body,
-               gsize  len)
+start_request (gchar   *body,
+               gsize    len,
+               gboolean request_title)
 {
   if (app->busy)
     {
@@ -2733,6 +2785,7 @@ start_request (gchar *body,
   gtk_box_append (GTK_BOX (app->reply_body), app->reply_label);
 
   app->cancel = g_cancellable_new ();
+  app->request_title = request_title;
   app->request_started = g_get_monotonic_time ();
   app->thought_seconds = 0;
   set_busy (TRUE);
@@ -3817,6 +3870,45 @@ on_language_selected (GObject    *combo,
     }
 }
 
+static gboolean
+load_enabled_preference (const gchar *key)
+{
+  g_autofree gchar *saved = config_get (key);
+  return g_strcmp0 (saved, "false") != 0;
+}
+
+static void
+on_switch_preference_changed (AdwSwitchRow *row,
+                              GParamSpec   *pspec G_GNUC_UNUSED,
+                              gpointer      data)
+{
+  gboolean *saved = data;
+  gboolean active = adw_switch_row_get_active (row);
+  if (active == *saved)
+    return;
+  const gchar *key = g_object_get_data (G_OBJECT (row), "config-key");
+  if (!config_set (key, active ? "true" : "false"))
+    {
+      adw_switch_row_set_active (row, *saved);
+      app_toast (_ ("Failed to save setting"));
+      return;
+    }
+  *saved = active;
+}
+
+/* The key is static and the setting belongs to the app. */
+static void
+setup_switch_preference (GtkBuilder  *builder,
+                         const gchar *key,
+                         gboolean    *saved)
+{
+  AdwSwitchRow *row = ADW_SWITCH_ROW (gtk_builder_get_object (builder, key));
+  g_object_set_data (G_OBJECT (row), "config-key", (gpointer) key);
+  adw_switch_row_set_active (row, *saved);
+  g_signal_connect (row, "notify::active",
+                    G_CALLBACK (on_switch_preference_changed), saved);
+}
+
 static void
 on_settings_key_apply (AdwEntryRow *row,
                        gpointer     data G_GNUC_UNUSED)
@@ -4101,6 +4193,10 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
                      GUINT_TO_POINTER (language_index));
   g_signal_connect (language, "notify::selected",
                     G_CALLBACK (on_language_selected), NULL);
+
+  setup_switch_preference (builder, "auto_title", &app->auto_title);
+  setup_switch_preference (builder, "confirm_delete_chat",
+                           &app->confirm_delete_chat);
 
   for (guint i = 0; i < G_N_ELEMENTS (FONT_SETTINGS); i++)
     setup_font_settings (builder, &FONT_SETTINGS[i]);
@@ -4533,6 +4629,8 @@ main (int     argc,
   app->chats = g_steal_pointer (&chats);
   app->model = g_steal_pointer (&model);
   app->effort = g_steal_pointer (&effort);
+  app->auto_title = load_enabled_preference ("auto_title");
+  app->confirm_delete_chat = load_enabled_preference ("confirm_delete_chat");
 
   /* The configuration accepts only the supported options; an unknown value
      falls back to the default. */

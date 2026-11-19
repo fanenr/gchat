@@ -11,7 +11,7 @@ SQLite 保存会话。图片本体仍保存在数据目录中。配置单独存�
 | `session.db` | `~/.local/share/gchat/` | 会话、消息、草稿、当前会话、模型和推理级别 |
 | `attachments/` | 与 `session.db` 同目录 | 以 UUID 命名的图片文件 |
 | `session.db.lock` | 与 `session.db` 同目录 | 进程锁，不含会话数据 |
-| `config.json` | `~/.config/gchat/` | API 密钥、主题、语言与阅读字体 |
+| `config.json` | `~/.config/gchat/` | API 密钥与应用设置 |
 
 `XDG_DATA_HOME` 和 `XDG_CONFIG_HOME` 分别覆盖数据与配置的基准目录。
 设置界面显示实际数据库路径和 API 密钥来源。新建文件的权限为 `0600`，新建目录的权限为 `0700`，
@@ -22,8 +22,11 @@ SQLite 保存会话。图片本体仍保存在数据目录中。配置单独存�
 旧的 `session.json`、`session.json.bak` 和 `images/` 不导入、不删除。
 
 设置通过原子替换写入 `config.json`，不生成备份。配置不是有效的 JSON 对象，或包含非字符串值时，
-保存失败，原文件保留。主题、语言、字体或字号保存失败时，对话框恢复上次选择。
+保存失败，原文件保留。主题、语言、会话开关、字体或字号保存失败时，对话框恢复上次选择。
 已有的 `config.json.bak` 可能含明文密钥，须按敏感文件处理。
+
+会话开关使用字符串键 `auto_title` 和 `confirm_delete_chat`。只有 `"false"` 会关闭开关。
+`"true"`、缺失或无法识别的值都保持开启。
 
 阅读设置使用字符串键 `message_font`、`message_font_size`、`code_font`
 和 `code_font_size`。字体值为字体族名称；为空或缺失时使用默认字体。
