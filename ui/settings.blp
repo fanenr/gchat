@@ -36,6 +36,99 @@ Adw.PreferencesDialog settings_dialog {
     }
 
     Adw.PreferencesGroup {
+      title: _("Reading");
+      description: _(
+        "Fonts apply immediately; sidebar and input are unchanged."
+      );
+
+      Adw.ActionRow {
+        title: _("Message font");
+        activatable-widget: message_font;
+
+        [suffix]
+        Gtk.FontDialogButton message_font {
+          valign: center;
+          level: family;
+          dialog: Gtk.FontDialog {
+            title: _("Message font");
+          };
+        }
+
+        [suffix]
+        Gtk.Button message_font_reset {
+          visible: false;
+          valign: center;
+          icon-name: "edit-undo-symbolic";
+          tooltip-text: _("Use default font");
+          styles [ "flat" ]
+        }
+      }
+
+      Adw.SpinRow message_font_size {
+        title: _("Message font size");
+        digits: 1;
+        adjustment: Gtk.Adjustment {
+          lower: 6;
+          upper: 72;
+          step-increment: 0.5;
+          page-increment: 2;
+        };
+
+        [suffix]
+        Gtk.Button message_font_size_reset {
+          visible: false;
+          valign: center;
+          icon-name: "edit-undo-symbolic";
+          tooltip-text: _("Use default font size");
+          styles [ "flat" ]
+        }
+      }
+
+      Adw.ActionRow {
+        title: _("Code block font");
+        activatable-widget: code_font;
+
+        [suffix]
+        Gtk.FontDialogButton code_font {
+          valign: center;
+          level: family;
+          dialog: Gtk.FontDialog {
+            title: _("Code block font");
+          };
+        }
+
+        [suffix]
+        Gtk.Button code_font_reset {
+          visible: false;
+          valign: center;
+          icon-name: "edit-undo-symbolic";
+          tooltip-text: _("Use default font");
+          styles [ "flat" ]
+        }
+      }
+
+      Adw.SpinRow code_font_size {
+        title: _("Code block font size");
+        digits: 1;
+        adjustment: Gtk.Adjustment {
+          lower: 6;
+          upper: 72;
+          step-increment: 0.5;
+          page-increment: 2;
+        };
+
+        [suffix]
+        Gtk.Button code_font_size_reset {
+          visible: false;
+          valign: center;
+          icon-name: "edit-undo-symbolic";
+          tooltip-text: _("Use default font size");
+          styles [ "flat" ]
+        }
+      }
+    }
+
+    Adw.PreferencesGroup {
       title: _("About");
 
       Adw.ActionRow version {

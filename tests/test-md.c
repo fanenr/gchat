@@ -53,19 +53,78 @@ text_tags (gconstpointer data)
       const gchar *at = strstr (text, test->text);
       if (at != NULL)
         {
-          GtkTextTag *tag = gtk_text_tag_table_lookup (
-              gtk_text_buffer_get_tag_table (buffer), test->tag);
-          g_assert_nonnull (tag);
           gtk_text_buffer_get_iter_at_offset (
               buffer, &start, g_utf8_pointer_to_offset (text, at));
-          g_assert_cmpint (gtk_text_iter_has_tag (&start, tag), ==,
-                           test->active);
+          if (g_str_has_prefix (test->tag, "item"))
+            {
+              int depth = 0;
+              g_autoptr (GSList) tags = gtk_text_iter_get_tags (&start);
+              for (GSList *it = tags; it != NULL; it = it->next)
+                {
+                  g_autofree gchar *name = NULL;
+                  g_object_get (it->data, "name", &name, NULL);
+                  if (name != NULL && g_str_has_prefix (name, "item"))
+                    depth++;
+                }
+              g_assert_cmpint (depth, ==, atoi (test->tag + 4));
+            }
+          else
+            {
+              GtkTextTag *tag = gtk_text_tag_table_lookup (
+                  gtk_text_buffer_get_tag_table (buffer), test->tag);
+              g_assert_nonnull (tag);
+              g_assert_cmpint (gtk_text_iter_has_tag (&start, tag), ==,
+                               test->active);
+            }
           found = TRUE;
         }
     }
   g_assert_true (found);
   clear_box (box);
   g_assert_cmpuint (code_buffers != NULL ? code_buffers->len : 0, ==, 0);
+}
+
+static void
+heading_styles (void)
+{
+  static const double scales[] = { 1.5, 1.375, 1.25, 1, 1, 1 };
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  for (guint i = 0; i < G_N_ELEMENTS (scales); i++)
+    {
+      g_autofree gchar *prefix = g_strnfill (i + 1, '#');
+      g_autofree gchar *markdown =
+          g_strdup_printf ("%s **Heading** `code`\n\nplain", prefix);
+      md_render (GTK_BOX (box), markdown);
+      GtkWidget *view = gtk_widget_get_first_child (box);
+      GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+      GtkTextTagTable *table = gtk_text_buffer_get_tag_table (buffer);
+      g_autofree gchar *name = g_strdup_printf ("h%u", i + 1);
+      GtkTextTag *heading = gtk_text_tag_table_lookup (table, name);
+      g_assert_nonnull (heading);
+      double scale;
+      int weight;
+      g_object_get (heading, "scale", &scale, "weight", &weight, NULL);
+      g_assert_cmpfloat (scale, ==, scales[i]);
+      g_assert_cmpint (weight, ==,
+                       i < 3 ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_SEMIBOLD);
+      GtkTextTag *bold = gtk_text_tag_table_lookup (table, "bold");
+      GtkTextTag *code = gtk_text_tag_table_lookup (table, "code");
+      g_object_get (bold, "weight", &weight, NULL);
+      g_assert_cmpint (weight, ==, PANGO_WEIGHT_SEMIBOLD);
+      g_assert_cmpint (gtk_text_tag_get_priority (heading), >,
+                       gtk_text_tag_get_priority (bold));
+      g_assert_cmpint (gtk_text_tag_get_priority (heading), >,
+                       gtk_text_tag_get_priority (code));
+      GtkTextIter start, end;
+      gtk_text_buffer_get_start_iter (buffer, &start);
+      g_assert_true (gtk_text_iter_has_tag (&start, heading));
+      g_assert_true (gtk_text_iter_forward_search (
+          &start, "plain", GTK_TEXT_SEARCH_TEXT_ONLY, &start, &end, NULL));
+      g_assert_false (gtk_text_iter_has_tag (&start, heading));
+      g_assert_false (gtk_text_iter_has_tag (&start, bold));
+      clear_box (box);
+    }
 }
 
 static void
@@ -98,7 +157,7 @@ open_scopes_released (void)
       .cell = g_string_new (NULL),
       .code = g_string_new (NULL),
     };
-    push_scope (&ctx, "list1");
+    push_scope (&ctx, "item0-12-0");
     mark = g_array_index (ctx.scopes, Scope, 0).mark;
     g_object_add_weak_pointer (G_OBJECT (mark), (gpointer *) &mark);
   }
@@ -152,7 +211,8 @@ table_cells (gconstpointer data)
   g_assert_true (GTK_IS_LABEL (body));
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (header)), ==, test->header);
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (body)), ==, test->body);
-  g_assert_nonnull (strstr (gtk_label_get_label (GTK_LABEL (header)), "<b>"));
+  g_assert_nonnull (strstr (gtk_label_get_label (GTK_LABEL (header)),
+                            "weight=\"medium\""));
   if (test->body_markup != NULL)
     g_assert_cmpstr (gtk_label_get_label (GTK_LABEL (body)), ==,
                      test->body_markup);
@@ -545,19 +605,19 @@ main (int    argc,
     }
   adw_init ();
   static const TagCase cases[] = {
-    { "- before\n\n  ```c\n  int x;\n  ```\n\n  after\n", "after", "list1",
+    { "- before\n\n  ```c\n  int x;\n  ```\n\n  after\n", "after", "item1",
       TRUE },
-    { "- before\n\n  ```c\n  int x;\n  ```\n", "before", "list1", TRUE },
-    { "- before\n\n  ---\n\n  after\n", "after", "list1", TRUE },
+    { "- before\n\n  ```c\n  int x;\n  ```\n", "before", "item1", TRUE },
+    { "- before\n\n  ---\n\n  after\n", "after", "item1", TRUE },
     { "- before\n\n  | head |\n  | --- |\n  | body |\n\n  after\n", "after",
-      "list1", TRUE },
+      "item1", TRUE },
     { "- outer\n  - inner\n\n    ```c\n    int x;\n    ```\n\n    after\n",
-      "after", "list2", TRUE },
+      "after", "item2", TRUE },
     { "> before\n>\n> ```c\n> int x;\n> ```\n>\n> after\n", "after", "quote1",
       TRUE },
     { "- before\n\n  ```c\n  int x;\n  ```\n\n  after\n\n  ```c\n  int y;\n  "
       "```\n\n  last\n",
-      "last", "list1", TRUE },
+      "last", "item1", TRUE },
     { "**bold** plain", "bold", "bold", TRUE },
     { "**bold** plain", "plain", "bold", FALSE },
     { "*italic* plain", "italic", "italic", TRUE },
@@ -565,6 +625,14 @@ main (int    argc,
     { "`code` plain", "code", "code", TRUE },
     { "**outer *inner* tail** plain", "tail", "bold", TRUE },
     { "**outer *inner* tail** plain", "tail", "italic", FALSE },
+    { "first\n\nsecond", "\n", "gap16", TRUE },
+    { "first\n\n## title", "\n", "gap24", TRUE },
+    { "first\n\n#### title", "\n", "gap16", TRUE },
+    { "- first\n- second", "\n", "gap6", TRUE },
+    { "- first\n\n  continuation", "\n", "gap8", TRUE },
+    { "#### title\n\n- item", "\n", "gap8", TRUE },
+    { "paragraph\n\n- item", "\n", "gap16", TRUE },
+    { "- outer\n  - inner", "\n", "gap4", TRUE },
   };
   for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
     {
@@ -572,6 +640,7 @@ main (int    argc,
           g_strdup_printf ("/markdown/text-tag/%u", i);
       g_test_add_data_func (name, &cases[i], text_tags);
     }
+  g_test_add_func ("/markdown/heading-styles", heading_styles);
   static const TextCase lists[] = {
     { "1. **问答与解释**\n   解释概念，分析问题。\n\n2. **写作与润色**\n   "
       "写文章，修改表达。\n",
@@ -598,7 +667,8 @@ main (int    argc,
   static const TableCase tables[] = {
     { "| header |\n| --- |\n| **bold *both* tail** ~~old~~ `code` |\n",
       "header", "bold both tail old code",
-      "<b>bold <i>both</i> tail</b> <s>old</s> <tt>code</tt>" },
+      "<span weight=\"semibold\">bold <i>both</i> tail</span> "
+      "<s>old</s> <tt>code</tt>" },
     { "| header |\n| --- |\n| ![alt](https://example.com/a.png) `code` |\n",
       "header", "[alt] code", "[alt] <tt>code</tt>" },
     { "| header |\n| --- |\n| [local](file:///tmp/example) |\n", "header",

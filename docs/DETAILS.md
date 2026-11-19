@@ -23,10 +23,11 @@ This page covers what [README](../README.md) does not.
 ### Markdown rendering
 
 - md4c parses the Markdown. CommonMark and part of GFM are supported.
-- The client renders Markdown as native widgets.
-- The widgets cover headings, bold, italic, strikethrough, inline code, multi-level lists, nested quotes, rules, and tables.
-- Lists support task lists and ordered lists. An ordered list can start at 0.
-- Tables support column alignment, row separators, and inline code.
+- The client renders Markdown as native widgets. Message prose defaults to a 14px font; the sidebar and input box keep their 14px font. Prose uses 1.3 times the selected font’s natural line height. Table text and streaming replies use the same line-height rule.
+- The widgets cover headings, bold, italic, strikethrough, inline code, multi-level lists, nested quotes, rules, and tables. Bold prose uses weight 600. Headings 1–3 use 1.5, 1.375, and 1.25 times the prose size with weight 700; headings 4–6 keep the prose size with weight 600. Inline emphasis does not override a heading’s size or weight.
+- Paragraph gaps are 16 logical pixels. Headings 1–3 have a 24-pixel gap before them; headings 4–6 have 16. List items have 6-pixel gaps, later paragraphs within an item have 8, and nested lists have 4. A top-level list has a 16-pixel gap before it, or 8 after a heading.
+- Lists support task lists and ordered lists. An ordered list can start at 0. Wrapped lines and later paragraphs align with the text after the marker. Marker widths are measured, so multi-digit numbers and checkboxes keep their alignment.
+- Tables support column alignment, row separators, and inline code. They use a transparent background without an enclosing border. Cells have 16-pixel horizontal and 10-pixel vertical padding. Headers use weight 500 at full text contrast; bold cell text uses weight 600.
 - HTTPS images outside tables load automatically. Image servers can see your IP address and request time. Private-network HTTPS addresses are not filtered. Loading starts after a streaming reply finishes; history is loaded again when rendered.
 - Images use a separate request without API credentials. PNG, JPEG, GIF, and WebP are supported when the system decoder is available. GIF and WebP are displayed as static images.
 - Images are displayed at no more than 320 × 240 logical pixels, preserving aspect ratio without enlarging small images. The image can set a minimum width for the message, so very narrow layouts may not shrink to fit it.
@@ -51,8 +52,9 @@ This page covers what [README](../README.md) does not.
 
 ### Code blocks
 
-- A code block shows as a separate card with a language label and a copy button.
-- The code area has 8px padding above and below.
+- A code block shows as a separate card with a language label and a copy button. Their header row has 12px of space above it. The language label aligns with the code’s left edge, 16px inside the card.
+- The code area has 16px padding on all sides and uses 1.6 times the selected font’s natural line height. Padding and line-height rules are fixed; the font family and size remain configurable.
+- The card has a subtle background and border, without a divider beneath its language label. The language label and copy button use a secondary color; the button returns to full contrast on hover or keyboard focus.
 - The display drops only one trailing newline. Extra blank lines stay.
 - The copy button keeps the full parsed code, including trailing spaces and the final newline.
 - md4c normalizes line breaks inside a block to LF.
@@ -79,7 +81,10 @@ The gear at the bottom of the sidebar opens the settings page. It offers these i
 - API key.
 - Theme. The options are follow system, light, and dark. A change applies at once and persists.
 - Interface language.
+- Reading. Message and code block font families and sizes are independent. Font pickers list installed fonts. Font and size reset buttons appear only when their own value differs from the application default; each restores only its own setting. Sizes range from 6 to 72 logical pixels. The defaults are 14px for prose and 13px for code. Changes apply immediately and persist.
 - Version and data file locations.
+
+Reading settings leave the sidebar, input box, and reasoning text unchanged. Inline code keeps its monospace family and scales with prose. Table text and streaming replies follow the prose font. Font changes keep message selections, drafts, and active requests. List margins and user-bubble widths are recalculated without replacing widgets or reloading images. On a save failure, the control returns to its previous value. Missing or invalid font settings use the defaults; unavailable fonts fall back through GTK.
 
 ### Models and reasoning levels
 
@@ -92,7 +97,7 @@ The gear at the bottom of the sidebar opens the settings page. It offers these i
 
 ### Message actions
 
-The latest message always shows its action row. Other messages show it while hovered or while the message or one of its controls has focus. The row offers these actions:
+The latest message always shows its action row. Other messages show it while hovered or while the message or one of its controls has focus. Visible buttons use a secondary color and return to full contrast on hover or keyboard focus. The row offers these actions:
 
 - Copy the whole message.
 - Edit and resend. The client puts the body back in the input box. It withdraws this message and all later messages only when you send.
@@ -109,7 +114,7 @@ The rules are:
 - Sending keeps the indentation and trailing whitespace of the body. Without an image, the client rejects blank messages.
 - A user bubble shrinks to the width of the body. Padding is fixed at 16px left and right, 10px top and bottom.
 - The action row does not widen the background. Multi-line text stays left-aligned.
-- You can drag a selection across paragraphs. `Ctrl/Cmd+A` selects the whole message.
+- You can drag a selection across paragraphs. `Ctrl/Cmd+A` selects the whole message. The selection background follows the text lines and excludes the extra spacing between paragraphs, headings, and list items.
 - A code block has its own copy button.
 
 ### Reliability
@@ -237,6 +242,12 @@ The regression tests also cover the following areas:
 - A list number on the same line as the first paragraph.
 - An ordered list that starts at 0.
 - Multiple paragraphs and nested lists.
+- Prose font size, proportional prose and code line heights at default and doubled sizes, and hanging list indents in both themes, including multi-digit numbers, task lists, and later paragraphs.
+- All six heading levels, heading precedence over inline emphasis, paragraph/list spacing, and code/table padding.
+- Selection snapshots leave paragraph spacing unpainted in both themes at default and doubled prose sizes, including wrapped text, explicit line breaks, headings, task lists, cross-paragraph selections, and right-to-left text.
+- Independent message and code fonts, saved sizes, conditional font and size reset buttons, save-failure rollback, invalid-value fallback, and font-family CSS escaping.
+- Default-font comparison ignores case and does not depend on whether a value is explicitly saved. Resetting one setting leaves the other unchanged.
+- Font changes that preserve selections and active requests, and update list margins across code cards without replacing text buffers.
 - Markdown scope across widgets.
 - Trailing whitespace of messages and code blocks.
 - Link scheme filtering and entity decoding.

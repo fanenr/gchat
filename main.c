@@ -2576,6 +2576,7 @@ start_request (gchar *body,
   gtk_label_set_wrap_mode (GTK_LABEL (app->reply_label), PANGO_WRAP_WORD_CHAR);
   gtk_label_set_xalign (GTK_LABEL (app->reply_label), 0);
   gtk_label_set_selectable (GTK_LABEL (app->reply_label), TRUE);
+  gtk_widget_add_css_class (app->reply_label, "msg-text");
   gtk_box_append (GTK_BOX (app->reply_body), app->reply_label);
 
   app->cancel = g_cancellable_new ();
@@ -3442,8 +3443,107 @@ on_shutdown (GApplication *application G_GNUC_UNUSED,
     }
 }
 
-/* The display provider and dark-mode signal last for the process lifetime. */
+typedef struct
+{
+  const gchar *key;
+  const gchar *size_key;
+  const gchar *selector;
+  const gchar *default_family;
+  const gchar *fallback;
+  double       default_size;
+} FontSetting;
+
+static const FontSetting FONT_SETTINGS[] = {
+  { "message_font", "message_font_size",
+    ".msg-text, .user-bubble, .user-bubble label",
+    "PingFang SC,Noto Sans CJK SC,sans-serif", "sans-serif", 14 },
+  { "code_font", "code_font_size", ".source-code", "monospace", "monospace",
+    13 },
+};
+
+/* The display providers and dark-mode signal last for the process lifetime. */
 static GtkCssProvider *dark_css;
+static GtkCssProvider *font_css;
+
+static gboolean
+font_family_valid (const gchar *family)
+{
+  if (family == NULL || !*family || !g_utf8_validate (family, -1, NULL))
+    return FALSE;
+  for (const gchar *p = family; *p; p++)
+    if (g_ascii_iscntrl (*p))
+      return FALSE;
+  return TRUE;
+}
+
+static double
+font_size (const FontSetting *setting)
+{
+  g_autofree gchar *saved = config_get (setting->size_key);
+  if (saved == NULL)
+    return setting->default_size;
+  gchar *end;
+  double size = g_ascii_strtod (saved, &end);
+  return end != saved && !*end && size >= 6 && size <= 72
+             ? size
+             : setting->default_size;
+}
+
+static void
+refresh_font_css (void)
+{
+  g_autoptr (GString) css = g_string_new (NULL);
+  for (guint i = 0; i < G_N_ELEMENTS (FONT_SETTINGS); i++)
+    {
+      const FontSetting *setting = &FONT_SETTINGS[i];
+      g_string_append_printf (css, "%s {", setting->selector);
+      g_autofree gchar *family = config_get (setting->key);
+      if (font_family_valid (family))
+        {
+          g_string_append (css, "font-family: \"");
+          for (const gchar *p = family; *p; p++)
+            {
+              if (*p == '\\' || *p == '"')
+                g_string_append_c (css, '\\');
+              g_string_append_c (css, *p);
+            }
+          g_string_append_printf (css, "\", %s;", setting->fallback);
+        }
+      else
+        {
+          g_string_append_printf (css, "font-family: %s;",
+                                  setting->default_family);
+        }
+      gchar size[G_ASCII_DTOSTR_BUF_SIZE];
+      g_ascii_dtostr (size, sizeof size, font_size (setting));
+      g_string_append_printf (css, "font-size: %spx; }", size);
+    }
+  gtk_css_provider_load_from_string (font_css, css->str);
+}
+
+static void
+refresh_message_fonts (void)
+{
+  if (app == NULL || app->messages == NULL)
+    return;
+  for (GtkWidget *bubble = gtk_widget_get_first_child (app->messages);
+       bubble != NULL; bubble = gtk_widget_get_next_sibling (bubble))
+    {
+      /* The live reply label follows CSS; keep its async callback targets. */
+      if (bubble == app->reply_bubble)
+        continue;
+      guint index = GPOINTER_TO_UINT (
+          g_object_get_data (G_OBJECT (bubble), "index"));
+      JsonObject *msg = json_array_get_object_element (app->chat->messages,
+                                                       index);
+      const gchar *content = json_object_get_string_member (msg, "content");
+      GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
+      md_refresh_fonts (GTK_BOX (body));
+      if (g_str_equal (json_object_get_string_member (msg, "role"), "user"))
+        layout_user_bubble (body, content);
+    }
+  schedule_geometry_sync ();
+}
 
 /* Raise contrast in the dark theme: the bubble background and the input box are
    too close to the background color. */
@@ -3487,6 +3587,12 @@ load_css (void)
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_signal_connect (adw_style_manager_get_default (), "notify::dark",
                     G_CALLBACK (on_dark_changed), NULL);
+
+  font_css = gtk_css_provider_new ();
+  refresh_font_css ();
+  gtk_style_context_add_provider_for_display (
+      gdk_display_get_default (), GTK_STYLE_PROVIDER (font_css),
+      GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
 }
 
 /* ---------- settings ---------- */
@@ -3571,6 +3677,213 @@ on_settings_key_apply (AdwEntryRow *row,
     app_toast (_ ("API key saved"));
 }
 
+static PangoFontDescription *
+default_font (GtkWidget         *widget,
+              const FontSetting *setting)
+{
+  g_autoptr (PangoFontDescription) desc =
+      pango_font_description_from_string (setting->default_family);
+  g_autoptr (PangoFont) font =
+      pango_context_load_font (gtk_widget_get_pango_context (widget), desc);
+  if (font != NULL)
+    {
+      g_clear_pointer (&desc, pango_font_description_free);
+      desc = pango_font_describe (font);
+    }
+  return g_steal_pointer (&desc);
+}
+
+static gboolean
+font_reset_visible (GBinding     *binding,
+                    const GValue *value,
+                    GValue       *visible,
+                    gpointer      data)
+{
+  const FontSetting *setting = data;
+  g_autoptr (GObject) source = g_binding_dup_source (binding);
+  if (source == NULL)
+    return FALSE;
+  g_autoptr (PangoFontDescription) fallback =
+      default_font (GTK_WIDGET (source), setting);
+  const PangoFontDescription *font = g_value_get_boxed (value);
+  const gchar *family =
+      font != NULL ? pango_font_description_get_family (font) : NULL;
+  const gchar *default_family = pango_font_description_get_family (fallback);
+  g_value_set_boolean (visible,
+                       family != NULL &&
+                           g_ascii_strcasecmp (family, default_family) != 0);
+  return TRUE;
+}
+
+static gboolean
+font_size_reset_visible (GBinding     *binding G_GNUC_UNUSED,
+                         const GValue *value,
+                         GValue       *visible,
+                         gpointer      data)
+{
+  const FontSetting *setting = data;
+  g_value_set_boolean (visible,
+                       g_value_get_double (value) != setting->default_size);
+  return TRUE;
+}
+
+static gboolean
+on_font_reflow (GtkWidget     *widget,
+                GdkFrameClock *clock G_GNUC_UNUSED,
+                gpointer       data)
+{
+  guint *frames = data;
+  if (--*frames)
+    return G_SOURCE_CONTINUE;
+  if (app != NULL && app->window == widget && !app->closing)
+    refresh_message_fonts ();
+  return G_SOURCE_REMOVE;
+}
+
+static void
+apply_font_setting (const FontSetting *setting)
+{
+  refresh_font_css ();
+  if (setting == &FONT_SETTINGS[0] && app != NULL && app->window != NULL)
+    {
+      /* Wait for GTK to update font contexts before measuring list markers. */
+      g_autofree guint *frames = g_new (guint, 1);
+      *frames = 2;
+      gtk_widget_add_tick_callback (app->window, on_font_reflow,
+                                    g_steal_pointer (&frames), g_free);
+    }
+}
+
+static void
+on_font_selected (GObject    *object,
+                  GParamSpec *pspec G_GNUC_UNUSED,
+                  gpointer    data)
+{
+  const FontSetting *setting = data;
+  GtkFontDialogButton *button = GTK_FONT_DIALOG_BUTTON (object);
+  const PangoFontDescription *desc =
+      gtk_font_dialog_button_get_font_desc (button);
+  const gchar *family =
+      desc != NULL ? pango_font_description_get_family (desc) : NULL;
+  const gchar *saved = g_object_get_data (object, "saved-family");
+  if (g_strcmp0 (family, saved) == 0)
+    return;
+  if (!font_family_valid (family) || !config_set (setting->key, family))
+    {
+      g_autoptr (PangoFontDescription) previous =
+          pango_font_description_new ();
+      pango_font_description_set_family (previous, saved);
+      gtk_font_dialog_button_set_font_desc (button, previous);
+      app_toast (_ ("Failed to save font"));
+      return;
+    }
+  g_object_set_data_full (object, "saved-family", g_strdup (family), g_free);
+  apply_font_setting (setting);
+}
+
+static void
+on_font_size_changed (GObject    *object,
+                      GParamSpec *pspec G_GNUC_UNUSED,
+                      gpointer    data)
+{
+  const FontSetting *setting = data;
+  AdwSpinRow *row = ADW_SPIN_ROW (object);
+  gchar size[G_ASCII_DTOSTR_BUF_SIZE];
+  g_ascii_dtostr (size, sizeof size, adw_spin_row_get_value (row));
+  const gchar *saved = g_object_get_data (object, "saved-size");
+  if (g_strcmp0 (size, saved) == 0)
+    return;
+  if (!config_set (setting->size_key, size))
+    {
+      adw_spin_row_set_value (row, g_ascii_strtod (saved, NULL));
+      app_toast (_ ("Failed to save font size"));
+      return;
+    }
+  g_object_set_data_full (object, "saved-size", g_strdup (size), g_free);
+  apply_font_setting (setting);
+}
+
+static void
+on_font_reset (GtkButton *reset G_GNUC_UNUSED,
+               gpointer   data)
+{
+  GtkFontDialogButton *button = data;
+  const FontSetting *setting =
+      g_object_get_data (G_OBJECT (button), "font-setting");
+  if (!config_set (setting->key, ""))
+    {
+      app_toast (_ ("Failed to save font"));
+      return;
+    }
+  g_autoptr (PangoFontDescription) desc =
+      default_font (GTK_WIDGET (button), setting);
+  g_object_set_data_full (G_OBJECT (button), "saved-family",
+                          g_strdup (pango_font_description_get_family (desc)),
+                          g_free);
+  gtk_font_dialog_button_set_font_desc (button, desc);
+  apply_font_setting (setting);
+}
+
+static void
+on_font_size_reset (GtkButton *reset G_GNUC_UNUSED,
+                    gpointer   data)
+{
+  AdwSpinRow *row = data;
+  const FontSetting *setting =
+      g_object_get_data (G_OBJECT (row), "font-setting");
+  adw_spin_row_set_value (row, setting->default_size);
+}
+
+static void
+setup_font_settings (GtkBuilder        *builder,
+                     const FontSetting *setting)
+{
+  GtkFontDialogButton *button = GTK_FONT_DIALOG_BUTTON (
+      gtk_builder_get_object (builder, setting->key));
+  g_autofree gchar *family = config_get (setting->key);
+  g_autoptr (PangoFontDescription) desc =
+      default_font (GTK_WIDGET (button), setting);
+  if (font_family_valid (family))
+    pango_font_description_set_family (desc, family);
+  gtk_font_dialog_button_set_font_desc (button, desc);
+  g_object_set_data_full (G_OBJECT (button), "saved-family",
+                          g_strdup (pango_font_description_get_family (desc)),
+                          g_free);
+  g_object_set_data (G_OBJECT (button), "font-setting", (gpointer) setting);
+  g_signal_connect (button, "notify::font-desc", G_CALLBACK (on_font_selected),
+                    (gpointer) setting);
+
+  AdwSpinRow *row = ADW_SPIN_ROW (
+      gtk_builder_get_object (builder, setting->size_key));
+  double value = font_size (setting);
+  adw_spin_row_set_value (row, value);
+  gchar size[G_ASCII_DTOSTR_BUF_SIZE];
+  g_ascii_dtostr (size, sizeof size, value);
+  g_object_set_data_full (G_OBJECT (row), "saved-size", g_strdup (size),
+                          g_free);
+  g_object_set_data (G_OBJECT (row), "font-setting", (gpointer) setting);
+  g_signal_connect (row, "notify::value", G_CALLBACK (on_font_size_changed),
+                    (gpointer) setting);
+
+  g_autofree gchar *reset_id = g_strconcat (setting->key, "_reset", NULL);
+  GtkButton *reset = GTK_BUTTON (gtk_builder_get_object (builder, reset_id));
+  g_signal_connect_object (reset, "clicked", G_CALLBACK (on_font_reset),
+                           button, 0);
+  g_object_bind_property_full (button, "font-desc", reset, "visible",
+                               G_BINDING_SYNC_CREATE, font_reset_visible,
+                               NULL, (gpointer) setting, NULL);
+
+  g_autofree gchar *size_reset_id =
+      g_strconcat (setting->size_key, "_reset", NULL);
+  GtkButton *size_reset =
+      GTK_BUTTON (gtk_builder_get_object (builder, size_reset_id));
+  g_signal_connect_object (size_reset, "clicked",
+                           G_CALLBACK (on_font_size_reset), row, 0);
+  g_object_bind_property_full (row, "value", size_reset, "visible",
+                               G_BINDING_SYNC_CREATE, font_size_reset_visible,
+                               NULL, (gpointer) setting, NULL);
+}
+
 static void
 on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
                      gpointer   data G_GNUC_UNUSED)
@@ -3635,6 +3948,9 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
                      GUINT_TO_POINTER (language_index));
   g_signal_connect (language, "notify::selected",
                     G_CALLBACK (on_language_selected), NULL);
+
+  for (guint i = 0; i < G_N_ELEMENTS (FONT_SETTINGS); i++)
+    setup_font_settings (builder, &FONT_SETTINGS[i]);
 
   adw_action_row_set_subtitle (version, GCHAT_VERSION " · GTK 4 + libadwaita");
   g_autofree gchar *session_path = store_session_path ();

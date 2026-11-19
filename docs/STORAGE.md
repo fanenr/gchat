@@ -13,7 +13,7 @@ API key saved in settings.
 | `session.db` | `~/.local/share/gchat/` | Conversations, messages, drafts, and selected session, model, and reasoning level |
 | `attachments/` | Beside `session.db` | Image files named by UUID |
 | `session.db.lock` | Beside `session.db` | Process lock, not conversation data |
-| `config.json` | `~/.config/gchat/` | API key, theme, and language |
+| `config.json` | `~/.config/gchat/` | API key, theme, language, and reading fonts |
 
 `XDG_DATA_HOME` and `XDG_CONFIG_HOME` override the corresponding base
 directories. Settings show the actual database path and the API key source.
@@ -29,9 +29,14 @@ neither imports nor deletes the old `session.json`, `session.json.bak`, or
 
 Settings are written by atomically replacing `config.json`, without creating a
 backup. If the file is not a valid JSON object or contains a non-string value,
-the save fails and leaves it in place. A failed theme or language save restores
-the previous choice in the dialog. Treat any existing `config.json.bak` as sensitive: it may contain a
-plaintext key.
+the save fails and leaves it in place. A failed theme, language, font, or font-size
+save restores the previous choice in the dialog. Treat any existing
+`config.json.bak` as sensitive: it may contain a plaintext key.
+
+Reading settings use string keys `message_font`, `message_font_size`,
+`code_font`, and `code_font_size`. Font values are family names; empty or missing
+values use the default family. Sizes are locale-independent decimal strings in
+logical pixels. Missing or invalid sizes use 14 for prose and 13 for code.
 
 ## Database format: version 1
 

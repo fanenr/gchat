@@ -230,13 +230,13 @@ code_view (const gchar *lang,
   gtk_source_view_set_show_line_numbers (GTK_SOURCE_VIEW (view), FALSE);
   gtk_source_view_set_highlight_current_line (GTK_SOURCE_VIEW (view), FALSE);
   gtk_text_view_set_monospace (GTK_TEXT_VIEW (view), TRUE);
+  gtk_text_view_set_left_margin (GTK_TEXT_VIEW (view), 0);
   gtk_source_view_set_tab_width (GTK_SOURCE_VIEW (view), 4);
-  gtk_text_view_set_pixels_below_lines (GTK_TEXT_VIEW (view), 2);
   gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD_CHAR);
   gtk_widget_add_css_class (view, "source-code");
   gtk_widget_set_hexpand (view, TRUE);
-  g_object_set (view, "margin-start", 12, "margin-end", 12, "margin-top", 8,
-                "margin-bottom", 8, NULL);
+  g_object_set (view, "margin-start", 16, "margin-end", 16, "margin-top", 16,
+                "margin-bottom", 16, NULL);
   return view;
 }
 
@@ -262,12 +262,11 @@ code_card (const gchar *lang,
 
   GtkWidget *bar = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_add_css_class (bar, "code-bar");
-  g_object_set (bar, "margin-start", 12, "margin-end", 8, "margin-top", 4,
+  g_object_set (bar, "margin-start", 16, "margin-end", 8, "margin-top", 12,
                 NULL);
 
   GtkWidget *lang_label = gtk_label_new (lang != NULL && *lang ? lang : "code");
   gtk_widget_add_css_class (lang_label, "caption");
-  gtk_widget_add_css_class (lang_label, "dimmed");
   gtk_widget_set_hexpand (lang_label, TRUE);
   gtk_label_set_xalign (GTK_LABEL (lang_label), 0);
 
@@ -513,7 +512,8 @@ cell_label (const gchar *markup,
             gboolean     header)
 {
   g_autofree gchar *text =
-      header ? g_strdup_printf ("<b>%s</b>", markup) : g_strdup (markup);
+      header ? g_strdup_printf ("<span weight=\"medium\">%s</span>", markup)
+             : g_strdup (markup);
   GtkWidget *label = gtk_label_new (NULL);
   gtk_label_set_markup (GTK_LABEL (label), text);
   gtk_label_set_wrap (GTK_LABEL (label), TRUE);
@@ -524,18 +524,110 @@ cell_label (const gchar *markup,
                                                                      : 0);
   gtk_label_set_yalign (GTK_LABEL (label), 0);
   gtk_label_set_selectable (GTK_LABEL (label), TRUE);
+  gtk_widget_add_css_class (label, "msg-text");
   gtk_widget_set_hexpand (label, TRUE);
   gtk_widget_set_halign (label, GTK_ALIGN_FILL);
-  if (header)
-    gtk_widget_add_css_class (label, "dimmed");
-  g_object_set (label, "margin-start", 12, "margin-end", 12, "margin-top", 8,
-                "margin-bottom", 8, NULL);
+  g_object_set (label, "margin-start", 16, "margin-end", 16, "margin-top", 10,
+                "margin-bottom", 10, NULL);
   return label;
 }
 
 /* Prose lives in one read-only GtkTextView per message, so a mouse drag
    selects across paragraphs. Code cards and tables are separate widgets
    between views. */
+
+typedef struct
+{
+  GtkTextView parent_instance;
+} MdTextView;
+
+typedef GtkTextViewClass MdTextViewClass;
+
+static GType md_text_view_get_type (void);
+
+G_DEFINE_TYPE (MdTextView, md_text_view, GTK_TYPE_TEXT_VIEW)
+
+static void
+snapshot_slice (GtkSnapshot   *snapshot,
+                GskRenderNode *node,
+                int            width,
+                int            top,
+                int            bottom)
+{
+  if (bottom <= top)
+    return;
+  graphene_rect_t clip = GRAPHENE_RECT_INIT (0, top, width, bottom - top);
+  gtk_snapshot_push_clip (snapshot, &clip);
+  gtk_snapshot_append_node (snapshot, node);
+  gtk_snapshot_pop (snapshot);
+}
+
+static void
+md_text_view_snapshot (GtkWidget   *widget,
+                       GtkSnapshot *snapshot)
+{
+  GtkTextView *view = GTK_TEXT_VIEW (widget);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  GtkWidgetClass *parent = GTK_WIDGET_CLASS (md_text_view_parent_class);
+  GtkTextIter start, end;
+  if (!gtk_text_buffer_get_selection_bounds (buffer, &start, &end))
+    {
+      parent->snapshot (widget, snapshot);
+      return;
+    }
+
+  GtkSnapshot *original = gtk_snapshot_new ();
+  parent->snapshot (widget, original);
+  g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (original);
+  if (node == NULL)
+    return;
+
+  int width = gtk_widget_get_width (widget);
+  int height = gtk_widget_get_height (widget);
+  int top = 0;
+  int last_line = gtk_text_iter_get_line (&end);
+  gtk_text_iter_set_line_offset (&start, 0);
+  do
+    {
+      int gap = gtk_text_view_get_pixels_below_lines (view);
+      g_autoptr (GSList) tags = gtk_text_iter_get_tags (&start);
+      for (GSList *it = tags; it != NULL; it = it->next)
+        {
+          gboolean set;
+          int pixels;
+          g_object_get (it->data, "pixels-below-lines-set", &set,
+                        "pixels-below-lines", &pixels, NULL);
+          if (set)
+            gap = pixels;
+        }
+      if (gap == 0)
+        continue;
+
+      int y, line_height;
+      gtk_text_view_get_line_yrange (view, &start, &y, &line_height);
+      gtk_text_view_buffer_to_window_coords (view, GTK_TEXT_WINDOW_WIDGET,
+                                             0, y, NULL, &y);
+      /* GTK includes paragraph spacing in the last line's selection. */
+      int gap_top = CLAMP (y + line_height - gap, 0, height);
+      int gap_bottom = CLAMP (y + line_height, 0, height);
+      snapshot_slice (snapshot, node, width, top, gap_top);
+      top = gap_bottom;
+    }
+  while (gtk_text_iter_forward_line (&start) &&
+         gtk_text_iter_get_line (&start) <= last_line);
+  snapshot_slice (snapshot, node, width, top, height);
+}
+
+static void
+md_text_view_class_init (MdTextViewClass *klass)
+{
+  GTK_WIDGET_CLASS (klass)->snapshot = md_text_view_snapshot;
+}
+
+static void
+md_text_view_init (MdTextView *view G_GNUC_UNUSED)
+{
+}
 
 typedef struct
 {
@@ -554,6 +646,7 @@ typedef struct
                              headings, and quotes. */
   GArray         *ol_numbers;
   int             list_depth;
+  guint           item_number;
   int             quote_depth;
   int             p_quote_depth;
   int             last_block;
@@ -652,7 +745,7 @@ ensure_view (MdCtx *ctx)
   if (ctx->view != NULL)
     return;
 
-  GtkWidget *view = gtk_text_view_new ();
+  GtkWidget *view = g_object_new (md_text_view_get_type (), NULL);
   gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD_CHAR);
   gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
   gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
@@ -660,8 +753,6 @@ ensure_view (MdCtx *ctx)
   gtk_text_view_set_right_margin (GTK_TEXT_VIEW (view), 0);
   gtk_text_view_set_top_margin (GTK_TEXT_VIEW (view), 0);
   gtk_text_view_set_bottom_margin (GTK_TEXT_VIEW (view), 0);
-  gtk_text_view_set_pixels_below_lines (GTK_TEXT_VIEW (view), 3);
-  gtk_text_view_set_pixels_inside_wrap (GTK_TEXT_VIEW (view), 1);
   gtk_widget_set_vexpand (view, FALSE);
   gtk_widget_add_css_class (view, "msg-text");
   g_signal_connect_object (
@@ -703,7 +794,7 @@ get_tag (MdCtx       *ctx,
 
   if (g_str_equal (name, "bold"))
     {
-      g_object_set (tag, "weight", PANGO_WEIGHT_BOLD, NULL);
+      g_object_set (tag, "weight", PANGO_WEIGHT_SEMIBOLD, NULL);
     }
   else if (g_str_equal (name, "italic"))
     {
@@ -723,19 +814,33 @@ get_tag (MdCtx       *ctx,
     }
   else if (g_str_has_prefix (name, "h"))
     {
-      double scale = g_str_equal (name, "h1")   ? 1.6
-                     : g_str_equal (name, "h2") ? 1.35
-                                                : 1.15;
-      g_object_set (tag, "scale", scale, "weight", PANGO_WEIGHT_BOLD, NULL);
+      int level = atoi (name + 1);
+      double scale = level == 1   ? 1.5
+                     : level == 2 ? 1.375
+                     : level == 3 ? 1.25
+                                  : 1;
+      g_object_set (tag, "scale", scale, "weight",
+                    level <= 3 ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_SEMIBOLD,
+                    NULL);
     }
   else if (g_str_has_prefix (name, "gap"))
     {
       g_object_set (tag, "pixels-below-lines", atoi (name + 3), NULL);
     }
-  else if (g_str_has_prefix (name, "list"))
+  else if (g_str_has_prefix (name, "item"))
     {
-      int depth = atoi (name + 4);
-      g_object_set (tag, "left-margin", 24 * (depth - 1), NULL);
+      gchar *end;
+      int margin = (int) g_ascii_strtoll (name + 4, &end, 10);
+      int width = atoi (end + 1);
+      g_object_set (tag, "left-margin", margin + width, NULL);
+    }
+  else if (g_str_has_prefix (name, "marker"))
+    {
+      gchar *end;
+      int margin = (int) g_ascii_strtoll (name + 6, &end, 10);
+      int width = atoi (end + 1);
+      g_object_set (tag, "left-margin", margin, "indent", -width,
+                    "foreground-rgba", &grey, NULL);
     }
   else if (g_str_has_prefix (name, "quote"))
     {
@@ -790,7 +895,13 @@ break_line (MdCtx       *ctx,
     {
       return;
     }
-  insert_text (ctx, "\n", 1, get_tag (ctx, gap_tag));
+  int line = gtk_text_iter_get_line (&end);
+  insert_text (ctx, "\n", 1, NULL);
+  /* Paragraph spacing is read at the line start, not at the newline. */
+  gtk_text_buffer_get_iter_at_line (ctx->buffer, &probe, line);
+  gtk_text_buffer_get_end_iter (ctx->buffer, &end);
+  gtk_text_buffer_apply_tag (ctx->buffer, get_tag (ctx, gap_tag), &probe,
+                             &end);
 }
 
 static void
@@ -815,8 +926,14 @@ finish_scope (MdCtx *ctx,
   GtkTextIter start, end;
   gtk_text_buffer_get_iter_at_mark (ctx->buffer, &start, scope->mark);
   gtk_text_buffer_get_end_iter (ctx->buffer, &end);
-  gtk_text_buffer_apply_tag (ctx->buffer, get_tag (ctx, scope->name), &start,
-                             &end);
+  GtkTextTag *tag = get_tag (ctx, scope->name);
+  /* Heading size and weight take precedence over inline emphasis. */
+  if (g_str_has_prefix (scope->name, "h"))
+    {
+      GtkTextTagTable *table = gtk_text_buffer_get_tag_table (ctx->buffer);
+      gtk_text_tag_set_priority (tag, gtk_text_tag_table_get_size (table) - 1);
+    }
+  gtk_text_buffer_apply_tag (ctx->buffer, tag, &start, &end);
   gtk_text_buffer_delete_mark (ctx->buffer, scope->mark);
   scope->mark = NULL;
 }
@@ -863,6 +980,24 @@ table_separator (MdCtx *ctx)
 }
 
 static int
+marker_width (GtkWidget   *view,
+              const gchar *prefix)
+{
+  /* Match GtkTextView's separate marker run, including symbol fallback. */
+  g_autofree gchar *probe = g_strconcat (prefix, "x", NULL);
+  g_autoptr (PangoLayout) layout =
+      gtk_widget_create_pango_layout (view, probe);
+  g_autoptr (PangoAttrList) attrs = pango_attr_list_new ();
+  PangoAttribute *height = pango_attr_line_height_new (1);
+  height->end_index = (guint) strlen (prefix);
+  pango_attr_list_insert (attrs, height);
+  pango_layout_set_attributes (layout, attrs);
+  PangoRectangle position;
+  pango_layout_index_to_pos (layout, (int) strlen (prefix), &position);
+  return PANGO_PIXELS (position.x);
+}
+
+static int
 on_enter_block (MD_BLOCKTYPE type,
                 void        *detail,
                 void        *ud)
@@ -878,6 +1013,9 @@ on_enter_block (MD_BLOCKTYPE type,
     case MD_BLOCK_UL:
     case MD_BLOCK_OL:
       {
+        break_line (ctx, ctx->list_depth > 0             ? "gap4"
+                         : ctx->last_block == MD_BLOCK_H ? "gap8"
+                                                         : "gap16");
         /* -1 means an unordered list; 0 is a valid ordered list start. */
         gint64 start = -1;
         if (type == MD_BLOCK_OL && detail != NULL)
@@ -911,12 +1049,29 @@ on_enter_block (MD_BLOCKTYPE type,
             g_strlcpy (marker, "•", sizeof marker);
           }
 
-        break_line (ctx, "gap4");
-        g_autofree gchar *tag_name =
-            g_strdup_printf ("list%d", ctx->list_depth);
-        push_scope (ctx, tag_name);
-        insert_text (ctx, marker, strlen (marker), get_tag (ctx, "dim"));
-        insert_text (ctx, " ", 1, NULL);
+        break_line (ctx, "gap6");
+        g_autofree gchar *prefix = g_strdup_printf ("%s ", marker);
+        int width = marker_width (GTK_WIDGET (ctx->view), prefix);
+        int margin = 0;
+        for (guint i = ctx->scopes->len; i > 0; i--)
+          {
+            Scope *scope = &g_array_index (ctx->scopes, Scope, i - 1);
+            if (g_str_has_prefix (scope->name, "item"))
+              {
+                g_object_get (get_tag (ctx, scope->name), "left-margin",
+                              &margin, NULL);
+                margin += 12;
+                break;
+              }
+          }
+        /* Unique tags keep nested margins above their parent tags. */
+        g_autofree gchar *item_tag =
+            g_strdup_printf ("item%d-%d-%u", margin, width, ctx->item_number);
+        push_scope (ctx, item_tag);
+        g_autofree gchar *marker_tag =
+            g_strdup_printf ("marker%d-%d-%u", margin, width,
+                             ctx->item_number++);
+        insert_text (ctx, prefix, strlen (prefix), get_tag (ctx, marker_tag));
       }
       break;
 
@@ -926,7 +1081,7 @@ on_enter_block (MD_BLOCKTYPE type,
       /* The first paragraph of a list item follows the number; later
          paragraphs keep their own line. */
       if (ctx->list_depth == 0 || ctx->last_block != MD_BLOCK_LI)
-        break_line (ctx, ctx->list_depth > 0 ? "gap4" : "gap16");
+        break_line (ctx, ctx->list_depth > 0 ? "gap8" : "gap16");
       if (ctx->quote_depth > 0)
         {
           for (int i = 0; i < ctx->quote_depth; i++)
@@ -942,8 +1097,8 @@ on_enter_block (MD_BLOCKTYPE type,
       {
         unsigned level =
             detail != NULL ? ((MD_BLOCK_H_DETAIL *) detail)->level : 2;
-        break_line (ctx, "gap24");
-        g_autofree gchar *tag_name = g_strdup_printf ("h%u", MIN (level, 3));
+        break_line (ctx, level <= 3 ? "gap24" : "gap16");
+        g_autofree gchar *tag_name = g_strdup_printf ("h%u", level);
         push_scope (ctx, tag_name);
       }
       break;
@@ -1085,14 +1240,14 @@ on_leave_block (MD_BLOCKTYPE type,
 
 typedef struct
 {
-  const gchar *tag, *markup;
+  const gchar *tag, *open, *close;
 } SpanStyle;
 
 static const SpanStyle SPAN_STYLES[] = {
-  [MD_SPAN_EM] = { "italic", "i" },
-  [MD_SPAN_STRONG] = { "bold", "b" },
-  [MD_SPAN_DEL] = { "strike", "s" },
-  [MD_SPAN_CODE] = { "code", "tt" },
+  [MD_SPAN_EM] = { "italic", "<i>", "</i>" },
+  [MD_SPAN_STRONG] = { "bold", "<span weight=\"semibold\">", "</span>" },
+  [MD_SPAN_DEL] = { "strike", "<s>", "</s>" },
+  [MD_SPAN_CODE] = { "code", "<tt>", "</tt>" },
 };
 
 static int
@@ -1119,7 +1274,7 @@ on_enter_span (MD_SPANTYPE type,
       {
         const SpanStyle *style = &SPAN_STYLES[type];
         if (ctx->in_cell)
-          g_string_append_printf (cell, "<%s>", style->markup);
+          g_string_append (cell, style->open);
         else
           g_ptr_array_add (ctx->spans, get_tag (ctx, style->tag));
       }
@@ -1211,8 +1366,7 @@ on_leave_span (MD_SPANTYPE type,
             }
           else
             {
-              g_string_append_printf (ctx->cell, "</%s>",
-                                      SPAN_STYLES[type].markup);
+              g_string_append (ctx->cell, SPAN_STYLES[type].close);
             }
         }
       else if (ctx->spans->len)
@@ -1277,6 +1431,80 @@ on_text (MD_TEXTTYPE    type,
   else
     insert_text (ctx, text, length, NULL);
   return 0;
+}
+
+static void
+restore_item_margin (GtkTextTag *tag,
+                     gpointer    data)
+{
+  g_autofree gchar *name = NULL;
+  g_object_get (tag, "name", &name, NULL);
+  if (name == NULL)
+    return;
+  gpointer margin = g_hash_table_lookup (data, name);
+  if (margin != NULL)
+    g_object_set (tag, "left-margin", GPOINTER_TO_INT (margin), NULL);
+}
+
+void
+md_refresh_fonts (GtkBox *box)
+{
+  g_autoptr (GHashTable) margins =
+      g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  for (GtkWidget *view = gtk_widget_get_first_child (GTK_WIDGET (box));
+       view != NULL; view = gtk_widget_get_next_sibling (view))
+    {
+      if (!GTK_IS_TEXT_VIEW (view))
+        continue;
+      GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+      gtk_text_tag_table_foreach (gtk_text_buffer_get_tag_table (buffer),
+                                  restore_item_margin, margins);
+      GtkTextIter iter;
+      gtk_text_buffer_get_start_iter (buffer, &iter);
+      do
+        {
+          GtkTextTag *item = NULL, *parent = NULL, *marker = NULL;
+          g_autoptr (GSList) tags = gtk_text_iter_get_tags (&iter);
+          /* GTK returns tags in ascending priority, with child items last. */
+          for (GSList *l = tags; l != NULL; l = l->next)
+            {
+              GtkTextTag *tag = l->data;
+              g_autofree gchar *name = NULL;
+              g_object_get (tag, "name", &name, NULL);
+              if (name == NULL)
+                continue;
+              if (g_str_has_prefix (name, "item"))
+                {
+                  parent = item;
+                  item = tag;
+                }
+              else if (g_str_has_prefix (name, "marker"))
+                marker = tag;
+            }
+          if (item == NULL || marker == NULL)
+            continue;
+          GtkTextIter end = iter;
+          gtk_text_iter_forward_to_tag_toggle (&end, marker);
+          g_autofree gchar *prefix =
+              gtk_text_buffer_get_text (buffer, &iter, &end, FALSE);
+          int width = marker_width (view, prefix);
+          int margin = 0;
+          if (parent != NULL)
+            {
+              g_object_get (parent, "left-margin", &margin, NULL);
+              margin += 12;
+            }
+          g_object_set (marker, "left-margin", margin, "indent", -width,
+                        NULL);
+          g_object_set (item, "left-margin", margin + width, NULL);
+          g_autofree gchar *name = NULL;
+          g_object_get (item, "name", &name, NULL);
+          g_hash_table_insert (margins, g_steal_pointer (&name),
+                               GINT_TO_POINTER (margin + width));
+        }
+      while (gtk_text_iter_forward_line (&iter));
+      defer_resize (view);
+    }
 }
 
 void

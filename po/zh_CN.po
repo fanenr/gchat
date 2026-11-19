@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gchat\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-18 15:55+0800\n"
+"POT-Creation-Date: 2026-11-19 12:00+0800\n"
 "PO-Revision-Date: 2026-11-13 21:20+0800\n"
 "Last-Translator: gchat contributors\n"
 "Language-Team: Simplified Chinese\n"
@@ -29,7 +29,7 @@ msgstr "高"
 msgid "Max"
 msgstr "最高"
 
-#: main.c:254 main.c:2987
+#: main.c:254 main.c:2988
 msgid "Image exceeds the 8 MiB limit."
 msgstr "图片超过 8 MiB 的上限。"
 
@@ -37,7 +37,7 @@ msgstr "图片超过 8 MiB 的上限。"
 msgid "Unsupported image format."
 msgstr "不支持的图片格式。"
 
-#: main.c:350 main.c:3196
+#: main.c:350 main.c:3197
 msgid "Image dimensions are too large."
 msgstr "图片尺寸过大。"
 
@@ -81,7 +81,7 @@ msgstr "重新生成"
 msgid "Delete message"
 msgstr "删除这条消息"
 
-#: main.c:1043 main.c:3440
+#: main.c:1043 main.c:3441
 msgid "Failed to save conversation"
 msgstr "会话保存失败"
 
@@ -188,7 +188,7 @@ msgstr "推理级别"
 msgid "Failed to save API key"
 msgstr "API 密钥保存失败"
 
-#: main.c:1813 main.c:3571
+#: main.c:1813 main.c:3677
 msgid "API key saved"
 msgstr "API 密钥已保存"
 
@@ -235,7 +235,7 @@ msgstr "连接中断，回复可能不完整"
 msgid "Request failed"
 msgstr "请求失败"
 
-#: main.c:2261 main.c:3110 main.c:3246
+#: main.c:2261 main.c:3111 main.c:3247
 msgid "A request can contain at most 600 images."
 msgstr "单次请求最多包含 600 张图片。"
 
@@ -255,7 +255,7 @@ msgstr "对话内容过大，无法发送。"
 msgid "Images require the DeepSeek-Flash model."
 msgstr "图片需要使用 DeepSeek-Flash 模型。"
 
-#: main.c:2454 main.c:3164 main.c:3345
+#: main.c:2454 main.c:3165 main.c:3346
 msgid "Wait for images to finish loading."
 msgstr "请等待图片加载完成。"
 
@@ -263,85 +263,93 @@ msgstr "请等待图片加载完成。"
 msgid "Finish or cancel editing before regenerating."
 msgstr "正在编辑，发送或取消编辑后再重新生成"
 
-#: main.c:2621 main.c:3291 main.c:3340
+#: main.c:2622 main.c:3292 main.c:3341
 msgid "Generating. Click ■ to stop."
 msgstr "正在生成，点 ■ 可停止"
 
-#: main.c:2919
+#: main.c:2920
 #, c-format
 msgid "Remove image %u"
 msgstr "移除第 %u 张图片"
 
-#: main.c:3169
+#: main.c:3170
 msgid "Select images"
 msgstr "选择图片"
 
-#: main.c:3171
+#: main.c:3172
 msgid "Images"
 msgstr "图片"
 
-#: main.c:3208
+#: main.c:3209
 msgid "Unable to encode clipboard image."
 msgstr "无法编码剪贴板图片。"
 
-#: main.c:3321
+#: main.c:3322
 msgid "Only local image files can be pasted."
 msgstr "只能粘贴本地图片文件。"
 
-#: main.c:3494
+#: main.c:3600
 msgid "System default"
 msgstr "跟随系统"
 
-#: main.c:3495
+#: main.c:3601
 msgid "Light"
 msgstr "浅色"
 
-#: main.c:3496
+#: main.c:3602
 msgid "Dark"
 msgstr "深色"
 
-#: main.c:3497
+#: main.c:3603
 msgid "System language"
 msgstr "跟随系统"
 
-#: main.c:3542
+#: main.c:3648
 msgid "Failed to save theme"
 msgstr "主题保存失败"
 
-#: main.c:3555
+#: main.c:3661
 msgid "Failed to save language"
 msgstr "语言保存失败"
 
-#: main.c:3557 ui/settings.blp:34
+#: main.c:3663 ui/settings.blp:34
 msgid "Restart the app to apply language changes."
 msgstr "重启应用后语言设置生效。"
 
-#: main.c:3567
+#: main.c:3673
 msgid "API key cannot be empty"
 msgstr "API 密钥不能为空"
 
-#: main.c:3603
+#: main.c:3777 main.c:3815
+msgid "Failed to save font"
+msgstr "字体保存失败"
+
+#: main.c:3799
+msgid "Failed to save font size"
+msgstr "字号保存失败"
+
+#: main.c:3916
 msgid "DEEPSEEK_API_KEY environment variable (overrides this setting)"
 msgstr "环境变量 DEEPSEEK_API_KEY（优先级高于这里）"
 
-#: main.c:3605
+#: main.c:3918
 #, c-format
 msgid "Local configuration file: %s"
 msgstr "本机配置文件：%s"
 
-#: main.c:3746 ui/sidebar.blp:55
+#: main.c:4062 ui/sidebar.blp:55
 msgid "Search conversations"
 msgstr "搜索对话"
 
-#: main.c:3752
+#: main.c:4068
 msgid "No conversations found"
 msgstr "未找到对话"
 
-#: main.c:3824
+#: main.c:4140
 msgid "Message DeepSeek. Enter to send, Shift+Enter for a new line."
 msgstr "给 DeepSeek 发消息，Enter 发送，Shift+Enter 换行"
 
-#: main.c:4045
+#: main.c:4361
 #, c-format
 msgid "Unable to open conversation database: %s\n"
 msgstr "无法打开会话数据库：%s\n"
@@ -411,10 +419,42 @@ msgid "Language"
 msgstr "语言"
 
 #: ui/settings.blp:39
+msgid "Reading"
+msgstr "阅读"
+
+#: ui/settings.blp:41
+msgid "Fonts apply immediately; sidebar and input are unchanged."
+msgstr "正文和代码字体即时生效，侧栏与输入框保持不变。"
+
+#: ui/settings.blp:45 ui/settings.blp:53
+msgid "Message font"
+msgstr "正文字体"
+
+#: ui/settings.blp:62 ui/settings.blp:105
+msgid "Use default font"
+msgstr "使用默认字体"
+
+#: ui/settings.blp:68
+msgid "Message font size"
+msgstr "正文字号"
+
+#: ui/settings.blp:82 ui/settings.blp:125
+msgid "Use default font size"
+msgstr "使用默认字号"
+
+#: ui/settings.blp:88 ui/settings.blp:96
+msgid "Code block font"
+msgstr "代码块字体"
+
+#: ui/settings.blp:111
+msgid "Code block font size"
+msgstr "代码块字号"
+
+#: ui/settings.blp:132
 msgid "About"
 msgstr "关于"
 
-#: ui/settings.blp:47
+#: ui/settings.blp:140
 msgid "Conversation data"
 msgstr "会话数据"
 
@@ -434,11 +474,11 @@ msgstr "设置 (Ctrl/Cmd+,)"
 msgid "Code copied"
 msgstr "代码已复制"
 
-#: md.c:277
+#: md.c:276
 msgid "Copy code"
 msgstr "复制代码"
 
-#: md.c:497
+#: md.c:496
 msgid "Image"
 msgstr "图片"
 

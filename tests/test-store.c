@@ -422,6 +422,18 @@ config_roundtrip (void)
   g_assert_true (config_set ("api_key", "first-key"));
   g_assert_true (config_set ("theme", "dark"));
   g_assert_true (config_set ("api_key", "second-key"));
+  g_assert_true (config_set ("message_font", "苹方-简"));
+  g_assert_true (config_set ("message_font_size", "15.5"));
+  g_assert_true (config_set ("code_font", "Monospace"));
+  g_assert_true (config_set ("code_font_size", "12.5"));
+  g_autofree gchar *message_font = config_get ("message_font");
+  g_autofree gchar *message_size = config_get ("message_font_size");
+  g_autofree gchar *code_font = config_get ("code_font");
+  g_autofree gchar *code_size = config_get ("code_font_size");
+  g_assert_cmpstr (message_font, ==, "苹方-简");
+  g_assert_cmpstr (message_size, ==, "15.5");
+  g_assert_cmpstr (code_font, ==, "Monospace");
+  g_assert_cmpstr (code_size, ==, "12.5");
   g_autofree gchar *key = config_get ("api_key");
   g_autofree gchar *theme = config_get ("theme");
   g_assert_cmpstr (key, ==, "second-key");

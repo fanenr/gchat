@@ -313,6 +313,18 @@ code_block_layout (gconstpointer data)
       show_window ();
       wait_for_layout ();
       g_assert_true (gtk_widget_get_mapped (view));
+      GtkWidget *bar = gtk_widget_get_first_child (card);
+      g_assert_cmpint (gtk_widget_get_margin_top (bar), ==, 12);
+      graphene_rect_t bar_bounds, label_bounds, copy_bounds;
+      g_assert_true (gtk_widget_compute_bounds (bar, card, &bar_bounds));
+      g_assert_true (gtk_widget_compute_bounds (
+          gtk_widget_get_first_child (bar), card, &label_bounds));
+      g_assert_true (gtk_widget_compute_bounds (
+          gtk_widget_get_last_child (bar), card, &copy_bounds));
+      g_assert_cmpfloat (bar_bounds.origin.y, >=, 12);
+      g_assert_cmpfloat (bar_bounds.origin.y, <=, 14);
+      g_assert_cmpfloat (label_bounds.origin.y, >=, bar_bounds.origin.y);
+      g_assert_cmpfloat (copy_bounds.origin.y, >=, bar_bounds.origin.y);
       GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
       GtkTextIter end;
       gtk_text_buffer_get_end_iter (buffer, &end);
@@ -321,14 +333,329 @@ code_block_layout (gconstpointer data)
       gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &end, &glyph);
       graphene_rect_t bounds;
       g_assert_true (gtk_widget_compute_bounds (view, card, &bounds));
+      GtkTextIter start;
+      gtk_text_buffer_get_start_iter (buffer, &start);
+      GdkRectangle first;
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &first);
+      g_assert_cmpfloat (label_bounds.origin.x, ==,
+                         bounds.origin.x + first.x);
       gdouble bottom_gap = gtk_widget_get_height (card) - bounds.origin.y -
                            glyph.y - glyph.height;
       g_test_message ("code case %u: bottom gap %.1f px", i, bottom_gap);
-      g_assert_cmpfloat (bottom_gap, >=, 8);
-      g_assert_cmpfloat (bottom_gap, <=, 12);
+      g_assert_cmpfloat (bottom_gap, >=, 16);
+      g_assert_cmpfloat (bottom_gap, <=, 24);
       g_assert_cmpint (glyph.y + glyph.height, <=,
                        gtk_widget_get_height (view));
     }
+  apply_theme ("system");
+  teardown ();
+}
+
+static void
+prose_layout (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  apply_theme (GPOINTER_TO_INT (data) ? "dark" : "light");
+  static const gchar *prefixes[] = { "• ", "9. ", "10. ", "999999999. ",
+                                     "☑ ", "☐ " };
+  static const gchar *markers[] = { "-", "9.", "10.", "999999999.",
+                                    "- [x]", "- [ ]" };
+  static const gchar long_text[] =
+      "Reading 中文长回复 should be comfortable. Each list item wraps "
+      "onto several lines, and those lines must align with the first word "
+      "rather than the number or checkbox at the start of the item.";
+  for (guint i = 0; i < G_N_ELEMENTS (markers); i++)
+    {
+      g_autofree gchar *indent =
+          g_strnfill (g_utf8_strlen (prefixes[i], -1), ' ');
+      g_autofree gchar *markdown = g_strdup_printf (
+          "%s %s\n\n%scontinuation\n\n%s- %s\n\n"
+          "%s  nested continuation\n",
+          markers[i], long_text, indent, indent, long_text, indent);
+      JsonObject *msg = json_array_get_object_element (app->chat->messages, 1);
+      json_object_set_string_member (msg, "content", markdown);
+      render_chat ();
+      show_window ();
+      GtkWidget *bubble = gtk_widget_get_last_child (app->messages);
+      GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
+      GtkWidget *view = gtk_widget_get_first_child (body);
+      g_assert_true (GTK_IS_TEXT_VIEW (view));
+      g_assert_cmpint (gtk_text_view_get_pixels_inside_wrap (
+                           GTK_TEXT_VIEW (view)),
+                       ==, 0);
+      const PangoFontDescription *font = pango_context_get_font_description (
+          gtk_widget_get_pango_context (view));
+      g_assert_cmpint (pango_font_description_get_size (font), ==,
+                       14 * PANGO_SCALE);
+      GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+      GtkTextIter start, end;
+      gtk_text_buffer_get_start_iter (buffer, &start);
+      g_autofree gchar *prefix =
+          g_strdup_printf ("%sReading", prefixes[i]);
+      g_assert_true (gtk_text_iter_forward_search (
+          &start, prefix, GTK_TEXT_SEARCH_TEXT_ONLY, &start, &end, NULL));
+      GdkRectangle marker, first, wrapped, paragraph, nested;
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &marker);
+      gtk_text_iter_forward_chars (&start, g_utf8_strlen (prefixes[i], -1));
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &first);
+      GtkTextIter next = start;
+      g_assert_true (gtk_text_view_forward_display_line (GTK_TEXT_VIEW (view),
+                                                         &next));
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &next, &wrapped);
+      g_assert_cmpint (marker.x, >=, 0);
+      /* Checkbox fallback fonts can have different glyph extents. */
+      g_assert_cmpint (marker.y, <, first.y + first.height);
+      g_assert_cmpint (first.y, <, marker.y + marker.height);
+      g_test_message ("list %s: marker %d, first %d, wrapped %d",
+                      markers[i], marker.x, first.x, wrapped.x);
+      g_assert_cmpint (ABS (wrapped.x - first.x), <=, 1);
+      g_assert_cmpint (wrapped.y, >, first.y);
+      g_assert_true (gtk_text_iter_forward_search (
+          &next, "continuation", GTK_TEXT_SEARCH_TEXT_ONLY, &start, &end,
+          NULL));
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start,
+                                       &paragraph);
+      g_assert_cmpint (ABS (paragraph.x - first.x), <=, 1);
+      g_assert_true (gtk_text_iter_forward_search (
+          &end, "• Reading", GTK_TEXT_SEARCH_TEXT_ONLY, &start, &end, NULL));
+      gtk_text_iter_forward_chars (&start, 2);
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &nested);
+      g_assert_cmpint (nested.x, >, first.x);
+      next = start;
+      g_assert_true (gtk_text_view_forward_display_line (GTK_TEXT_VIEW (view),
+                                                         &next));
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &next, &wrapped);
+      g_assert_cmpint (ABS (wrapped.x - nested.x), <=, 1);
+      g_assert_true (gtk_text_iter_forward_search (
+          &next, "nested continuation", GTK_TEXT_SEARCH_TEXT_ONLY, &start,
+          &end, NULL));
+      gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start,
+                                       &paragraph);
+      g_assert_cmpint (ABS (paragraph.x - nested.x), <=, 1);
+    }
+  apply_theme ("system");
+  teardown ();
+}
+
+static void
+assert_line_height (GtkWidget *widget,
+                    double     factor)
+{
+  GtkTextView *view = GTK_TEXT_VIEW (widget);
+  GtkTextIter first, next;
+  gtk_text_buffer_get_start_iter (gtk_text_view_get_buffer (view), &first);
+  next = first;
+  gtk_text_iter_forward_to_line_end (&next);
+  g_autofree gchar *line = gtk_text_iter_get_text (&first, &next);
+  g_autoptr (PangoLayout) layout =
+      gtk_widget_create_pango_layout (widget, line);
+  g_autoptr (PangoAttrList) attrs = pango_attr_list_new ();
+  pango_attr_list_insert (attrs, pango_attr_line_height_new (factor));
+  pango_layout_set_attributes (layout, attrs);
+  int expected;
+  pango_layout_get_pixel_size (layout, NULL, &expected);
+  GdkRectangle a, b;
+  gtk_text_view_get_iter_location (view, &first, &a);
+  next = first;
+  g_assert_true (gtk_text_view_forward_display_line (view, &next));
+  gtk_text_view_get_iter_location (view, &next, &b);
+  g_test_message ("line height: actual %d, expected %d", b.y - a.y, expected);
+  g_assert_cmpint (ABS (b.y - a.y - expected), <=, 1);
+}
+
+static void
+assert_paragraph_gap (GtkWidget   *widget,
+                      const gchar *text,
+                      int          gap)
+{
+  GtkTextView *view = GTK_TEXT_VIEW (widget);
+  GtkTextIter start, end;
+  gtk_text_buffer_get_start_iter (gtk_text_view_get_buffer (view), &start);
+  g_assert_true (gtk_text_iter_forward_search (
+      &start, text, GTK_TEXT_SEARCH_TEXT_ONLY, &start, &end, NULL));
+  int actual;
+  gtk_text_view_get_line_yrange (view, &start, NULL, &actual);
+  g_autoptr (PangoLayout) layout =
+      gtk_widget_create_pango_layout (widget, text);
+  g_autoptr (PangoAttrList) attrs = pango_attr_list_new ();
+  pango_attr_list_insert (attrs, pango_attr_line_height_new (1.3));
+  pango_layout_set_attributes (layout, attrs);
+  int line_height;
+  pango_layout_get_pixel_size (layout, NULL, &line_height);
+  g_test_message ("gap after %s: actual %d, expected %d", text,
+                  actual - line_height, gap);
+  g_assert_cmpint (ABS (actual - line_height - gap), <=, 1);
+}
+
+static void
+reading_rhythm (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  apply_theme (GPOINTER_TO_INT (data) ? "dark" : "light");
+  JsonObject *msg = json_array_get_object_element (app->chat->messages, 1);
+  json_object_set_string_member (
+      msg, "content", "Reading 中文\nReading 中文\n\n"
+                      "paragraph\n\n#### Heading\n\n- first\n- second\n\n"
+                      "```c\nint value;\nint value;\n```\n\n"
+                      "| Header |\n| --- |\n| body |\n");
+  render_chat ();
+  show_window ();
+  GtkWidget *bubble = gtk_widget_get_last_child (app->messages);
+  GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
+  GtkWidget *prose = gtk_widget_get_first_child (body);
+  GtkWidget *card = gtk_widget_get_next_sibling (prose);
+  GtkWidget *code = gtk_widget_get_last_child (card);
+  for (guint i = 0; i < 2; i++)
+    {
+      if (i == 1)
+        {
+          g_assert_true (config_set ("message_font_size", "28"));
+          g_assert_true (config_set ("code_font_size", "26"));
+          refresh_font_css ();
+          wait_for_layout ();
+        }
+      assert_line_height (prose, 1.3);
+      assert_line_height (code, 1.6);
+      assert_paragraph_gap (prose, "paragraph", 16);
+      assert_paragraph_gap (prose, "Heading", 8);
+      assert_paragraph_gap (prose, "first", 6);
+      g_assert_cmpint (gtk_text_view_get_pixels_inside_wrap (
+                           GTK_TEXT_VIEW (prose)),
+                       ==, 0);
+      g_assert_cmpint (gtk_widget_get_margin_top (code), ==, 16);
+      g_assert_cmpint (gtk_widget_get_margin_bottom (code), ==, 16);
+      g_assert_cmpint (gtk_widget_get_margin_start (code), ==, 16);
+      g_assert_cmpint (gtk_widget_get_margin_end (code), ==, 16);
+    }
+  GtkWidget *table = gtk_widget_get_next_sibling (card);
+  GtkWidget *grid = gtk_widget_get_first_child (table);
+  GtkWidget *header = gtk_grid_get_child_at (GTK_GRID (grid), 0, 0);
+  GtkWidget *cell = gtk_grid_get_child_at (GTK_GRID (grid), 0, 2);
+  g_assert_false (gtk_widget_has_css_class (header, "dimmed"));
+  g_assert_cmpint (gtk_widget_get_margin_top (cell), ==, 10);
+  g_assert_cmpint (gtk_widget_get_margin_bottom (cell), ==, 10);
+  g_assert_cmpint (gtk_widget_get_margin_start (cell), ==, 16);
+  g_assert_cmpint (gtk_widget_get_margin_end (cell), ==, 16);
+  g_assert_true (config_set ("message_font_size", NULL));
+  g_assert_true (config_set ("code_font_size", NULL));
+  refresh_font_css ();
+  apply_theme ("system");
+  teardown ();
+}
+
+static void
+selection_spacing (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  apply_theme (GPOINTER_TO_INT (data) ? "dark" : "light");
+  static const struct
+  {
+    const gchar *markdown;
+    const gchar *selected;
+    int          gap;
+  } cases[] = {
+    { "Paragraph 中文\n\n## Next", "Paragraph 中文", 24 },
+    { "Wrapped paragraph 中文 with enough text to cross the available "
+      "width. The selection must stop after the last line of text rather "
+      "than filling the paragraph spacing before the next heading.\n\n"
+      "## Next",
+      "Wrapped paragraph", 24 },
+    { "First line\nSecond line\n\nNext", "Second line", 16 },
+    { "#### Heading\n\n- item", "Heading", 8 },
+    { "- first\n- second", "first", 6 },
+    { "- [x] first\n- [ ] second", "first", 6 },
+    { "First paragraph\n\nSecond paragraph\n\nNext",
+      "First paragraph\nSecond paragraph", 16 },
+    { "שלום עברית\n\nNext", "שלום עברית", 16 },
+  };
+  JsonObject *msg = json_array_get_object_element (app->chat->messages, 1);
+  for (guint size = 0; size < 2; size++)
+    {
+      if (size == 1)
+        {
+          g_assert_true (config_set ("message_font_size", "28"));
+          refresh_font_css ();
+        }
+      for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
+        {
+          json_object_set_string_member (msg, "content", cases[i].markdown);
+          render_chat ();
+          show_window ();
+          GtkWidget *bubble = gtk_widget_get_last_child (app->messages);
+          GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
+          GtkWidget *view = gtk_widget_get_first_child (body);
+          GtkTextBuffer *buffer =
+              gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+          GtkTextIter start, end, last;
+          gtk_text_buffer_get_start_iter (buffer, &start);
+          g_assert_true (gtk_text_iter_forward_search (
+              &start, cases[i].selected, GTK_TEXT_SEARCH_TEXT_ONLY,
+              &start, &end, NULL));
+          if (!gtk_text_iter_ends_line (&end))
+            gtk_text_iter_forward_to_line_end (&end);
+          last = end;
+          gtk_text_iter_backward_char (&last);
+          gtk_text_buffer_select_range (buffer, &start, &end);
+          gtk_widget_grab_focus (view);
+          wait_for_layout ();
+
+          int y, line_height;
+          gtk_text_view_get_line_yrange (GTK_TEXT_VIEW (view), &last,
+                                         &y, &line_height);
+          GdkRectangle glyph;
+          gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &last,
+                                           &glyph);
+          int x = glyph.x + MAX (1, glyph.width / 2);
+          int gap_top = y + line_height - cases[i].gap;
+          gtk_text_view_buffer_to_window_coords (
+              GTK_TEXT_VIEW (view), GTK_TEXT_WINDOW_WIDGET, x, gap_top,
+              &x, &gap_top);
+          int width = gtk_widget_get_width (view);
+          int height = gtk_widget_get_height (view);
+          GtkSnapshot *snapshot = gtk_snapshot_new ();
+          GTK_WIDGET_GET_CLASS (view)->snapshot (view, snapshot);
+          g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (snapshot);
+          g_assert_nonnull (node);
+          graphene_rect_t bounds = GRAPHENE_RECT_INIT (0, 0, width, height);
+          g_autoptr (GdkTexture) texture = gsk_renderer_render_texture (
+              gtk_native_get_renderer (GTK_NATIVE (app->window)), node,
+              &bounds);
+          gsize stride = width * 4;
+          g_autofree guchar *pixels = g_new0 (guchar, stride * height);
+          gdk_texture_download (texture, pixels, stride);
+          g_assert_cmpint (x, >=, 0);
+          g_assert_cmpint (x, <, width);
+          g_assert_cmpint (gap_top, >, 0);
+          g_assert_cmpint (gap_top + cases[i].gap, <=, height);
+          g_test_message ("selection size %u case %u: x %d, gap %d..%d",
+                          size, i, x, gap_top, gap_top + cases[i].gap);
+          g_assert_cmpuint (pixels[(gap_top - 1) * stride + x * 4 + 3], >, 0);
+          for (int dy = 0; dy < cases[i].gap; dy++)
+            g_assert_cmpuint (pixels[(gap_top + dy) * stride + x * 4 + 3],
+                              ==, 0);
+          if (strchr (cases[i].selected, '\n') != NULL)
+            {
+              gtk_text_view_get_line_yrange (GTK_TEXT_VIEW (view), &start,
+                                             &y, &line_height);
+              gtk_text_view_buffer_to_window_coords (
+                  GTK_TEXT_VIEW (view), GTK_TEXT_WINDOW_WIDGET,
+                  0, y + line_height - cases[i].gap, NULL, &gap_top);
+              for (int dy = 0; dy < cases[i].gap; dy++)
+                g_assert_cmpuint (
+                    pixels[(gap_top + dy) * stride + 3], ==, 0);
+            }
+          g_assert_true (gtk_text_buffer_get_selection_bounds (buffer,
+                                                               &start, &end));
+          g_autofree gchar *selected =
+              gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+          g_assert_true (g_str_has_prefix (selected, cases[i].selected));
+        }
+    }
+  g_assert_true (config_set ("message_font_size", NULL));
+  refresh_font_css ();
   apply_theme ("system");
   teardown ();
 }
@@ -591,6 +918,26 @@ find_label (GtkWidget   *root,
        child = gtk_widget_get_next_sibling (child))
     {
       GtkWidget *found = find_label (child, text);
+      if (found != NULL)
+        return found;
+    }
+  return NULL;
+}
+
+/* Return the borrowed button with the matching tooltip. */
+static GtkWidget *
+find_button (GtkWidget   *root,
+             const gchar *tooltip)
+{
+  if (GTK_IS_BUTTON (root) &&
+      g_strcmp0 (gtk_widget_get_tooltip_text (root), tooltip) == 0)
+    {
+      return root;
+    }
+  for (GtkWidget *child = gtk_widget_get_first_child (root); child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      GtkWidget *found = find_button (child, tooltip);
       if (found != NULL)
         return found;
     }
@@ -908,6 +1255,314 @@ language_settings (void)
   g_assert_cmpuint (adw_combo_row_get_selected (row), ==, selected);
   g_unlink (path);
   g_unlink (bak);
+  teardown ();
+}
+
+static GtkFontDialogButton *
+settings_font_button (AdwDialog   *dialog,
+                      const gchar *title)
+{
+  GtkWidget *label = find_label (GTK_WIDGET (dialog), title);
+  g_assert_nonnull (label);
+  AdwActionRow *row =
+      ADW_ACTION_ROW (gtk_widget_get_ancestor (label, ADW_TYPE_ACTION_ROW));
+  return GTK_FONT_DIALOG_BUTTON (adw_action_row_get_activatable_widget (row));
+}
+
+static AdwSpinRow *
+settings_font_size (AdwDialog   *dialog,
+                    const gchar *title)
+{
+  GtkWidget *label = find_label (GTK_WIDGET (dialog), title);
+  g_assert_nonnull (label);
+  return ADW_SPIN_ROW (gtk_widget_get_ancestor (label, ADW_TYPE_SPIN_ROW));
+}
+
+static void
+assert_font_size (GtkWidget *widget,
+                  double     size)
+{
+  const PangoFontDescription *font = pango_context_get_font_description (
+      gtk_widget_get_pango_context (widget));
+  g_assert_cmpint (pango_font_description_get_size (font), ==,
+                   (int) (size * PANGO_SCALE));
+}
+
+static void
+font_settings (void)
+{
+  if (!setup_ui ())
+    return;
+  g_assert_true (config_set ("api_key", "font-test-key"));
+  g_assert_true (config_set ("theme", "dark"));
+  JsonObject *msg = json_array_get_object_element (app->chat->messages, 1);
+  const gchar *markdown =
+      "- Reading a long reply should be comfortable. Wrapped lines align "
+      "with the first word, even after the font size changes.\n\n"
+      "  ```c\n  int value = 42;\n  ```\n\n  after code\n\n"
+      "  - Nested lines also wrap at the correct indentation, without "
+      "replacing the original text buffer or losing its selection.\n";
+  json_object_set_string_member (msg, "content", markdown);
+  render_chat ();
+  rebuild_sidebar ();
+  show_window ();
+  GtkWidget *bubble = gtk_widget_get_last_child (app->messages);
+  GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
+  GtkWidget *view = gtk_widget_get_first_child (body);
+  GtkWidget *card = gtk_widget_get_next_sibling (view);
+  g_assert_true (gtk_widget_has_css_class (card, "code-card"));
+  GtkWidget *code = gtk_widget_get_last_child (card);
+  assert_font_size (view, 14);
+  assert_font_size (code, 13);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+  GtkTextIter start, end;
+  gtk_text_buffer_get_iter_at_offset (buffer, &start, 2);
+  gtk_text_buffer_get_iter_at_offset (buffer, &end, 9);
+  gtk_text_buffer_select_range (buffer, &start, &end);
+
+  on_settings_clicked (NULL, NULL);
+  wait_for_layout ();
+  AdwDialog *dialog = adw_application_window_get_visible_dialog (
+      ADW_APPLICATION_WINDOW (app->window));
+  const gchar *titles[] = { _ ("Message font"), _ ("Code block font") };
+  const gchar *size_titles[] = { _ ("Message font size"),
+                                 _ ("Code block font size") };
+  const gchar *families[] = { "Serif", "Monospace" };
+  const double sizes[] = { 24, 18 };
+  for (guint i = 0; i < G_N_ELEMENTS (FONT_SETTINGS); i++)
+    {
+      GtkFontDialogButton *button = settings_font_button (dialog, titles[i]);
+      AdwSpinRow *row = settings_font_size (dialog, size_titles[i]);
+      g_assert_cmpint (gtk_font_dialog_button_get_level (button), ==,
+                       GTK_FONT_LEVEL_FAMILY);
+      g_assert_cmpfloat (adw_spin_row_get_value (row), ==,
+                         FONT_SETTINGS[i].default_size);
+      g_assert_true (gtk_widget_get_mapped (GTK_WIDGET (button)));
+      g_assert_cmpstr (adw_action_row_get_subtitle (ADW_ACTION_ROW (row)), ==,
+                       "");
+      GtkWidget *reset = gtk_widget_get_next_sibling (GTK_WIDGET (button));
+      GtkWidget *size_reset =
+          find_button (GTK_WIDGET (row), _ ("Use default font size"));
+      g_assert_nonnull (size_reset);
+      g_assert_false (gtk_widget_get_visible (reset));
+      g_assert_false (gtk_widget_get_visible (size_reset));
+      g_autofree gchar *default_family = g_ascii_strdown (
+          pango_font_description_get_family (
+              gtk_font_dialog_button_get_font_desc (button)),
+          -1);
+      g_autoptr (PangoFontDescription) fallback =
+          pango_font_description_from_string (default_family);
+      g_autoptr (PangoFontDescription) font =
+          pango_font_description_from_string (families[i]);
+      gtk_font_dialog_button_set_font_desc (button, font);
+      adw_spin_row_set_value (row, sizes[i]);
+      g_assert_true (gtk_widget_get_visible (reset));
+      g_assert_true (gtk_widget_get_visible (size_reset));
+      gtk_font_dialog_button_set_font_desc (button, fallback);
+      g_assert_false (gtk_widget_get_visible (reset));
+      g_assert_true (gtk_widget_get_visible (size_reset));
+      gtk_font_dialog_button_set_font_desc (button, font);
+      adw_spin_row_set_value (row, FONT_SETTINGS[i].default_size);
+      g_assert_true (gtk_widget_get_visible (reset));
+      g_assert_false (gtk_widget_get_visible (size_reset));
+      adw_spin_row_set_value (row, sizes[i]);
+      g_assert_true (gtk_widget_get_visible (size_reset));
+      g_autofree gchar *saved = config_get (FONT_SETTINGS[i].key);
+      g_assert_cmpstr (saved, ==, families[i]);
+    }
+  wait_for_layout ();
+  g_assert_true (gtk_widget_get_first_child (body) == view);
+  g_assert_true (gtk_widget_get_next_sibling (view) == card);
+  g_assert_true (gtk_text_view_get_buffer (GTK_TEXT_VIEW (view)) == buffer);
+  g_assert_true (gtk_text_buffer_get_selection_bounds (buffer, &start, &end));
+  g_assert_cmpint (gtk_text_iter_get_offset (&start), ==, 2);
+  g_assert_cmpint (gtk_text_iter_get_offset (&end), ==, 9);
+  assert_font_size (view, 24);
+  assert_font_size (code, 18);
+  assert_font_size (app->input, 14);
+  GtkWidget *new_chat = find_label (
+      adw_overlay_split_view_get_sidebar (ADW_OVERLAY_SPLIT_VIEW (app->split)),
+      _ ("New chat"));
+  assert_font_size (new_chat, 14);
+  assert_user_bubble_layout ("question one");
+  gtk_text_buffer_get_iter_at_offset (buffer, &start, 2);
+  GdkRectangle first, wrapped, later;
+  gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &first);
+  g_assert_true (gtk_text_view_forward_display_line (GTK_TEXT_VIEW (view),
+                                                     &start));
+  gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &wrapped);
+  g_assert_cmpint (ABS (wrapped.x - first.x), <=, 1);
+  GtkWidget *tail = gtk_widget_get_next_sibling (card);
+  GtkTextBuffer *tail_buffer =
+      gtk_text_view_get_buffer (GTK_TEXT_VIEW (tail));
+  gtk_text_buffer_get_start_iter (tail_buffer, &start);
+  gtk_text_view_get_iter_location (GTK_TEXT_VIEW (tail), &start, &later);
+  g_assert_cmpint (ABS (later.x - first.x), <=, 1);
+
+  g_autofree gchar *path = store_config_path ();
+  g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
+  g_assert_cmpint (g_mkdir (tmp, 0700), ==, 0);
+  for (guint i = 0; i < G_N_ELEMENTS (FONT_SETTINGS); i++)
+    {
+      GtkFontDialogButton *button = settings_font_button (dialog, titles[i]);
+      AdwSpinRow *row = settings_font_size (dialog, size_titles[i]);
+      g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
+      adw_spin_row_set_value (row, 30);
+      g_test_assert_expected_messages ();
+      g_assert_cmpfloat (adw_spin_row_get_value (row), ==, sizes[i]);
+      g_autoptr (PangoFontDescription) font =
+          pango_font_description_from_string ("Sans");
+      g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
+      gtk_font_dialog_button_set_font_desc (button, font);
+      g_test_assert_expected_messages ();
+      g_assert_cmpstr (pango_font_description_get_family (
+                           gtk_font_dialog_button_get_font_desc (button)),
+                       ==, families[i]);
+      GtkWidget *reset = gtk_widget_get_next_sibling (GTK_WIDGET (button));
+      GtkWidget *size_reset =
+          find_button (GTK_WIDGET (row), _ ("Use default font size"));
+      g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
+      g_signal_emit_by_name (reset, "clicked");
+      g_test_assert_expected_messages ();
+      g_assert_true (gtk_widget_get_visible (reset));
+      g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "cannot write *");
+      g_signal_emit_by_name (size_reset, "clicked");
+      g_test_assert_expected_messages ();
+      g_assert_cmpfloat (adw_spin_row_get_value (row), ==, sizes[i]);
+      g_assert_true (gtk_widget_get_visible (size_reset));
+    }
+  g_assert_cmpint (g_rmdir (tmp), ==, 0);
+  assert_font_size (view, 24);
+  assert_font_size (code, 18);
+  g_autofree gchar *key = config_get ("api_key");
+  g_autofree gchar *theme = config_get ("theme");
+  g_assert_cmpstr (key, ==, "font-test-key");
+  g_assert_cmpstr (theme, ==, "dark");
+
+  adw_dialog_force_close (dialog);
+  on_settings_clicked (NULL, NULL);
+  wait_for_layout ();
+  dialog = adw_application_window_get_visible_dialog (
+      ADW_APPLICATION_WINDOW (app->window));
+  for (guint i = 0; i < G_N_ELEMENTS (FONT_SETTINGS); i++)
+    {
+      GtkFontDialogButton *button = settings_font_button (dialog, titles[i]);
+      AdwSpinRow *row = settings_font_size (dialog, size_titles[i]);
+      g_assert_cmpfloat (adw_spin_row_get_value (row), ==, sizes[i]);
+      g_assert_cmpstr (pango_font_description_get_family (
+                           gtk_font_dialog_button_get_font_desc (button)),
+                       ==, families[i]);
+      GtkWidget *reset = gtk_widget_get_next_sibling (GTK_WIDGET (button));
+      GtkWidget *size_reset =
+          find_button (GTK_WIDGET (row), _ ("Use default font size"));
+      g_assert_true (GTK_IS_BUTTON (reset));
+      g_assert_true (gtk_widget_get_visible (reset));
+      g_assert_true (gtk_widget_get_visible (size_reset));
+      g_signal_emit_by_name (reset, "clicked");
+      g_autofree gchar *saved = config_get (FONT_SETTINGS[i].key);
+      g_assert_null (saved);
+      g_assert_false (gtk_widget_get_visible (reset));
+      g_assert_true (gtk_widget_get_visible (size_reset));
+      g_assert_cmpfloat (adw_spin_row_get_value (row), ==, sizes[i]);
+      g_signal_emit_by_name (size_reset, "clicked");
+      g_assert_cmpfloat (adw_spin_row_get_value (row), ==,
+                         FONT_SETTINGS[i].default_size);
+      g_assert_false (gtk_widget_get_visible (size_reset));
+      const gchar *family = pango_font_description_get_family (
+          gtk_font_dialog_button_get_font_desc (button));
+      g_assert_true (config_set (FONT_SETTINGS[i].key, family));
+    }
+  adw_dialog_force_close (dialog);
+  on_settings_clicked (NULL, NULL);
+  wait_for_layout ();
+  dialog = adw_application_window_get_visible_dialog (
+      ADW_APPLICATION_WINDOW (app->window));
+  for (guint i = 0; i < G_N_ELEMENTS (FONT_SETTINGS); i++)
+    {
+      GtkFontDialogButton *button = settings_font_button (dialog, titles[i]);
+      AdwSpinRow *row = settings_font_size (dialog, size_titles[i]);
+      GtkWidget *reset = gtk_widget_get_next_sibling (GTK_WIDGET (button));
+      GtkWidget *size_reset =
+          find_button (GTK_WIDGET (row), _ ("Use default font size"));
+      g_assert_false (gtk_widget_get_visible (reset));
+      g_assert_false (gtk_widget_get_visible (size_reset));
+    }
+  g_unlink (path);
+  refresh_font_css ();
+  teardown ();
+}
+
+static void
+font_values (void)
+{
+  g_assert_false (font_family_valid (NULL));
+  g_assert_false (font_family_valid (""));
+  g_assert_false (font_family_valid ("font\nname"));
+  g_assert_false (font_family_valid ("\xff"));
+  g_assert_true (font_family_valid ("苹方-简"));
+  static const gchar *invalid[] = { "0", "73", "nan", "inf", "15,5",
+                                    "15px", "15 trailing" };
+  for (guint i = 0; i < G_N_ELEMENTS (invalid); i++)
+    {
+      g_assert_true (config_set ("message_font_size", invalid[i]));
+      g_assert_cmpfloat (font_size (&FONT_SETTINGS[0]), ==, 14);
+    }
+  g_assert_true (config_set ("message_font_size", "15.5"));
+  g_assert_cmpfloat (font_size (&FONT_SETTINGS[0]), ==, 15.5);
+  if (setup_ui ())
+    {
+      g_assert_true (config_set (
+          "message_font", "Bogus\\\"; } .chat-input { font-size: 72px; } /*"));
+      refresh_font_css ();
+      show_window ();
+      assert_font_size (app->input, 14);
+      teardown ();
+    }
+  g_autofree gchar *path = store_config_path ();
+  g_unlink (path);
+  if (have_display)
+    refresh_font_css ();
+}
+
+static void
+live_font_change (void)
+{
+  if (!setup_ui ())
+    return;
+  render_chat ();
+  begin_reply (FALSE);
+  gtk_widget_add_css_class (app->reply_label, "msg-text");
+  GtkWidget *label = app->reply_label;
+  GtkWidget *body = app->reply_body;
+  GtkWidget *bubble = app->reply_bubble;
+  GCancellable *cancel = app->cancel;
+  GtkTextBuffer *input = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  gtk_text_buffer_set_text (input, "draft while streaming", -1);
+  app->chat->edit_from = 0;
+  g_string_append (app->answer, "partial answer");
+  gtk_label_set_text (GTK_LABEL (label), app->answer->str);
+  show_window ();
+  g_assert_true (config_set ("message_font_size", "22"));
+  apply_font_setting (&FONT_SETTINGS[0]);
+  wait_for_layout ();
+  g_assert_true (app->busy);
+  g_assert_true (app->reply_label == label);
+  g_assert_true (app->reply_body == body);
+  g_assert_true (app->reply_bubble == bubble);
+  g_assert_true (app->cancel == cancel);
+  g_assert_cmpuint (app->chat->edit_from, ==, 0);
+  g_assert_cmpstr (app->answer->str, ==, "partial answer");
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (label)), ==,
+                   "partial answer");
+  assert_font_size (label, 22);
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds (input, &start, &end);
+  g_autofree gchar *draft =
+      gtk_text_buffer_get_text (input, &start, &end, FALSE);
+  g_assert_cmpstr (draft, ==, "draft while streaming");
+  g_autofree gchar *path = store_config_path ();
+  g_unlink (path);
+  refresh_font_css ();
   teardown ();
 }
 
@@ -3277,6 +3932,10 @@ main (int    argc,
                         code_block_layout);
   g_test_add_data_func ("/app/code-block/dark", GINT_TO_POINTER (TRUE),
                         code_block_layout);
+  g_test_add_data_func ("/app/prose-layout/light", GINT_TO_POINTER (FALSE),
+                        prose_layout);
+  g_test_add_data_func ("/app/prose-layout/dark", GINT_TO_POINTER (TRUE),
+                        prose_layout);
   g_test_add_func ("/app/action-visibility", action_visibility);
   g_test_add_func ("/app/sse-parse", sse_parser);
   g_test_add_data_func ("/app/sse-stream/multiline", GINT_TO_POINTER (0),
@@ -3306,6 +3965,17 @@ main (int    argc,
   g_test_add_func ("/app/content-builder", content_builder);
   g_test_add_func ("/app/sidebar-builder", sidebar_builder);
   g_test_add_func ("/app/language-settings", language_settings);
+  g_test_add_func ("/app/font-settings", font_settings);
+  g_test_add_func ("/app/font-values", font_values);
+  g_test_add_func ("/app/live-font-change", live_font_change);
+  g_test_add_data_func ("/app/selection-spacing/light", GINT_TO_POINTER (0),
+                        selection_spacing);
+  g_test_add_data_func ("/app/selection-spacing/dark", GINT_TO_POINTER (1),
+                        selection_spacing);
+  g_test_add_data_func ("/app/reading-rhythm/light", GINT_TO_POINTER (0),
+                        reading_rhythm);
+  g_test_add_data_func ("/app/reading-rhythm/dark", GINT_TO_POINTER (1),
+                        reading_rhythm);
   g_test_add_func ("/app/corrupt-startup", corrupt_startup);
   g_test_add_func ("/app/edit-preserves-history", edit_preserves_history);
   g_test_add_data_func ("/app/fork/first-user", GUINT_TO_POINTER (0),

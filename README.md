@@ -46,6 +46,7 @@ The client needs these packages:
 - Code blocks: a separate card with a language label and a copy button. GtkSourceView does the highlighting.
 - Multiple sessions: search, pin, duplicate, rename, and delete sessions from the sidebar.
 - Adaptive layout: messages and the input area widen together on wide windows. The window requests a minimum size of 640 × 480 logical pixels.
+- Reading: choose separate fonts and sizes for messages and code blocks. Line heights scale with their fonts; headings have distinct levels, lists use hanging indents, and tables keep a light, borderless layout. Reset buttons appear only for non-default values. Changes apply immediately and persist; the sidebar and input box are unchanged.
 - Message actions: copy, edit and resend, fork into a new session, regenerate, and delete.
 - Image input: select or paste multiple images with `deepseek-flash`. Preview or remove them in the input box, then send with or without text.
 - Models and reasoning levels: `deepseek-flash` and `deepseek-v4-pro`, with four reasoning levels.
