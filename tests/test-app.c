@@ -1218,6 +1218,39 @@ minimum_window_layout (void)
 }
 
 static void
+settings_pages (void)
+{
+  if (!setup_ui ())
+    return;
+
+  show_window ();
+  on_settings_clicked (NULL, NULL);
+  wait_for_layout ();
+  AdwPreferencesDialog *dialog = ADW_PREFERENCES_DIALOG (
+      adw_application_window_get_visible_dialog (
+          ADW_APPLICATION_WINDOW (app->window)));
+  g_assert_nonnull (dialog);
+  g_assert_cmpstr (adw_preferences_dialog_get_visible_page_name (dialog), ==,
+                   "general");
+
+  const gchar *names[] = { "general", "appearance", "other" };
+  const gchar *titles[] = { _ ("General"), _ ("Appearance"), _ ("Other") };
+  const gchar *rows[] = { _ ("API key"), _ ("Theme"), _ ("Conversation data") };
+  for (guint i = 0; i < G_N_ELEMENTS (names); i++)
+    {
+      adw_preferences_dialog_set_visible_page_name (dialog, names[i]);
+      wait_for_layout ();
+      AdwPreferencesPage *page =
+          adw_preferences_dialog_get_visible_page (dialog);
+      g_assert_cmpstr (adw_preferences_page_get_title (page), ==, titles[i]);
+      GtkWidget *row = find_label (GTK_WIDGET (page), rows[i]);
+      g_assert_nonnull (row);
+      g_assert_true (gtk_widget_get_mapped (row));
+    }
+  teardown ();
+}
+
+static void
 language_settings (void)
 {
   if (!setup_ui ())
@@ -1456,6 +1489,9 @@ font_settings (void)
   wait_for_layout ();
   AdwDialog *dialog = adw_application_window_get_visible_dialog (
       ADW_APPLICATION_WINDOW (app->window));
+  adw_preferences_dialog_set_visible_page_name (ADW_PREFERENCES_DIALOG (dialog),
+                                                "appearance");
+  wait_for_layout ();
   const gchar *titles[] = { _ ("Message font"), _ ("Code block font") };
   const gchar *size_titles[] = { _ ("Message font size"),
                                  _ ("Code block font size") };
@@ -4480,6 +4516,7 @@ main (int    argc,
   g_test_add_func ("/app/minimum-window", minimum_window_layout);
   g_test_add_func ("/app/content-builder", content_builder);
   g_test_add_func ("/app/sidebar-builder", sidebar_builder);
+  g_test_add_func ("/app/settings-pages", settings_pages);
   g_test_add_func ("/app/language-settings", language_settings);
   g_test_add_data_func ("/app/title/settings", "auto_title", switch_settings);
   g_test_add_data_func ("/app/delete/settings", "confirm_delete_chat",

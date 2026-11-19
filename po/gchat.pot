@@ -341,19 +341,19 @@ msgstr ""
 msgid "Failed to save setting"
 msgstr ""
 
-#: ui/settings.blp:26
+#: ui/settings.blp:30
 msgid "Conversation"
 msgstr ""
 
-#: ui/settings.blp:29
+#: ui/settings.blp:33
 msgid "Automatic conversation titles"
 msgstr ""
 
-#: ui/settings.blp:33
+#: ui/settings.blp:37
 msgid "Confirm conversation deletion"
 msgstr ""
 
-#: main.c:3663 ui/settings.blp:34
+#: main.c:3924 ui/settings.blp:44
 msgid "Restart the app to apply language changes."
 msgstr ""
 
@@ -441,59 +441,67 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
-#: ui/settings.blp:15
+#: ui/settings.blp:12
+msgid "General"
+msgstr ""
+
+#: ui/settings.blp:19
 msgid "API key"
 msgstr ""
 
-#: ui/settings.blp:20
+#: ui/settings.blp:24
 msgid "Key source"
 msgstr ""
 
-#: ui/settings.blp:26
+#: ui/settings.blp:51
 msgid "Appearance"
 msgstr ""
 
-#: ui/settings.blp:29
+#: ui/settings.blp:56
 msgid "Theme"
 msgstr ""
 
-#: ui/settings.blp:33
+#: ui/settings.blp:43
 msgid "Language"
 msgstr ""
 
-#: ui/settings.blp:39
+#: ui/settings.blp:61
 msgid "Reading"
 msgstr ""
 
-#: ui/settings.blp:45 ui/settings.blp:53
+#: ui/settings.blp:64 ui/settings.blp:72
 msgid "Message font"
 msgstr ""
 
-#: ui/settings.blp:62 ui/settings.blp:105
+#: ui/settings.blp:81 ui/settings.blp:124
 msgid "Use default font"
 msgstr ""
 
-#: ui/settings.blp:68
+#: ui/settings.blp:87
 msgid "Message font size"
 msgstr ""
 
-#: ui/settings.blp:82 ui/settings.blp:125
+#: ui/settings.blp:101 ui/settings.blp:144
 msgid "Use default font size"
 msgstr ""
 
-#: ui/settings.blp:88 ui/settings.blp:96
+#: ui/settings.blp:107 ui/settings.blp:115
 msgid "Code block font"
 msgstr ""
 
-#: ui/settings.blp:111
+#: ui/settings.blp:130
 msgid "Code block font size"
 msgstr ""
 
-#: ui/settings.blp:132
+#: ui/settings.blp:153
+msgid "Other"
+msgstr ""
+
+#: ui/settings.blp:157
 msgid "About"
 msgstr ""
 
-#: ui/settings.blp:140
+#: ui/settings.blp:165
 msgid "Conversation data"
 msgstr ""
 

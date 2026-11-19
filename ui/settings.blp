@@ -8,6 +8,10 @@ Adw.PreferencesDialog settings_dialog {
   search-enabled: false;
 
   Adw.PreferencesPage {
+    name: "general";
+    title: _("General");
+    icon-name: "emblem-system-symbolic";
+
     Adw.PreferencesGroup {
       title: "API";
 
@@ -35,15 +39,21 @@ Adw.PreferencesDialog settings_dialog {
     }
 
     Adw.PreferencesGroup {
-      title: _("Appearance");
-
-      Adw.ComboRow theme {
-        title: _("Theme");
-      }
-
       Adw.ComboRow language {
         title: _("Language");
         subtitle: _("Restart the app to apply language changes.");
+      }
+    }
+  }
+
+  Adw.PreferencesPage {
+    name: "appearance";
+    title: _("Appearance");
+    icon-name: "preferences-desktop-appearance-symbolic";
+
+    Adw.PreferencesGroup {
+      Adw.ComboRow theme {
+        title: _("Theme");
       }
     }
 
@@ -136,6 +146,12 @@ Adw.PreferencesDialog settings_dialog {
         }
       }
     }
+  }
+
+  Adw.PreferencesPage {
+    name: "other";
+    title: _("Other");
+    icon-name: "dialog-information-symbolic";
 
     Adw.PreferencesGroup {
       title: _("About");

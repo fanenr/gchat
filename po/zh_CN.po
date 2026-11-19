@@ -337,19 +337,19 @@ msgstr "语言保存失败"
 msgid "Failed to save setting"
 msgstr "无法保存设置"
 
-#: ui/settings.blp:26
+#: ui/settings.blp:30
 msgid "Conversation"
 msgstr "会话"
 
-#: ui/settings.blp:29
+#: ui/settings.blp:33
 msgid "Automatic conversation titles"
 msgstr "自动生成会话标题"
 
-#: ui/settings.blp:33
+#: ui/settings.blp:37
 msgid "Confirm conversation deletion"
 msgstr "删除会话前确认"
 
-#: main.c:3663 ui/settings.blp:34
+#: main.c:3924 ui/settings.blp:44
 msgid "Restart the app to apply language changes."
 msgstr "重启应用后语言设置生效。"
 
@@ -437,59 +437,67 @@ msgstr "内容由 AI 生成，请仔细甄别"
 msgid "Settings"
 msgstr "设置"
 
-#: ui/settings.blp:15
+#: ui/settings.blp:12
+msgid "General"
+msgstr "常规"
+
+#: ui/settings.blp:19
 msgid "API key"
 msgstr "API 密钥"
 
-#: ui/settings.blp:20
+#: ui/settings.blp:24
 msgid "Key source"
 msgstr "密钥来源"
 
-#: ui/settings.blp:26
+#: ui/settings.blp:51
 msgid "Appearance"
 msgstr "外观"
 
-#: ui/settings.blp:29
+#: ui/settings.blp:56
 msgid "Theme"
 msgstr "主题"
 
-#: ui/settings.blp:33
+#: ui/settings.blp:43
 msgid "Language"
 msgstr "语言"
 
-#: ui/settings.blp:39
+#: ui/settings.blp:61
 msgid "Reading"
 msgstr "阅读"
 
-#: ui/settings.blp:45 ui/settings.blp:53
+#: ui/settings.blp:64 ui/settings.blp:72
 msgid "Message font"
 msgstr "正文字体"
 
-#: ui/settings.blp:62 ui/settings.blp:105
+#: ui/settings.blp:81 ui/settings.blp:124
 msgid "Use default font"
 msgstr "使用默认字体"
 
-#: ui/settings.blp:68
+#: ui/settings.blp:87
 msgid "Message font size"
 msgstr "正文字号"
 
-#: ui/settings.blp:82 ui/settings.blp:125
+#: ui/settings.blp:101 ui/settings.blp:144
 msgid "Use default font size"
 msgstr "使用默认字号"
 
-#: ui/settings.blp:88 ui/settings.blp:96
+#: ui/settings.blp:107 ui/settings.blp:115
 msgid "Code block font"
 msgstr "代码块字体"
 
-#: ui/settings.blp:111
+#: ui/settings.blp:130
 msgid "Code block font size"
 msgstr "代码块字号"
 
-#: ui/settings.blp:132
+#: ui/settings.blp:153
+msgid "Other"
+msgstr "其他"
+
+#: ui/settings.blp:157
 msgid "About"
 msgstr "关于"
 
-#: ui/settings.blp:140
+#: ui/settings.blp:165
 msgid "Conversation data"
 msgstr "会话数据"
 

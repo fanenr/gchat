@@ -76,7 +76,7 @@ This page covers what [README](../README.md) does not.
 - Copying opens a new, unpinned session with independent messages, reasoning, and drafts, including any edit in progress.
 - History, the current session, the model, the reasoning level, and each session draft are stored in `~/.local/share/gchat/session.db`.
 - History includes reasoning and think time.
-- **Settings → Conversation → Confirm conversation deletion** is on by default. The confirmation dialog defaults to Cancel. If you turn the switch off, clicking the delete button deletes the session immediately. The change takes effect at once and persists.
+- **Settings → General → Conversation → Confirm conversation deletion** is on by default. The confirmation dialog defaults to Cancel. If you turn the switch off, clicking the delete button deletes the session immediately. The change takes effect at once and persists.
 - A deletion also removes the messages and the draft of that session.
 - Sidebar search does a local, case-insensitive literal match on titles and bodies.
 - When the body matches, the client shows a nearby excerpt.
@@ -84,20 +84,18 @@ This page covers what [README](../README.md) does not.
 
 ### Automatic conversation titles
 
-- **Settings → Conversation → Automatic conversation titles** is on by default. Changes are saved and apply to requests sent after the change.
+- **Settings → General → Conversation → Automatic conversation titles** is on by default. Changes are saved and apply to requests sent after the change.
 - With the switch on, only the first send in an untitled `deepseek-flash` conversation requests a title. Existing titles, edited messages, and regenerated replies do not request a new title.
 - The client first uses up to 30 characters from the first line of the user’s text. An image without text leaves the title empty. If the stream finishes normally with a usable title, the client replaces the local title and saves it. If the title is missing or the stream is stopped or interrupted, the local title stays.
 - DeepSeek does not charge separately for the title. The answer streams as usual; after the answer, DeepSeek can wait up to five more seconds for the title. The stop button remains available.
 
 ### Settings
 
-The gear at the bottom of the sidebar opens the settings page. It offers these items:
+The gear at the bottom of the sidebar opens Settings on the **General** page. Use the page switcher to open **Appearance** or **Other**.
 
-- API key.
-- Theme. The options are follow system, light, and dark. A change applies at once and persists.
-- Interface language.
-- Reading. Message and code block font families and sizes are independent. Font pickers list installed fonts. Font and size reset buttons appear only when their own value differs from the application default; each restores only its own setting. Sizes range from 6 to 72 logical pixels. The defaults are 14px for prose and 13px for code. Changes apply immediately and persist.
-- Version and data file locations.
+- **General**: API key and its source, conversation options, and interface language.
+- **Appearance**: theme and reading fonts. The theme can follow the system, or use light or dark mode. Message and code block font families and sizes are independent. Font pickers list installed fonts. Font and size reset buttons appear only when their own value differs from the application default; each restores only its own setting. Sizes range from 6 to 72 logical pixels. The defaults are 14px for prose and 13px for code. Changes apply immediately and persist.
+- **Other**: app version and conversation data location.
 
 Reading settings leave the sidebar, input box, and reasoning text unchanged. Inline code keeps its monospace family and scales with prose. Table text and streaming replies follow the prose font. Font changes keep message selections, drafts, and active requests. List margins and user-bubble widths are recalculated without replacing widgets or reloading images. On a save failure, the control returns to its previous value. Missing or invalid font settings use the defaults; unavailable fonts fall back through GTK.
 
@@ -177,7 +175,7 @@ The client supports English and Simplified Chinese.
 - Simplified Chinese matches `zh_CN`, `zh_SG`, `zh-Hans`, and the generic `zh`.
 - Traditional Chinese falls back to English.
 
-Choose System / English / Simplified Chinese in "Settings → Appearance → Language".
+Choose System / English / Simplified Chinese in "Settings → General → Language".
 The choice is stored in the `language` field of `~/.config/gchat/config.json`.
 The value is `system`, `en`, or `zh_CN`. The choice takes effect after a **client restart**.
 If the save fails, the client shows a message and restores the previous choice. It does not change the input draft or the generation state.
