@@ -55,6 +55,8 @@ When not editing, `edit_from` and `edit_images` are SQL `NULL` and
 `edit_text` is empty. An absent `draft_images` is also SQL `NULL`.
 Every message requires a `role` (`user` or `assistant`) and text `content`.
 Text `reasoning` and a nonnegative numeric `duration` in seconds are optional.
+Assistant messages can carry `annotations` and `server_tool_calls` JSON arrays
+from DeepSeek for citations and web tool history.
 Only user messages can carry `images`. Any stored image list must be nonempty;
 each entry is a UUID, not a file path.
 

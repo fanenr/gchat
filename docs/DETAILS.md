@@ -20,6 +20,14 @@ This page covers what [README](../README.md) does not.
 - After layout, streaming text and the Markdown tail follow the bottom.
 - When you read upward, the view does not jump back to the end.
 
+### Web search and link reading
+
+- The **Web** toggle sits next to the model and reasoning selector. It is available only with `deepseek-flash` and starts off each time you launch the client. The setting applies across chats and is remembered if you switch away from Flash and back.
+- When the toggle is on, DeepSeek decides whether to search or read links. With thinking enabled, it can search over multiple steps. These server-side tools have no separate charge; model token charges still apply.
+- While waiting for the answer, the client shows search or link-reading progress. The reply lists cited HTTP and HTTPS sources once per URL. The source list does not load site icons or open URLs automatically.
+- In later Flash turns, the client resends the server tool records with chat history, even with **Web** off. This lets DeepSeek restore pages it previously read from user links. Raw search results are not restored.
+- If generation stops before the final event, the client keeps the received text and reasoning but has no final sources or tool records to save.
+
 ### Markdown rendering
 
 - md4c parses the Markdown. CommonMark and part of GFM are supported.
@@ -239,6 +247,7 @@ The regression tests also cover the following areas:
 - Reasoning storage and request filtering.
 - A slow HTTP error body and cancellation.
 - SSE field types, multi-line events, CRLF, and incomplete events.
+- The Web toggle, streamed tool progress, citation rendering, and replay of saved tool records.
 - A list number on the same line as the first paragraph.
 - An ordered list that starts at 0.
 - Multiple paragraphs and nested lists.

@@ -29,6 +29,26 @@ msgstr "高"
 msgid "Max"
 msgstr "最高"
 
+#: main.c:965
+msgid "Sources"
+msgstr "来源"
+
+#: main.c:2144
+msgid "Reading links…"
+msgstr "正在阅读链接…"
+
+#: main.c:2146
+msgid "Searching the web…"
+msgstr "正在搜索网页…"
+
+#: ui/content.blp:188
+msgid "Web"
+msgstr "联网"
+
+#: ui/content.blp:189
+msgid "Search the web and read links"
+msgstr "搜索网页和阅读链接"
+
 #: main.c:254 main.c:2988
 msgid "Image exceeds the 8 MiB limit."
 msgstr "图片超过 8 MiB 的上限。"

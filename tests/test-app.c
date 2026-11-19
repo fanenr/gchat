@@ -750,60 +750,39 @@ action_visibility (void)
 static void
 sse_parser (void)
 {
-  g_autofree gchar *content = NULL;
-  g_autofree gchar *reasoning = NULL;
-
   g_assert_null (sse_data (": keep-alive"));
   g_assert_null (sse_data ("datax: ignored"));
   g_assert_cmpstr (sse_data ("data"), ==, "");
   g_assert_cmpstr (sse_data ("data:"), ==, "");
   g_assert_cmpstr (sse_data ("data:  value"), ==, " value");
 
-  g_assert_false (sse_parse ("[DONE]", &content, &reasoning));
-  g_assert_false (sse_parse ("not json", &content, &reasoning));
-  g_assert_false (sse_parse ("{\"choices\":[]}", &content, &reasoning));
-
-  g_assert_true (
-      sse_parse ("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
-                 &content, &reasoning));
-  g_assert_cmpstr (content, ==, "hi");
-  g_assert_null (reasoning);
-  g_clear_pointer (&content, g_free);
-
-  g_assert_true (sse_parse ("{\"choices\":[{\"delta\":{\"reasoning_content\":"
-                            "\"think\",\"content\":\"a\"}}]}",
-                            &content, &reasoning));
-  g_assert_cmpstr (content, ==, "a");
-  g_assert_cmpstr (reasoning, ==, "think");
-  g_clear_pointer (&content, g_free);
-  g_clear_pointer (&reasoning, g_free);
-
   static const gchar *invalid[] = {
+    "[DONE]",
+    "not json",
     "null",
     "[]",
     "{}",
     "{\"choices\":null}",
     "{\"choices\":{}}",
+    "{\"choices\":[]}",
     "{\"choices\":[null]}",
-    "{\"choices\":[{\"delta\":null}]}",
-    "{\"choices\":[{\"delta\":42}]}",
   };
   for (guint i = 0; i < G_N_ELEMENTS (invalid); i++)
-    {
-      g_assert_false (sse_parse (invalid[i], &content, &reasoning));
-      g_assert_null (content);
-      g_assert_null (reasoning);
-    }
-  g_assert_true (
-      sse_parse ("{\"choices\":\n[{\"delta\":{\"content\":\"hi\"}}]}",
-                 &content, &reasoning));
-  g_assert_cmpstr (content, ==, "hi");
-  g_clear_pointer (&content, g_free);
-  g_assert_true (
-      sse_parse ("{\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}",
-                 &content, &reasoning));
-  g_assert_null (content);
-  g_assert_null (reasoning);
+    g_assert_null (sse_parse_choice (invalid[i]));
+
+  g_autoptr (JsonObject) choice = sse_parse_choice (
+      "{\"choices\":\n[{\"delta\":{\"reasoning_content\":\"think\","
+      "\"content\":\"hi\"}}]}");
+  g_assert_nonnull (choice);
+  JsonObject *delta = member_object (choice, "delta");
+  g_assert_cmpstr (member_string (delta, "content"), ==, "hi");
+  g_assert_cmpstr (member_string (delta, "reasoning_content"), ==, "think");
+  g_assert_null (member_string (delta, "role"));
+
+  g_clear_pointer (&choice, json_object_unref);
+  choice = sse_parse_choice ("{\"choices\":[{\"delta\":42}]}");
+  g_assert_nonnull (choice);
+  g_assert_null (member_object (choice, "delta"));
 }
 
 static void
@@ -2595,6 +2574,51 @@ payload_filters_reasoning (void)
   teardown ();
 }
 
+static void
+web_toggle (void)
+{
+  if (!setup_ui ())
+    return;
+  g_assert_true (gtk_widget_get_visible (app->web_toggle));
+  g_assert_false (gtk_toggle_button_get_active (
+      GTK_TOGGLE_BUTTON (app->web_toggle)));
+
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  for (guint i = 0; i < 3; i++)
+    {
+      if (i == 1)
+        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle),
+                                      TRUE);
+      if (i == 2)
+        {
+          on_model_choice (NULL, "deepseek-v4-pro");
+          g_assert_false (gtk_widget_get_visible (app->web_toggle));
+        }
+      gsize len;
+      g_autofree gchar *body = request_body (2, NULL, &len, NULL);
+      g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
+      JsonObject *root = json_node_get_object (json_parser_get_root (parser));
+      if (i != 1)
+        {
+          g_assert_false (json_object_has_member (root, "tools"));
+          continue;
+        }
+      JsonArray *tools = member_array (root, "tools");
+      g_assert_nonnull (tools);
+      g_assert_cmpuint (json_array_get_length (tools), ==, 2);
+      JsonObject *search = json_array_get_object_element (tools, 0);
+      JsonObject *read = json_array_get_object_element (tools, 1);
+      g_assert_cmpstr (member_string (search, "type"), ==,
+                       "deepseek_web_search");
+      g_assert_cmpstr (member_string (read, "type"), ==, "deepseek_read_url");
+    }
+  on_model_choice (NULL, "deepseek-flash");
+  g_assert_true (gtk_widget_get_visible (app->web_toggle));
+  g_assert_true (gtk_toggle_button_get_active (
+      GTK_TOGGLE_BUTTON (app->web_toggle)));
+  teardown ();
+}
+
 static JsonArray *
 image_ids (const gchar *first,
            const gchar *second)
@@ -3386,6 +3410,149 @@ reasoning_visibility (void)
 }
 
 static void
+assert_web_citations (GtkWidget *body)
+{
+  GtkWidget *label = gtk_widget_get_last_child (body);
+  g_assert_true (GTK_IS_LABEL (label));
+  g_autofree gchar *expected = g_strdup_printf (
+      "%s\nA < B & C\nhttp://example.org/", _ ("Sources"));
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (label)), ==, expected);
+  g_assert_nonnull (strstr (gtk_label_get_label (GTK_LABEL (label)),
+                            "href=\"https://example.com/?a=1&amp;b=2\""));
+}
+
+static void
+web_stream (void)
+{
+  if (!setup_ui ())
+    return;
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle), TRUE);
+  begin_reply (FALSE);
+  g_assert_false (gtk_widget_get_sensitive (app->web_toggle));
+  GtkWidget *body_widget = app->reply_body;
+  const gchar *events =
+      "data: {\"choices\":[{\"server_tool_event\":{\"type\":\"call_started\","
+      "\"call\":{\"type\":\"deepseek_web_search\"}}}]}\n\n"
+      "data: {\"choices\":[{\"server_tool_event\":{\"type\":\"call_started\","
+      "\"call\":{\"type\":\"deepseek_read_url\"}}}]}\n\n"
+      "data: {\"choices\":[{\"server_tool_event\":{\"type\":\"call_completed\","
+      "\"call\":{\"type\":\"deepseek_read_url\","
+      "\"status\":\"completed\"}}}]}\n\n"
+      "data: {\"choices\":[{\"server_tool_event\":{\"type\":\"call_completed\","
+      "\"call\":{\"type\":\"deepseek_web_search\","
+      "\"status\":\"completed\"}}}]}\n\n"
+      "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\","
+      "\"server_tool_calls\":[{\"ignored\":true}]}}]}\n\n"
+      "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{"
+      "\"server_tool_calls\":[{\"index\":0,\"reasoning_content\":\"\","
+      "\"calls\":[{\"index\":0,\"id\":\"srvtoolu_rl_0\",\"kind\":\"read_link\","
+      "\"type\":\"deepseek_read_url\",\"status\":\"completed\","
+      "\"action\":{\"type\":\"read_link\",\"url\":\"https://example.com/\"},"
+      "\"signature\":\"test-signature\"}]}],\n"
+      "data: \"annotations\":[null,{\"type\":\"url_citation\","
+      "\"url_citation\":{\"title\":\"A < B & C\","
+      "\"url\":\"https://example.com/?a=1&b=2\"}},"
+      "{\"type\":\"url_citation\",\"url_citation\":{\"title\":\"Duplicate\","
+      "\"url\":\"https://example.com/?a=1&b=2\"}},"
+      "{\"type\":\"url_citation\",\"url_citation\":{"
+      "\"url\":\"file:///tmp/a\"}},"
+      "{\"type\":\"url_citation\",\"url_citation\":{"
+      "\"url\":\"http://example.org/\"}}"
+      "]}}]}\n\n"
+      "data: [DONE]\n\n";
+  g_autoptr (GInputStream) input =
+      g_memory_input_stream_new_from_data (events, -1, NULL);
+  GDataInputStream *lines = g_data_input_stream_new (input);
+  /* The stream callback takes ownership of this reference. */
+  g_data_input_stream_read_line_async (lines, G_PRIORITY_DEFAULT, app->cancel,
+                                       stream_line_cb,
+                                       g_object_ref (app->cancel));
+
+  while (app->busy && app->web_searches == 0)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_true (app->busy);
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->reply_label)), ==,
+                   _ ("Searching the web…"));
+  while (app->busy && app->web_reads == 0)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_true (app->busy);
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->reply_label)), ==,
+                   _ ("Reading links…"));
+  while (app->busy && app->web_reads > 0)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_true (app->busy);
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->reply_label)), ==,
+                   _ ("Searching the web…"));
+  while (app->busy && app->answer->len == 0)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_true (app->busy);
+  g_assert_false (json_object_has_member (app->reply_msg, "server_tool_calls"));
+  while (app->busy)
+    g_main_context_iteration (NULL, TRUE);
+  g_assert_cmpuint (app->web_searches, ==, 0);
+  g_assert_cmpuint (app->web_reads, ==, 0);
+  assert_web_citations (body_widget);
+
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GPtrArray) chats =
+      store_load (app->db, &current, &model, &effort, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (chats);
+  Chat *original = app->chat;
+  app->chat = g_ptr_array_index (chats, 0);
+  clear_messages ();
+  render_history (3);
+  GtkWidget *last = gtk_widget_get_last_child (app->messages);
+  assert_web_citations (g_object_get_data (G_OBJECT (last), "body"));
+
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle), FALSE);
+  add_message ("user", "What did the link say?");
+  gsize len;
+  g_autofree gchar *body = request_body (4, NULL, &len, &error);
+  g_assert_no_error (error);
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
+  JsonObject *root = json_node_get_object (json_parser_get_root (parser));
+  g_assert_false (json_object_has_member (root, "tools"));
+  JsonObject *sent = json_array_get_object_element (
+      json_object_get_array_member (root, "messages"), 2);
+  g_assert_false (json_object_has_member (sent, "annotations"));
+  g_assert_cmpstr (json_object_get_string_member (sent, "content"), ==,
+                   "Answer");
+  JsonObject *saved = json_array_get_object_element (app->chat->messages, 2);
+  JsonNode *replayed = json_object_get_member (sent, "server_tool_calls");
+  g_assert_nonnull (replayed);
+  g_assert_true (json_node_equal (
+      replayed, json_object_get_member (saved, "server_tool_calls")));
+  g_assert_nonnull (strstr (body, "test-signature"));
+  app->chat = original;
+  teardown ();
+}
+
+static void
+web_stop (void)
+{
+  if (!setup_ui ())
+    return;
+  begin_reply (FALSE);
+  process_sse_event (
+      "{\"choices\":[{\"server_tool_event\":{\"type\":\"call_started\","
+      "\"call\":{\"type\":\"deepseek_read_url\"}},"
+      "\"delta\":{\"content\":\"partial answer\"}}]}");
+  end_stream ();
+  JsonObject *msg = json_array_get_object_element (app->chat->messages, 2);
+  g_assert_cmpstr (json_object_get_string_member (msg, "content"), ==,
+                   "partial answer");
+  g_assert_false (json_object_has_member (msg, "annotations"));
+  g_assert_false (json_object_has_member (msg, "server_tool_calls"));
+  g_assert_cmpuint (app->web_reads, ==, 0);
+  teardown ();
+}
+
+static void
 reasoning_stop (void)
 {
   if (!setup_ui ())
@@ -4023,6 +4190,9 @@ main (int    argc,
   g_test_add_data_func ("/app/delete/current", GUINT_TO_POINTER (4),
                         delete_confirmation);
   g_test_add_func ("/app/payload-filters-reasoning", payload_filters_reasoning);
+  g_test_add_func ("/app/web/toggle", web_toggle);
+  g_test_add_func ("/app/web/stream", web_stream);
+  g_test_add_func ("/app/web/stop", web_stop);
   g_test_add_func ("/app/image-payload", image_payload);
   g_test_add_func ("/app/image-payload-limits", image_payload_limits);
   g_test_add_func ("/app/image-import", image_import);

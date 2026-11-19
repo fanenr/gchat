@@ -184,6 +184,16 @@ Adw.ToolbarView content {
                 hexpand: true;
               }
 
+              Gtk.ToggleButton web_toggle {
+                label: _("Web");
+                tooltip-text: _("Search the web and read links");
+                valign: center;
+
+                styles [
+                  "input-chip",
+                ]
+              }
+
               Gtk.MenuButton model_chip {
                 tooltip-text: _("Model and reasoning level");
 

@@ -145,7 +145,8 @@ typedef struct
   GtkWidget    *sidebar_list, *search;
   GtkWidget    *messages, *scroller, *chat_bar, *input, *input_frame, *send,
                *stack, *placeholder;
-  GtkWidget    *model_chip, *chip_model, *chip_effort, *choice_popover;
+  GtkWidget    *model_chip, *chip_model, *chip_effort, *choice_popover,
+               *web_toggle;
   GtkWidget    *new_btn, *title_label, *edit_bar;
   GtkWidget    *image_bar, *image_preview, *attach;
   GtkWidget    *reply_bubble, *reply_body, *reply_label;
@@ -163,8 +164,10 @@ typedef struct
   gchar        *model, *effort, *api_key;
 
   gboolean      busy, syncing, preedit, restoring_input, closing;
+  gboolean      web_enabled;
 
   guint         draft_save_source;
+  guint         web_searches, web_reads;
   gint64        request_started;
   gdouble       thought_seconds; /* Store the first content token's arrival
                                     time; use 0 while thinking. */
@@ -567,17 +570,36 @@ scroll_if_following (void)
 
 /* ---------- SSE ---------- */
 
-static gchar *
+/* The member helpers return borrowed values of the requested JSON type. */
+static const gchar *
 member_string (JsonObject  *obj,
                const gchar *name)
 {
-  JsonNode *node = json_object_get_member (obj, name);
-  if (node == NULL || !JSON_NODE_HOLDS_VALUE (node) ||
-      json_node_get_value_type (node) != G_TYPE_STRING)
-    {
-      return NULL;
-    }
-  return g_strdup (json_node_get_string (node));
+  JsonNode *node = obj != NULL ? json_object_get_member (obj, name) : NULL;
+  return node != NULL && JSON_NODE_HOLDS_VALUE (node) &&
+                 json_node_get_value_type (node) == G_TYPE_STRING
+             ? json_node_get_string (node)
+             : NULL;
+}
+
+static JsonObject *
+member_object (JsonObject  *obj,
+               const gchar *name)
+{
+  JsonNode *node = obj != NULL ? json_object_get_member (obj, name) : NULL;
+  return node != NULL && JSON_NODE_HOLDS_OBJECT (node)
+             ? json_node_get_object (node)
+             : NULL;
+}
+
+static JsonArray *
+member_array (JsonObject  *obj,
+              const gchar *name)
+{
+  JsonNode *node = obj != NULL ? json_object_get_member (obj, name) : NULL;
+  return node != NULL && JSON_NODE_HOLDS_ARRAY (node)
+             ? json_node_get_array (node)
+             : NULL;
 }
 
 static const gchar *
@@ -597,46 +619,23 @@ sse_buffer_free (gpointer data)
   g_string_free (data, TRUE);
 }
 
-/* Set both outputs to newly allocated strings or NULL; the caller frees them.
-   Free previous values before reuse because both slots are overwritten. */
-static gboolean
-sse_parse (const gchar *data,
-           gchar      **content,
-           gchar      **reasoning)
+/* Return an owned reference to the first choice, or NULL. */
+static JsonObject *
+sse_parse_choice (const gchar *data)
 {
-  *content = NULL;
-  *reasoning = NULL;
-
   g_autoptr (JsonParser) parser = json_parser_new ();
-  gboolean ok = FALSE;
-  if (json_parser_load_from_data (parser, data, -1, NULL))
-    {
-      JsonNode *root = json_parser_get_root (parser);
-      JsonNode *choices =
-          root != NULL && JSON_NODE_HOLDS_OBJECT (root)
-              ? json_object_get_member (json_node_get_object (root), "choices")
-              : NULL;
-      if (choices != NULL && JSON_NODE_HOLDS_ARRAY (choices))
-        {
-          JsonArray *array = json_node_get_array (choices);
-          JsonNode *first = json_array_get_length (array)
-                                ? json_array_get_element (array, 0)
-                                : NULL;
-          JsonNode *delta = first != NULL && JSON_NODE_HOLDS_OBJECT (first)
-                                ? json_object_get_member (
-                                      json_node_get_object (first), "delta")
-                                : NULL;
-          if (delta != NULL && JSON_NODE_HOLDS_OBJECT (delta))
-            {
-              *content =
-                  member_string (json_node_get_object (delta), "content");
-              *reasoning = member_string (json_node_get_object (delta),
-                                          "reasoning_content");
-              ok = TRUE;
-            }
-        }
-    }
-  return ok;
+  if (!json_parser_load_from_data (parser, data, -1, NULL))
+    return NULL;
+  JsonNode *root = json_parser_get_root (parser);
+  if (root == NULL || !JSON_NODE_HOLDS_OBJECT (root))
+    return NULL;
+  JsonArray *choices = member_array (json_node_get_object (root), "choices");
+  if (choices == NULL || json_array_get_length (choices) == 0)
+    return NULL;
+  JsonNode *first = json_array_get_element (choices, 0);
+  return JSON_NODE_HOLDS_OBJECT (first)
+             ? json_object_ref (json_node_get_object (first))
+             : NULL;
 }
 
 /* ---------- bubbles ---------- */
@@ -919,6 +918,67 @@ image_widget (const gchar *id,
   return picture;
 }
 
+static gboolean
+citation_url_allowed (const gchar *url)
+{
+  if (url == NULL)
+    return FALSE;
+  g_autoptr (GUri) uri = g_uri_parse (url, G_URI_FLAGS_NONE, NULL);
+  if (uri == NULL)
+    return FALSE;
+  const gchar *scheme = g_uri_get_scheme (uri);
+  const gchar *host = g_uri_get_host (uri);
+  return (g_strcmp0 (scheme, "https") == 0 ||
+          g_strcmp0 (scheme, "http") == 0) &&
+         host != NULL && *host != '\0' && g_uri_get_userinfo (uri) == NULL;
+}
+
+static void
+render_citations (GtkBox     *body,
+                  JsonObject *msg)
+{
+  JsonArray *annotations = member_array (msg, "annotations");
+  if (annotations == NULL)
+    return;
+
+  g_autoptr (GHashTable) seen = g_hash_table_new (g_str_hash, g_str_equal);
+  g_autoptr (GString) markup = g_string_new (NULL);
+  for (guint i = 0; i < json_array_get_length (annotations); i++)
+    {
+      JsonNode *node = json_array_get_element (annotations, i);
+      if (!JSON_NODE_HOLDS_OBJECT (node))
+        continue;
+      JsonObject *entry = json_node_get_object (node);
+      if (g_strcmp0 (member_string (entry, "type"), "url_citation") != 0)
+        continue;
+      JsonObject *citation = member_object (entry, "url_citation");
+      const gchar *url = member_string (citation, "url");
+      if (!citation_url_allowed (url) ||
+          !g_hash_table_add (seen, (gpointer) url))
+        continue;
+      const gchar *title = member_string (citation, "title");
+      g_autofree gchar *link = g_markup_printf_escaped (
+          "\n<a href=\"%s\">%s</a>", url,
+          title != NULL && *title ? title : url);
+      if (markup->len == 0)
+        {
+          g_autofree gchar *heading = g_markup_escape_text (_ ("Sources"), -1);
+          g_string_append_printf (markup, "<b>%s</b>", heading);
+        }
+      g_string_append (markup, link);
+    }
+
+  if (markup->len == 0)
+    return;
+  GtkWidget *label = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (label), markup->str);
+  gtk_label_set_wrap (GTK_LABEL (label), TRUE);
+  gtk_label_set_wrap_mode (GTK_LABEL (label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_xalign (GTK_LABEL (label), 0);
+  gtk_widget_add_css_class (label, "msg-text");
+  gtk_box_append (body, label);
+}
+
 static void
 render_history (guint count)
 {
@@ -960,6 +1020,7 @@ render_history (guint count)
             gtk_box_append (body,
                             thought_widget (reasoning, duration, NULL, NULL));
           md_render (body, content);
+          render_citations (body, msg);
           if (!*content)
             content = reasoning;
           /* Only the last message is worth regenerating. */
@@ -1056,6 +1117,7 @@ set_busy (gboolean busy)
   gtk_widget_set_sensitive (app->sidebar_list, !busy);
   gtk_widget_set_sensitive (app->search, !busy);
   gtk_widget_set_sensitive (app->model_chip, !busy);
+  gtk_widget_set_sensitive (app->web_toggle, !busy);
   gtk_widget_set_sensitive (app->new_btn, !busy);
   if (app->attach != NULL)
     gtk_widget_set_sensitive (app->attach, !busy);
@@ -1679,6 +1741,19 @@ find_choice (const Choice *table,
   return NULL;
 }
 
+static gboolean
+web_tools_supported (void)
+{
+  return g_str_equal (app->model, "deepseek-flash");
+}
+
+static void
+on_web_toggled (GtkToggleButton *button,
+                gpointer         data G_GNUC_UNUSED)
+{
+  app->web_enabled = gtk_toggle_button_get_active (button);
+}
+
 static void
 on_model_choice (GtkButton *button G_GNUC_UNUSED,
                  gpointer   value)
@@ -1749,6 +1824,7 @@ refresh_choices (void)
       find_choice (EFFORTS, G_N_ELEMENTS (EFFORTS), app->effort);
   gtk_label_set_text (GTK_LABEL (app->chip_model), model->label);
   gtk_label_set_text (GTK_LABEL (app->chip_effort), _ (effort->label));
+  gtk_widget_set_visible (app->web_toggle, web_tools_supported ());
   GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
   g_object_set (box, "margin-top", 6, "margin-bottom", 6, "margin-start", 6,
                 "margin-end", 6, NULL);
@@ -1931,6 +2007,8 @@ clear_stream_state (void)
   app->reason_box = NULL;
   app->reason_view = NULL;
   app->reason_title = NULL;
+  app->web_searches = 0;
+  app->web_reads = 0;
   g_string_truncate (app->answer, 0);
   g_string_truncate (app->reasoning, 0);
   set_busy (FALSE);
@@ -1999,6 +2077,7 @@ end_stream (void)
         set_thought_expanded (app->reason_box, FALSE);
     }
   md_render (GTK_BOX (app->reply_body), app->answer->str);
+  render_citations (GTK_BOX (app->reply_body), app->reply_msg);
   set_copy_text (app->reply_bubble,
                  app->answer->len ? app->answer->str : app->reasoning->str);
 
@@ -2033,14 +2112,67 @@ fail_stream (const gchar *reason)
   app_toast_retry (reason);
 }
 
+/* Track progress without treating tool events as replayable history. */
+static gboolean
+update_web_progress (JsonObject *event)
+{
+  const gchar *phase = member_string (event, "type");
+  JsonObject *call = member_object (event, "call");
+  const gchar *type = member_string (call, "type");
+  guint *count;
+  if (g_strcmp0 (type, "deepseek_web_search") == 0)
+    count = &app->web_searches;
+  else if (g_strcmp0 (type, "deepseek_read_url") == 0)
+    count = &app->web_reads;
+  else
+    return FALSE;
+
+  if (g_strcmp0 (phase, "call_started") == 0)
+    (*count)++;
+  else if (g_strcmp0 (phase, "call_completed") == 0 && *count > 0)
+    (*count)--;
+  else
+    return FALSE;
+  return TRUE;
+}
+
+static void
+show_reply_status (void)
+{
+  const gchar *status = "…";
+  if (app->web_reads > 0)
+    status = _ ("Reading links…");
+  else if (app->web_searches > 0)
+    status = _ ("Searching the web…");
+  else if (app->reasoning->len > 0)
+    status = _ ("Thinking…");
+  gtk_label_set_text (GTK_LABEL (app->reply_label), status);
+}
+
 /* Apply one complete DeepSeek event to the current reply. */
 static void
 process_sse_event (const gchar *event)
 {
-  g_autofree gchar *content = NULL;
-  g_autofree gchar *reasoning = NULL;
-  if (!sse_parse (event, &content, &reasoning))
+  g_autoptr (JsonObject) choice = sse_parse_choice (event);
+  if (choice == NULL)
     return;
+  JsonObject *delta = member_object (choice, "delta");
+  const gchar *content = member_string (delta, "content");
+  const gchar *reasoning = member_string (delta, "reasoning_content");
+  gboolean progress = update_web_progress (
+      member_object (choice, "server_tool_event"));
+  const gchar *finish = member_string (choice, "finish_reason");
+  if (finish != NULL && *finish)
+    {
+      JsonArray *calls = member_array (delta, "server_tool_calls");
+      JsonArray *annotations = member_array (delta, "annotations");
+      if (calls != NULL)
+        json_object_set_array_member (app->reply_msg, "server_tool_calls",
+                                      json_array_ref (calls));
+      if (annotations != NULL)
+        json_object_set_array_member (app->reply_msg, "annotations",
+                                      json_array_ref (annotations));
+    }
   if (reasoning != NULL && *reasoning)
     {
       g_string_append (app->reasoning, reasoning);
@@ -2060,10 +2192,11 @@ process_sse_event (const gchar *event)
               gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->reason_view)),
               app->reasoning->str, -1);
         }
-      if (app->answer->len == 0)
-        gtk_label_set_text (GTK_LABEL (app->reply_label), _ ("Thinking…"));
+      progress = TRUE;
       scroll_if_following ();
     }
+  if (progress && app->answer->len == 0)
+    show_reply_status ();
   if (content != NULL && *content)
     {
       if (app->answer->len == 0 && app->reason_box != NULL)
@@ -2325,6 +2458,13 @@ request_body (guint        turns,
         continue;
       g_autoptr (JsonObject) clean = json_object_new ();
       json_object_set_string_member (clean, "role", role);
+      if (g_str_equal (role, "assistant") && web_tools_supported ())
+        {
+          JsonArray *calls = member_array (msg, "server_tool_calls");
+          if (calls != NULL)
+            json_object_set_array_member (clean, "server_tool_calls",
+                                          json_array_ref (calls));
+        }
       JsonArray *images = image_array_member (msg, "images");
       if (images == NULL)
         {
@@ -2367,6 +2507,19 @@ request_body (guint        turns,
   json_object_set_string_member (root, "model", app->model);
   json_object_set_boolean_member (root, "stream", TRUE);
   json_object_set_array_member (root, "messages", g_steal_pointer (&payload));
+  if (app->web_enabled && web_tools_supported ())
+    {
+      static const gchar *const types[] = { "deepseek_web_search",
+                                            "deepseek_read_url" };
+      g_autoptr (JsonArray) tools = json_array_new ();
+      for (guint i = 0; i < G_N_ELEMENTS (types); i++)
+        {
+          g_autoptr (JsonObject) tool = json_object_new ();
+          json_object_set_string_member (tool, "type", types[i]);
+          json_array_add_object_element (tools, g_steal_pointer (&tool));
+        }
+      json_object_set_array_member (root, "tools", g_steal_pointer (&tools));
+    }
 
   g_autoptr (JsonObject) thinking_obj = json_object_new ();
   json_object_set_string_member (thinking_obj, "type",
@@ -4112,6 +4265,12 @@ build_content (void)
   app->chip_model = GTK_WIDGET (gtk_builder_get_object (builder, "chip_model"));
   app->chip_effort =
       GTK_WIDGET (gtk_builder_get_object (builder, "chip_effort"));
+  app->web_toggle =
+      GTK_WIDGET (gtk_builder_get_object (builder, "web_toggle"));
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle),
+                                app->web_enabled);
+  g_signal_connect (app->web_toggle, "toggled", G_CALLBACK (on_web_toggled),
+                    NULL);
 
   wrap_chat_width (ADW_BIN (gtk_builder_get_object (builder,
                                                     "messages_width")));

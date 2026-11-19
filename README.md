@@ -49,6 +49,7 @@ The client needs these packages:
 - Reading: choose separate fonts and sizes for messages and code blocks. Line heights scale with their fonts; headings have distinct levels, lists use hanging indents, and tables keep a light, borderless layout. Reset buttons appear only for non-default values. Changes apply immediately and persist; the sidebar and input box are unchanged.
 - Message actions: copy, edit and resend, fork into a new session, regenerate, and delete.
 - Image input: select or paste multiple images with `deepseek-flash`. Preview or remove them in the input box, then send with or without text.
+- Web: turn on **Web** with `deepseek-flash` to let DeepSeek search the web and read links. Cited sources appear below the reply.
 - Models and reasoning levels: `deepseek-flash` and `deepseek-v4-pro`, with four reasoning levels.
 - Drafts: each session keeps its own draft. It is written to disk 750ms after typing stops.
 - Interface language: English and Simplified Chinese. A change applies after a client restart.

@@ -44,7 +44,9 @@ SQLite 保存会话。图片本体仍保存在数据目录中。配置单独存�
 未编辑时，`edit_from` 与 `edit_images` 为 SQL `NULL`，`edit_text` 为空字符串。
 普通草稿没有附件时，`draft_images` 也为 SQL `NULL`。
 每条消息必填 `role`（`user` 或 `assistant`）和文本 `content`。
-文本 `reasoning` 和非负秒数 `duration` 可选。只有用户消息可以含 `images`。
+文本 `reasoning` 和非负秒数 `duration` 可选。助手消息可以保存 DeepSeek 返回的
+`annotations` 和 `server_tool_calls` 数组，用于引用展示和联网记录回传。
+只有用户消息可以含 `images`。
 已存的附件列表必须非空，每个元素是 UUID，不是文件路径。
 
 `session_state` 只有一行，`id = 1`。`current_id` 引用 `chats` 中的一行；

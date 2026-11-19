@@ -33,6 +33,26 @@ msgstr ""
 msgid "Max"
 msgstr ""
 
+#: main.c:965
+msgid "Sources"
+msgstr ""
+
+#: main.c:2144
+msgid "Reading links…"
+msgstr ""
+
+#: main.c:2146
+msgid "Searching the web…"
+msgstr ""
+
+#: ui/content.blp:188
+msgid "Web"
+msgstr ""
+
+#: ui/content.blp:189
+msgid "Search the web and read links"
+msgstr ""
+
 #: main.c:254 main.c:2988
 msgid "Image exceeds the 8 MiB limit."
 msgstr ""
