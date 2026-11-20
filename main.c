@@ -4497,9 +4497,30 @@ build_content (void)
 }
 
 static void
+on_window_pressed (GtkGestureClick *gesture G_GNUC_UNUSED,
+                   int              n_press G_GNUC_UNUSED,
+                   double           x G_GNUC_UNUSED,
+                   double           y G_GNUC_UNUSED,
+                   GtkWindow       *window)
+{
+  /* GTK keeps keyboard focus rings on when a click moves focus. */
+  gtk_window_set_focus_visible (window, FALSE);
+}
+
+static void
 build_shell (void)
 {
   gtk_widget_set_size_request (app->window, 640, 480);
+  GtkGesture *press = gtk_gesture_click_new ();
+  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (press), 0);
+  GtkEventController *controller = GTK_EVENT_CONTROLLER (press);
+  gtk_event_controller_set_static_name (controller, "gchat-pointer-focus");
+  gtk_event_controller_set_propagation_phase (controller, GTK_PHASE_CAPTURE);
+  gtk_event_controller_set_propagation_limit (controller, GTK_LIMIT_NONE);
+  g_signal_connect (press, "pressed", G_CALLBACK (on_window_pressed),
+                    app->window);
+  gtk_widget_add_controller (app->window, controller);
+
   g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
       "/cc/arthur63/gchat/shell.ui");
   app->toasts = GTK_WIDGET (gtk_builder_get_object (builder, "shell"));

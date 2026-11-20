@@ -11,6 +11,7 @@ This page covers what [README](../README.md) does not.
 - The message and input areas stay aligned as the window is resized.
 - The window requests a minimum size of 640 × 480 logical pixels. The platform or content may require a larger size.
 - The content uses 85% of the available width up to 760 logical pixels and 75% from 1200 logical pixels. The proportion changes smoothly in between. Both sides keep at least 16 logical pixels of margin; very narrow windows prioritize the margins.
+- A pointer press in the main window clears the keyboard focus ring before the clicked widget handles the event. The click still acts normally. Tab navigation and text field focus indicators keep their usual behavior.
 
 ### Streaming replies
 

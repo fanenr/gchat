@@ -2721,6 +2721,49 @@ search_ime_lifetime (void)
 }
 
 static void
+pointer_focus (void)
+{
+  if (!setup_ui ())
+    return;
+
+  GtkWindow *window = GTK_WINDOW (app->window);
+  g_autoptr (GListModel) controllers =
+      gtk_widget_observe_controllers (app->window);
+  g_autoptr (GtkEventController) press = NULL;
+  for (guint i = 0; i < g_list_model_get_n_items (controllers); i++)
+    {
+      g_autoptr (GtkEventController) controller =
+          g_list_model_get_item (controllers, i);
+      if (g_strcmp0 (gtk_event_controller_get_name (controller),
+                     "gchat-pointer-focus") == 0)
+        {
+          press = g_steal_pointer (&controller);
+          break;
+        }
+    }
+  g_assert_true (GTK_IS_GESTURE_CLICK (press));
+  g_assert_cmpint (gtk_event_controller_get_propagation_phase (press), ==,
+                   GTK_PHASE_CAPTURE);
+
+  g_assert_true (gtk_widget_grab_focus (app->web_toggle));
+  gtk_window_set_focus_visible (window, TRUE);
+  g_assert_true (gtk_widget_get_state_flags (app->web_toggle) &
+                 GTK_STATE_FLAG_FOCUS_VISIBLE);
+  g_signal_emit_by_name (press, "pressed", 1, 0.0, 0.0);
+  g_assert_false (gtk_window_get_focus_visible (window));
+  g_assert_false (gtk_widget_get_state_flags (app->web_toggle) &
+                  GTK_STATE_FLAG_FOCUS_VISIBLE);
+  g_assert_true (gtk_window_get_focus (window) == app->web_toggle);
+
+  g_assert_true (gtk_widget_grab_focus (app->search));
+  g_assert_true (focus_inside (app->search));
+  g_assert_true (gtk_widget_get_state_flags (app->search) &
+                 GTK_STATE_FLAG_FOCUS_WITHIN);
+  g_assert_false (gtk_window_get_focus_visible (window));
+  teardown ();
+}
+
+static void
 keyboard_actions (void)
 {
   if (!setup_ui ())
@@ -4572,6 +4615,7 @@ main (int    argc,
   g_test_add_data_func ("/app/sidebar-layout/body-search", GUINT_TO_POINTER (2),
                         sidebar_layout);
   g_test_add_func ("/app/keyboard-actions", keyboard_actions);
+  g_test_add_func ("/app/pointer-focus", pointer_focus);
   g_test_add_data_func ("/app/search-ime/plain", GUINT_TO_POINTER (0),
                         search_ime_commit);
   g_test_add_data_func ("/app/search-ime/prefix", GUINT_TO_POINTER (1),

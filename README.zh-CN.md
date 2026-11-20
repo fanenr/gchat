@@ -59,7 +59,7 @@
 
 ## 快捷键
 
-应用快捷键在 macOS 上使用 Cmd，在 Linux 上使用 Ctrl。
+应用快捷键在 macOS 上使用 Cmd，在 Linux 上使用 Ctrl。鼠标点击主窗口会清除键盘焦点环，输入框的聚焦提示不变。
 
 | macOS | Linux | 功能 |
 | --- | --- | --- |
