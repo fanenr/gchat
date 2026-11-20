@@ -505,6 +505,10 @@ msgstr ""
 msgid "Conversation data"
 msgstr ""
 
+#: ui/settings.blp:170
+msgid "GitHub repository"
+msgstr ""
+
 #: main.c:4335
 #, c-format
 msgid "New chat (%s+N)"

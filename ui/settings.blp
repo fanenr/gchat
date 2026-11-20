@@ -165,6 +165,18 @@ Adw.PreferencesDialog settings_dialog {
         title: _("Conversation data");
         use-markup: false;
       }
+
+      Adw.ActionRow {
+        title: _("GitHub repository");
+        activatable-widget: repository_link;
+
+        [suffix]
+        Gtk.LinkButton repository_link {
+          valign: center;
+          label: "fanenr/gchat";
+          uri: "https://github.com/fanenr/gchat";
+        }
+      }
     }
   }
 }

@@ -96,7 +96,7 @@ The gear at the bottom of the sidebar opens Settings on the **General** page. Us
 
 - **General**: API key and its source, conversation options, and interface language.
 - **Appearance**: theme and reading fonts. The theme can follow the system, or use light or dark mode. Message and code block font families and sizes are independent. Font pickers list installed fonts. Font and size reset buttons appear only when their own value differs from the application default; each restores only its own setting. Sizes range from 6 to 72 logical pixels. The defaults are 14px for prose and 13px for code. Changes apply immediately and persist.
-- **Other**: app version and conversation data location.
+- **Other**: the **About** section shows the app version and conversation data location. Click **GitHub repository** to open `fanenr/gchat` in your default browser.
 
 Reading settings leave the sidebar, input box, and reasoning text unchanged. Inline code keeps its monospace family and scales with prose. Table text and streaming replies follow the prose font. Font changes keep message selections, drafts, and active requests. List margins and user-bubble widths are recalculated without replacing widgets or reloading images. On a save failure, the control returns to its previous value. Missing or invalid font settings use the defaults; unavailable fonts fall back through GTK.
 

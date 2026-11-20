@@ -46,7 +46,7 @@ The client needs these packages:
 - Code blocks: a separate card with a tinted header for the language label and copy button. GtkSourceView does the highlighting.
 - Multiple sessions: search, pin, duplicate, rename, and delete sessions from the sidebar. New Flash conversations get an automatic title by default. Turn it off under **Settings → General → Conversation → Automatic conversation titles**.
 - Deletion confirmation: on by default. Turn it off under **Settings → General → Conversation → Confirm conversation deletion**.
-- Settings: **General** for the API key, conversation options, and language; **Appearance** for the theme and reading fonts; **Other** for the app version and conversation data location.
+- Settings: **General** for the API key, conversation options, and language; **Appearance** for the theme and reading fonts; **Other** for the app version, conversation data location, and GitHub repository link.
 - Adaptive layout: messages and the input area widen together on wide windows. The window requests a minimum size of 640 × 480 logical pixels.
 - Reading: choose separate fonts and sizes for messages and code blocks. Line heights scale with their fonts; headings have distinct levels, lists use hanging indents, and tables keep a light, borderless layout. Reset buttons appear only for non-default values. Changes apply immediately and persist; the sidebar and input box are unchanged.
 - Message actions: copy, edit and resend, fork into a new session, regenerate, and delete.

@@ -501,6 +501,10 @@ msgstr "关于"
 msgid "Conversation data"
 msgstr "会话数据"
 
+#: ui/settings.blp:170
+msgid "GitHub repository"
+msgstr "GitHub 仓库"
+
 #: main.c:4335
 #, c-format
 msgid "New chat (%s+N)"

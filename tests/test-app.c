@@ -1245,6 +1245,17 @@ settings_pages (void)
       g_assert_nonnull (row);
       g_assert_true (gtk_widget_get_mapped (row));
     }
+
+  GtkWidget *label = find_label (GTK_WIDGET (dialog), _ ("GitHub repository"));
+  g_assert_nonnull (label);
+  GtkWidget *row = gtk_widget_get_ancestor (label, ADW_TYPE_ACTION_ROW);
+  g_assert_nonnull (row);
+  g_assert_true (gtk_widget_get_mapped (row));
+  GtkWidget *link =
+      adw_action_row_get_activatable_widget (ADW_ACTION_ROW (row));
+  g_assert_true (GTK_IS_LINK_BUTTON (link));
+  g_assert_cmpstr (gtk_link_button_get_uri (GTK_LINK_BUTTON (link)), ==,
+                   "https://github.com/fanenr/gchat");
   teardown ();
 }
 
