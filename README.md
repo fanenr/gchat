@@ -59,7 +59,7 @@ The client needs these packages:
 
 ## Shortcuts
 
-App shortcuts use Cmd on macOS and Ctrl on Linux. A click clears the keyboard focus ring in the main window without changing how text fields show focus.
+App shortcuts use Cmd on macOS and Ctrl on Linux. Tab navigation uses the theme’s focus rings. A click clears the keyboard focus ring in the main window without changing how text fields show focus.
 
 | macOS | Linux | Action |
 | --- | --- | --- |

@@ -125,8 +125,7 @@ undershoot.right {
   background: none;
   box-shadow: none;
 }
-.input-chip > button, .input-chip > button:hover, .input-chip > button:focus,
-.input-chip > button:active {
+.input-chip > button {
   background: none;
   box-shadow: none;
   border: none;
@@ -135,21 +134,9 @@ undershoot.right {
   min-width: 0;
 }
 .input-chip:hover { background: alpha(@window_fg_color, .05); }
-.input-chip:focus, .input-chip:focus-within {
-  background: alpha(@window_fg_color, .05);
-}
 .input-chip:checked {
   background: alpha(@accent_color, .18);
   color: @accent_color;
-}
-.input-chip:focus, .input-chip:focus-visible, .input-chip > button:focus,
-.thought-toggle:focus, .thought-toggle:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-button.input-chip:focus-visible {
-  outline: 2px solid @accent_color;
-  outline-offset: 1px;
 }
 .input-chip label { font-weight: normal; }
 .chat-scrollbar.vertical {
