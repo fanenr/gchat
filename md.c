@@ -262,8 +262,6 @@ code_card (const gchar *lang,
 
   GtkWidget *bar = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_add_css_class (bar, "code-bar");
-  g_object_set (bar, "margin-start", 16, "margin-end", 8, "margin-top", 12,
-                NULL);
 
   GtkWidget *lang_label = gtk_label_new (lang != NULL && *lang ? lang : "code");
   gtk_widget_add_css_class (lang_label, "caption");
@@ -1302,7 +1300,9 @@ on_enter_block (MD_BLOCKTYPE type,
       {
         unsigned level =
             detail != NULL ? ((MD_BLOCK_H_DETAIL *) detail)->level : 2;
-        break_line (ctx, level <= 3 ? "gap24" : "gap16");
+        break_line (ctx, ctx->last_block == MD_BLOCK_H ? "gap8"
+                         : level <= 3                  ? "gap24"
+                                                       : "gap16");
         g_autofree gchar *tag_name = g_strdup_printf ("h%u", level);
         push_scope (ctx, tag_name);
       }

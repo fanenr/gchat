@@ -34,7 +34,7 @@ This page covers what [README](../README.md) does not.
 - md4c parses the Markdown. CommonMark and part of GFM are supported.
 - The client renders Markdown as native widgets. Message prose defaults to a 14px font; the sidebar and input box keep their 14px font. Prose uses 1.3 times the selected font’s natural line height. Table text and streaming replies use the same line-height rule.
 - The widgets cover headings, bold, italic, strikethrough, inline code, multi-level lists, nested quotes, rules, and tables. Bold prose uses weight 600. Headings 1–3 use 1.5, 1.375, and 1.25 times the prose size with weight 700; headings 4–6 keep the prose size with weight 600. Inline emphasis does not override a heading’s size or weight.
-- Paragraph gaps are 16 logical pixels. Headings 1–3 have a 24-pixel gap before them; headings 4–6 have 16. List items have 6-pixel gaps, later paragraphs within an item have 8, and nested lists have 4. A top-level list has a 16-pixel gap before it, or 8 after a heading.
+- Paragraph gaps are 16 logical pixels. Headings 1–3 have a 24-pixel gap before them; headings 4–6 have 16. Consecutive headings have an 8-pixel gap. List items have 6-pixel gaps, later paragraphs within an item have 8, and nested lists have 4. A top-level list has a 16-pixel gap before it, or 8 after a heading.
 - Lists support task lists and ordered lists. An ordered list can start at 0. Wrapped lines and later paragraphs align with the text after the marker. Marker widths are measured, so multi-digit numbers and checkboxes keep their alignment.
 - Tables support column alignment, row separators, and inline code. They use a transparent background without an enclosing border. Cells have 16-pixel horizontal and 10-pixel vertical padding. Headers use weight 500 at full text contrast; bold cell text uses weight 600.
 - HTTPS images outside tables load automatically. Image servers can see your IP address and request time. Private-network HTTPS addresses are not filtered. Loading starts after a streaming reply finishes; history is loaded again when rendered.
@@ -61,9 +61,9 @@ This page covers what [README](../README.md) does not.
 
 ### Code blocks
 
-- A code block shows as a separate card with a language label and a copy button. Their header row has 12px of space above it. The language label aligns with the code’s left edge, 16px inside the card.
+- A code block shows as a separate card with a full-width header for the language label and copy button. The header has 8px of vertical padding, and the language label aligns with the code’s left edge, 16px inside the card.
 - The code area has 16px padding on all sides and uses 1.6 times the selected font’s natural line height. Padding and line-height rules are fixed; the font family and size remain configurable.
-- The card has a subtle background and border, without a divider beneath its language label. The language label and copy button use a secondary color; the button returns to full contrast on hover or keyboard focus.
+- The card has a subtle background and border. The header has a contrasting background in both light and dark themes, without a divider line. The language label and copy button use a secondary color; the button returns to full contrast on hover or keyboard focus.
 - The display drops only one trailing newline. Extra blank lines stay.
 - The copy button keeps the full parsed code, including trailing spaces and the final newline.
 - md4c normalizes line breaks inside a block to LF.

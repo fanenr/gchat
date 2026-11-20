@@ -316,33 +316,30 @@ code_block_layout (gconstpointer data)
       wait_for_layout ();
       g_assert_true (gtk_widget_get_mapped (view));
       GtkWidget *bar = gtk_widget_get_first_child (card);
-      g_assert_cmpint (gtk_widget_get_margin_top (bar), ==, 12);
-      graphene_rect_t bar_bounds, label_bounds, copy_bounds;
+      graphene_rect_t bar_bounds, label_bounds, view_bounds;
       g_assert_true (gtk_widget_compute_bounds (bar, card, &bar_bounds));
       g_assert_true (gtk_widget_compute_bounds (
           gtk_widget_get_first_child (bar), card, &label_bounds));
-      g_assert_true (gtk_widget_compute_bounds (
-          gtk_widget_get_last_child (bar), card, &copy_bounds));
-      g_assert_cmpfloat (bar_bounds.origin.y, >=, 12);
-      g_assert_cmpfloat (bar_bounds.origin.y, <=, 14);
-      g_assert_cmpfloat (label_bounds.origin.y, >=, bar_bounds.origin.y);
-      g_assert_cmpfloat (copy_bounds.origin.y, >=, bar_bounds.origin.y);
+      g_assert_true (gtk_widget_compute_bounds (view, card, &view_bounds));
+      g_assert_cmpfloat (bar_bounds.origin.x, ==, 0);
+      g_assert_cmpfloat (bar_bounds.origin.y, ==, 0);
+      g_assert_cmpfloat (bar_bounds.size.width, ==,
+                         gtk_widget_get_width (card));
+      g_assert_cmpfloat (view_bounds.origin.y - bar_bounds.size.height, ==, 16);
       GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
       GtkTextIter end;
       gtk_text_buffer_get_end_iter (buffer, &end);
       gtk_text_iter_backward_char (&end);
       GdkRectangle glyph;
       gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &end, &glyph);
-      graphene_rect_t bounds;
-      g_assert_true (gtk_widget_compute_bounds (view, card, &bounds));
       GtkTextIter start;
       gtk_text_buffer_get_start_iter (buffer, &start);
       GdkRectangle first;
       gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &first);
       g_assert_cmpfloat (label_bounds.origin.x, ==,
-                         bounds.origin.x + first.x);
-      gdouble bottom_gap = gtk_widget_get_height (card) - bounds.origin.y -
-                           glyph.y - glyph.height;
+                         view_bounds.origin.x + first.x);
+      gdouble bottom_gap = gtk_widget_get_height (card) -
+                           view_bounds.origin.y - glyph.y - glyph.height;
       g_test_message ("code case %u: bottom gap %.1f px", i, bottom_gap);
       g_assert_cmpfloat (bottom_gap, >=, 16);
       g_assert_cmpfloat (bottom_gap, <=, 24);
@@ -565,6 +562,7 @@ selection_spacing (gconstpointer data)
       "than filling the paragraph spacing before the next heading.\n\n"
       "## Next",
       "Wrapped paragraph", 24 },
+    { "# Main heading\n\n## Subheading", "Main heading", 8 },
     { "First line\nSecond line\n\nNext", "Second line", 16 },
     { "#### Heading\n\n- item", "Heading", 8 },
     { "- first\n- second", "first", 6 },
