@@ -1820,7 +1820,18 @@ static void
 on_web_toggled (GtkToggleButton *button,
                 gpointer         data G_GNUC_UNUSED)
 {
-  app->web_enabled = gtk_toggle_button_get_active (button);
+  gboolean enabled = gtk_toggle_button_get_active (button);
+  gboolean previous = app->web_enabled;
+
+  if (enabled == previous)
+    return;
+  app->web_enabled = enabled;
+  if (!config_set ("web_enabled", enabled ? "true" : "false"))
+    {
+      app->web_enabled = previous;
+      gtk_toggle_button_set_active (button, previous);
+      app_toast (_ ("Failed to save setting"));
+    }
 }
 
 static void
@@ -3932,6 +3943,13 @@ load_enabled_preference (const gchar *key)
   return g_strcmp0 (saved, "false") != 0;
 }
 
+static gboolean
+load_web_preference (void)
+{
+  g_autofree gchar *saved = config_get ("web_enabled");
+  return g_strcmp0 (saved, "true") == 0;
+}
+
 static void
 on_switch_preference_changed (AdwSwitchRow *row,
                               GParamSpec   *pspec G_GNUC_UNUSED,
@@ -4612,6 +4630,23 @@ on_stop_action (GSimpleAction *action G_GNUC_UNUSED,
 }
 
 static void
+on_close_action (GSimpleAction *action G_GNUC_UNUSED,
+                 GVariant      *param G_GNUC_UNUSED,
+                 gpointer       data G_GNUC_UNUSED)
+{
+  gtk_window_close (GTK_WINDOW (app->window));
+}
+
+static void
+on_quit_action (GSimpleAction *action G_GNUC_UNUSED,
+                GVariant      *param G_GNUC_UNUSED,
+                gpointer       data G_GNUC_UNUSED)
+{
+  g_application_quit (G_APPLICATION (gtk_window_get_application (
+      GTK_WINDOW (app->window))));
+}
+
+static void
 register_actions (GtkApplication *gtk_app)
 {
   const GActionEntry actions[] = {
@@ -4621,16 +4656,23 @@ register_actions (GtkApplication *gtk_app)
     { .name = "search", .activate = on_search_action },
     { .name = "settings", .activate = on_settings_action },
     { .name = "stop", .activate = on_stop_action },
+    { .name = "close", .activate = on_close_action },
+  };
+  const GActionEntry app_actions[] = {
+    { .name = "quit", .activate = on_quit_action },
   };
   g_action_map_add_action_entries (G_ACTION_MAP (app->window), actions,
                                    G_N_ELEMENTS (actions), NULL);
+  g_action_map_add_action_entries (G_ACTION_MAP (gtk_app), app_actions,
+                                   G_N_ELEMENTS (app_actions), NULL);
   const struct
   {
     const gchar *action, *key;
   } shortcuts[] = {
     { "win.new-chat", "n" },  { "win.focus-input", "l" },
     { "win.search", "f" },    { "win.settings", "comma" },
-    { "win.stop", "period" },
+    { "win.stop", "period" }, { "win.close", "w" },
+    { "app.quit", "q" },
   };
   /* GTK 4 parses <Primary> as Ctrl, even on macOS. */
   const gchar *modifier = uses_command_shortcuts () ? "<Meta>" : "<Control>";
@@ -4722,6 +4764,7 @@ main (int     argc,
   app->effort = g_steal_pointer (&effort);
   app->auto_title = load_enabled_preference ("auto_title");
   app->confirm_delete_chat = load_enabled_preference ("confirm_delete_chat");
+  app->web_enabled = load_web_preference ();
 
   /* The configuration accepts only the supported options; an unknown value
      falls back to the default. */

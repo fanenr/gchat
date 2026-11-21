@@ -82,6 +82,7 @@ setup (void)
   app->effort = g_strdup ("high");
   app->auto_title = load_enabled_preference ("auto_title");
   app->confirm_delete_chat = load_enabled_preference ("confirm_delete_chat");
+  app->web_enabled = load_web_preference ();
   app->chats = g_ptr_array_new_with_free_func ((GDestroyNotify) chat_free);
   app->chat = chat_new ("42", "测试");
   g_ptr_array_add (app->chats, app->chat);
@@ -2880,12 +2881,15 @@ keyboard_actions (void)
   render_chat ();
   show_window ();
   const gchar *actions[] = { "new-chat", "focus-input", "search", "settings",
-                             "stop" };
+                             "stop", "close", "quit" };
+  const gchar *namespaces[] = { "win", "win", "win", "win", "win", "win",
+                                "app" };
   const guint keys[] = { GDK_KEY_n, GDK_KEY_l, GDK_KEY_f, GDK_KEY_comma,
-                         GDK_KEY_period };
+                         GDK_KEY_period, GDK_KEY_w, GDK_KEY_q };
   for (guint i = 0; i < G_N_ELEMENTS (actions); i++)
     {
-      g_autofree gchar *name = g_strconcat ("win.", actions[i], NULL);
+      g_autofree gchar *name = g_strconcat (namespaces[i], ".", actions[i],
+                                             NULL);
       g_auto (GStrv) accels =
           gtk_application_get_accels_for_action (application, name);
       g_assert_cmpuint (g_strv_length (accels), ==, 1);
@@ -2962,6 +2966,12 @@ payload_filters_reasoning (void)
 static void
 web_toggle (void)
 {
+  if (!have_display)
+    {
+      g_test_skip ("需要 GTK 显示后端");
+      return;
+    }
+  g_assert_true (config_set ("web_enabled", NULL));
   if (!setup_ui ())
     return;
   g_assert_true (gtk_widget_get_visible (app->web_toggle));
@@ -2972,8 +2982,13 @@ web_toggle (void)
   for (guint i = 0; i < 3; i++)
     {
       if (i == 1)
-        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle),
-                                      TRUE);
+        {
+          gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle),
+                                        TRUE);
+          g_assert_true (app->web_enabled);
+          g_autofree gchar *saved = config_get ("web_enabled");
+          g_assert_cmpstr (saved, ==, "true");
+        }
       if (i == 2)
         {
           on_model_choice (NULL, "deepseek-v4-pro");
@@ -3001,6 +3016,12 @@ web_toggle (void)
   g_assert_true (gtk_widget_get_visible (app->web_toggle));
   g_assert_true (gtk_toggle_button_get_active (
       GTK_TOGGLE_BUTTON (app->web_toggle)));
+  teardown ();
+
+  g_assert_true (setup_ui ());
+  g_assert_true (gtk_toggle_button_get_active (
+      GTK_TOGGLE_BUTTON (app->web_toggle)));
+  g_assert_true (config_set ("web_enabled", "false"));
   teardown ();
 }
 
