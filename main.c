@@ -4445,7 +4445,6 @@ build_content (void)
   g_autofree gchar *hint = format_shortcut_hint (
       _ ("Enter to send · Shift+Enter for a new line · %s+N for a new chat"));
   adw_status_page_set_description (empty, hint);
-  set_shortcut_tooltip (app->input, _ ("Focus input (%s+L)"));
 
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->web_toggle),
                                 app->web_enabled);

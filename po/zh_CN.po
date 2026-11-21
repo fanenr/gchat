@@ -412,11 +412,6 @@ msgstr "正在编辑消息"
 msgid "Cancel editing (Esc)"
 msgstr "取消编辑 (Esc)"
 
-#: main.c:4405
-#, c-format
-msgid "Focus input (%s+L)"
-msgstr "聚焦输入框 (%s+L)"
-
 #: ui/content.blp:148
 msgid "Message DeepSeek"
 msgstr "给 DeepSeek 发消息"

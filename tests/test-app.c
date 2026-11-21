@@ -1141,12 +1141,12 @@ content_builder (void)
   g_autofree gchar *empty_hint = g_strdup_printf (
       _ ("Enter to send · Shift+Enter for a new line · %s+N for a new chat"),
       modifier);
-  g_autofree gchar *input_hint =
-      g_strdup_printf (_ ("Focus input (%s+L)"), modifier);
   const gchar *description =
       adw_status_page_get_description (ADW_STATUS_PAGE (empty));
   g_assert_cmpstr (description, ==, empty_hint);
-  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->input), ==, input_hint);
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->attach), ==,
+                   _ ("Attach images"));
+  g_assert_false (gtk_widget_get_has_tooltip (app->input));
   g_assert_true (gtk_scrollbar_get_adjustment (GTK_SCROLLBAR (app->chat_bar)) ==
                  gtk_scrolled_window_get_vadjustment (
                      GTK_SCROLLED_WINDOW (app->scroller)));

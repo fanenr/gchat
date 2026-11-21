@@ -159,6 +159,7 @@
 
 ### 快捷键
 
+- macOS 的 `Cmd+L` 和 Linux 的 `Ctrl+L` 聚焦输入框。输入框不显示悬停提示。
 - macOS 的 `Cmd+W` 和 Linux 的 `Ctrl+W` 通过常规关窗处理器关闭窗口，
   关闭前会保存草稿。
 - macOS 的 `Cmd+Q` 和 Linux 的 `Ctrl+Q` 激活应用退出操作。GTK 的 macOS

@@ -159,6 +159,8 @@ The rules are:
 
 ### Shortcuts
 
+- `Cmd+L` on macOS and `Ctrl+L` on Linux focus the input box. The input box
+  does not show a hover hint.
 - `Cmd+W` on macOS and `Ctrl+W` on Linux close the window through the regular
   close handler, which saves the draft before closing.
 - `Cmd+Q` on macOS and `Ctrl+Q` on Linux activate the application quit action.
