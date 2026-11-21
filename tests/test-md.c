@@ -16,7 +16,7 @@ app_toast (const gchar *msg G_GNUC_UNUSED)
 typedef struct
 {
   const gchar *markdown, *text, *tag;
-  gboolean     active;
+  gboolean active;
 } TagCase;
 
 static void
@@ -286,8 +286,12 @@ table_cells (gconstpointer data)
   g_autoptr (GtkWidget) box =
       g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   md_render (GTK_BOX (box), test->markdown);
-  GtkWidget *card = gtk_widget_get_first_child (box);
-  g_assert_true (GTK_IS_BOX (card));
+  GtkWidget *area = gtk_widget_get_first_child (box);
+  GtkWidget *scroller = gtk_widget_get_first_child (area);
+  g_assert_true (GTK_IS_SCROLLED_WINDOW (scroller));
+  GtkWidget *viewport =
+      gtk_scrolled_window_get_child (GTK_SCROLLED_WINDOW (scroller));
+  GtkWidget *card = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
   GtkWidget *grid = gtk_widget_get_first_child (card);
   g_assert_true (GTK_IS_GRID (grid));
   GtkWidget *header = gtk_grid_get_child_at (GTK_GRID (grid), 0, 0);
@@ -343,8 +347,11 @@ code_block_content (gconstpointer data)
       gtk_widget_get_last_child (gtk_widget_get_first_child (card));
   g_assert_cmpstr (g_object_get_data (G_OBJECT (copy), "code"), ==,
                    test->content);
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer (
-      GTK_TEXT_VIEW (gtk_widget_get_last_child (card)));
+  GtkWidget *area = gtk_widget_get_last_child (card);
+  GtkScrolledWindow *scroller =
+      GTK_SCROLLED_WINDOW (gtk_widget_get_first_child (area));
+  GtkWidget *view = gtk_scrolled_window_get_child (scroller);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
   GtkTextIter start, end;
   gtk_text_buffer_get_bounds (buffer, &start, &end);
   g_autofree gchar *text =

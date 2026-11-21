@@ -10,6 +10,7 @@
 #include <adwaita.h>
 #include <gtksourceview/gtksource.h>
 #include <libsoup/soup.h>
+#include <math.h>
 #include <md4c.h>
 
 static void
@@ -201,6 +202,70 @@ lookup_language (const gchar *lang)
   return found;
 }
 
+typedef struct
+{
+  GtkAdjustment *adjustment;
+  gboolean horizontal;
+} HorizontalScroll;
+
+static void
+horizontal_scroll_begin (GtkEventControllerScroll *controller G_GNUC_UNUSED,
+                         HorizontalScroll *scroll)
+{
+  scroll->horizontal = FALSE;
+}
+
+static void
+horizontal_scroll_end (GtkEventControllerScroll *controller G_GNUC_UNUSED,
+                       HorizontalScroll *scroll)
+{
+  scroll->horizontal = FALSE;
+}
+
+static gboolean
+horizontal_scroll (GtkEventControllerScroll *controller G_GNUC_UNUSED,
+                   double delta_x,
+                   double delta_y,
+                   HorizontalScroll *scroll)
+{
+  if (!scroll->horizontal && fabs (delta_x) > fabs (delta_y) * 1.2)
+    scroll->horizontal = TRUE;
+  if (!scroll->horizontal)
+    return GDK_EVENT_PROPAGATE;
+
+  gtk_adjustment_set_value (
+      scroll->adjustment,
+      gtk_adjustment_get_value (scroll->adjustment) + delta_x);
+  return GDK_EVENT_STOP;
+}
+
+static GtkWidget *
+horizontal_scroll_area (GtkWidget *child)
+{
+  GtkWidget *area = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+  GtkScrolledWindow *scroller =
+      GTK_SCROLLED_WINDOW (gtk_scrolled_window_new ());
+  gtk_scrolled_window_set_policy (scroller, GTK_POLICY_EXTERNAL,
+                                  GTK_POLICY_NEVER);
+  gtk_scrolled_window_set_child (scroller, child);
+  gtk_box_append (GTK_BOX (area), GTK_WIDGET (scroller));
+
+  HorizontalScroll *scroll = g_new0 (HorizontalScroll, 1);
+  scroll->adjustment = gtk_scrolled_window_get_hadjustment (scroller);
+  GtkEventController *controller = gtk_event_controller_scroll_new (
+      GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+  gtk_event_controller_set_propagation_phase (controller, GTK_PHASE_CAPTURE);
+  g_signal_connect (controller, "scroll-begin",
+                    G_CALLBACK (horizontal_scroll_begin), scroll);
+  g_signal_connect (controller, "scroll", G_CALLBACK (horizontal_scroll),
+                    scroll);
+  g_signal_connect (controller, "scroll-end",
+                    G_CALLBACK (horizontal_scroll_end), scroll);
+  g_object_set_data_full (G_OBJECT (area), "horizontal-scroll", scroll, g_free);
+  gtk_widget_add_controller (area, controller);
+  return area;
+}
+
 static GtkWidget *
 code_view (const gchar *lang,
            const gchar *code)
@@ -230,13 +295,10 @@ code_view (const gchar *lang,
   gtk_source_view_set_show_line_numbers (GTK_SOURCE_VIEW (view), FALSE);
   gtk_source_view_set_highlight_current_line (GTK_SOURCE_VIEW (view), FALSE);
   gtk_text_view_set_monospace (GTK_TEXT_VIEW (view), TRUE);
-  gtk_text_view_set_left_margin (GTK_TEXT_VIEW (view), 0);
   gtk_source_view_set_tab_width (GTK_SOURCE_VIEW (view), 4);
-  gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD_CHAR);
   gtk_widget_add_css_class (view, "source-code");
-  gtk_widget_set_hexpand (view, TRUE);
-  g_object_set (view, "margin-start", 16, "margin-end", 16, "margin-top", 16,
-                "margin-bottom", 16, NULL);
+  g_object_set (view, "left-margin", 16, "right-margin", 16, "top-margin", 16,
+                "bottom-margin", 16, NULL);
   return view;
 }
 
@@ -282,7 +344,8 @@ code_card (const gchar *lang,
   gtk_box_append (GTK_BOX (bar), copy);
 
   gtk_box_append (GTK_BOX (card), bar);
-  gtk_box_append (GTK_BOX (card), code_view (lang, code));
+  GtkWidget *view = code_view (lang, code);
+  gtk_box_append (GTK_BOX (card), horizontal_scroll_area (view));
   return card;
 }
 
@@ -514,13 +577,9 @@ cell_label (const gchar *markup,
              : g_strdup (markup);
   GtkWidget *label = gtk_label_new (NULL);
   gtk_label_set_markup (GTK_LABEL (label), text);
-  gtk_label_set_wrap (GTK_LABEL (label), TRUE);
-  gtk_label_set_wrap_mode (GTK_LABEL (label), PANGO_WRAP_WORD_CHAR);
-  gtk_label_set_max_width_chars (GTK_LABEL (label), 34);
   gtk_label_set_xalign (GTK_LABEL (label), align == MD_ALIGN_CENTER  ? 0.5
                                            : align == MD_ALIGN_RIGHT ? 1
                                                                      : 0);
-  gtk_label_set_yalign (GTK_LABEL (label), 0);
   gtk_label_set_selectable (GTK_LABEL (label), TRUE);
   gtk_widget_add_css_class (label, "msg-text");
   gtk_widget_set_hexpand (label, TRUE);
@@ -1311,8 +1370,22 @@ on_enter_block (MD_BLOCKTYPE type,
     case MD_BLOCK_HR:
       {
         GtkWidget *rule = gtk_separator_new (GTK_ORIENTATION_HORIZONTAL);
-        g_object_set (rule, "margin-top", 4, "margin-bottom", 4, NULL);
-        append_card (ctx, rule);
+        gtk_widget_set_margin_bottom (rule, 4);
+        if (ctx->last_block == MD_BLOCK_TABLE)
+          {
+            GtkWidget *area =
+                gtk_widget_get_last_child (GTK_WIDGET (ctx->box));
+            GtkScrolledWindow *scroller =
+                GTK_SCROLLED_WINDOW (gtk_widget_get_first_child (area));
+            GtkWidget *viewport = gtk_scrolled_window_get_child (scroller);
+            GtkWidget *card = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+            gtk_box_append (GTK_BOX (card), rule);
+          }
+        else
+          {
+            gtk_widget_set_margin_top (rule, 4);
+            append_card (ctx, rule);
+          }
       }
       break;
 
@@ -1340,12 +1413,13 @@ on_enter_block (MD_BLOCKTYPE type,
       {
         MD_BLOCK_TABLE_DETAIL *table = detail;
         GtkWidget *card = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-        gtk_widget_add_css_class (card, "table-card");
         ctx->grid = GTK_GRID (gtk_grid_new ());
         ctx->col_count = table != NULL ? table->col_count : 1;
         ctx->row_slot = 0;
         gtk_box_append (GTK_BOX (card), GTK_WIDGET (ctx->grid));
-        append_card (ctx, card);
+        GtkWidget *area = horizontal_scroll_area (card);
+        gtk_widget_add_css_class (area, "table-card");
+        append_card (ctx, area);
       }
       break;
 

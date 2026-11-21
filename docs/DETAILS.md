@@ -36,7 +36,7 @@ This page covers what [README](../README.md) does not.
 - The widgets cover headings, bold, italic, strikethrough, inline code, multi-level lists, nested quotes, rules, and tables. Bold prose uses weight 600. Headings 1–3 use 1.5, 1.375, and 1.25 times the prose size with weight 700; headings 4–6 keep the prose size with weight 600. Inline emphasis does not override a heading’s size or weight.
 - Paragraph gaps are 16 logical pixels. Headings 1–3 have a 24-pixel gap before them; headings 4–6 have 16. Consecutive headings have an 8-pixel gap. List items have 6-pixel gaps, later paragraphs within an item have 8, and nested lists have 4. A top-level list has a 16-pixel gap before it, or 8 after a heading.
 - Lists support task lists and ordered lists. An ordered list can start at 0. Wrapped lines and later paragraphs align with the text after the marker. Marker widths are measured, so multi-digit numbers and checkboxes keep their alignment.
-- Tables support column alignment, row separators, and inline code. They use a transparent background without an enclosing border. Cells have 16-pixel horizontal and 10-pixel vertical padding. Headers use weight 500 at full text contrast; bold cell text uses weight 600.
+- Tables support column alignment, row separators, and inline code. Cells do not wrap; wide tables scroll horizontally with the header and rows together, without showing a scrollbar. They use a transparent background without an enclosing border. Cell contents are vertically centered within each row. Cells have 16-pixel horizontal and 10-pixel vertical padding. A Markdown rule immediately after a table sits against its bottom edge, so the last row has the same padding above and below its content. Headers use weight 500 at full text contrast; bold cell text uses weight 600.
 - HTTPS images outside tables load automatically. Image servers can see your IP address and request time. Private-network HTTPS addresses are not filtered. Loading starts after a streaming reply finishes; history is loaded again when rendered.
 - Images use a separate request without API credentials. PNG, JPEG, GIF, and WebP are supported when the system decoder is available. GIF and WebP are displayed as static images.
 - Images are displayed at no more than 320 × 240 logical pixels, preserving aspect ratio without enlarging small images. The image can set a minimum width for the message, so very narrow layouts may not shrink to fit it.
@@ -62,8 +62,9 @@ This page covers what [README](../README.md) does not.
 ### Code blocks
 
 - A code block shows as a separate card with a full-width header for the language label and copy button. The header has 8px of vertical padding, and the language label aligns with the code’s left edge, 16px inside the card.
-- The code area has 16px padding on all sides and uses 1.6 times the selected font’s natural line height. Padding and line-height rules are fixed; the font family and size remain configurable.
+- The code area has 16px padding on all sides and uses 1.25 times the selected font’s natural line height. Padding and line-height rules are fixed; the font family and size remain configurable.
 - The card has a subtle background and border. The header has a contrasting background in both light and dark themes, without a divider line. The language label and copy button use a secondary color; the button returns to full contrast on hover or keyboard focus.
+- Long code lines do not wrap. Scroll the code area horizontally to read them; the language label and copy button stay in place, without showing a scrollbar.
 - The display drops only one trailing newline. Extra blank lines stay.
 - The copy button keeps the full parsed code, including trailing spaces and the final newline.
 - md4c normalizes line breaks inside a block to LF.
@@ -261,7 +262,7 @@ The regression tests also cover the following areas:
 - An ordered list that starts at 0.
 - Multiple paragraphs and nested lists.
 - Prose font size, proportional prose and code line heights at default and doubled sizes, and hanging list indents in both themes, including multi-digit numbers, task lists, and later paragraphs.
-- All six heading levels, heading precedence over inline emphasis, paragraph/list spacing, and code/table padding.
+- All six heading levels, heading precedence over inline emphasis, paragraph/list spacing, code/table padding, and equal spacing above and below the last table row when it is followed by a Markdown rule. Wide tables stay on one line per cell and scroll to the last column.
 - Selection snapshots leave paragraph spacing unpainted in both themes at default and doubled prose sizes, including wrapped text, explicit line breaks, headings, task lists, cross-paragraph selections, and right-to-left text.
 - Focus moves between visible messages without scrolling, even when the second reply extends past the viewport. Focusing an off-screen message button still scrolls it into view.
 - Independent message and code fonts, saved sizes, conditional font and size reset buttons, save-failure rollback, invalid-value fallback, and font-family CSS escaping.
@@ -273,7 +274,7 @@ The regression tests also cover the following areas:
 - Release of the code block buffer.
 
 Code block content tests check display and copy from Markdown input. They cover fenced blocks, indented code, raw HTML blocks, CRLF, an unclosed fence, an empty block, and extra blank lines.
-Layout tests check the bottom spacing and the visibility of the last line under the light and dark themes. They cover single-line, multi-line, and wrapped long lines.
+Layout tests check the bottom spacing and the visibility of the last line under the light and dark themes. They cover short code, multiple lines, and long lines that scroll horizontally without wrapping.
 The layout cases show a separate test window. They check bubble wrapping, fixed padding, and the centering of a short sentence.
 A case also rebuilds a user bubble in a shown window. It checks that the height does not grow from an old measurement cache.
 The local streaming case clicks the real Regenerate button. It checks the bubble layout during generation, at the end, and after a history re-render.

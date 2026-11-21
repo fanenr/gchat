@@ -285,19 +285,36 @@ user_bubble_layout (gconstpointer data)
   teardown ();
 }
 
+static double
+scroll_block_to_end (GtkScrolledWindow *scroller)
+{
+  GtkAdjustment *vertical = gtk_scrolled_window_get_vadjustment (scroller);
+  g_assert_cmpfloat (gtk_adjustment_get_upper (vertical), <=,
+                     gtk_adjustment_get_page_size (vertical));
+  GtkAdjustment *horizontal = gtk_scrolled_window_get_hadjustment (scroller);
+  double end = gtk_adjustment_get_upper (horizontal) -
+               gtk_adjustment_get_page_size (horizontal);
+  gtk_adjustment_set_value (horizontal, end);
+  g_assert_cmpfloat (gtk_adjustment_get_value (horizontal), ==, end);
+  return end;
+}
+
 static void
 code_block_layout (gconstpointer data)
 {
   if (!setup_ui ())
     return;
   apply_theme (GPOINTER_TO_INT (data) ? "dark" : "light");
+  GtkSettings *settings = gtk_widget_get_settings (app->window);
+  gboolean overlay_scrolling;
+  g_object_get (settings, "gtk-overlay-scrolling", &overlay_scrolling, NULL);
+  g_object_set (settings, "gtk-overlay-scrolling", FALSE, NULL);
   static const gchar *codes[] = {
     "if (arr[j] > arr[j + 1])",
     "if (arr[j] < arr[j + 1]) {\n    int temp = arr[j];\n    arr[j] = arr[j + "
     "1];\n    arr[j + 1] = temp;\n}",
-    "const char *long_line = \"this deliberately long code line must wrap "
-    "inside the card without clipping the final display line or leaving an "
-    "extra empty line at the bottom\";",
+    "const char *long_line = \"this deliberately long code line should stay "
+    "on one line and scroll inside the card so that its end is reachable\";",
   };
   for (guint i = 0; i < G_N_ELEMENTS (codes); i++)
     {
@@ -310,7 +327,10 @@ code_block_layout (gconstpointer data)
       GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
       GtkWidget *card = gtk_widget_get_first_child (body);
       g_assert_true (gtk_widget_has_css_class (card, "code-card"));
-      GtkWidget *view = gtk_widget_get_last_child (card);
+      GtkWidget *area = gtk_widget_get_last_child (card);
+      GtkScrolledWindow *scroller =
+          GTK_SCROLLED_WINDOW (gtk_widget_get_first_child (area));
+      GtkWidget *view = gtk_scrolled_window_get_child (scroller);
       g_assert_true (GTK_IS_TEXT_VIEW (view));
       show_window ();
       wait_for_layout ();
@@ -325,7 +345,7 @@ code_block_layout (gconstpointer data)
       g_assert_cmpfloat (bar_bounds.origin.y, ==, 0);
       g_assert_cmpfloat (bar_bounds.size.width, ==,
                          gtk_widget_get_width (card));
-      g_assert_cmpfloat (view_bounds.origin.y - bar_bounds.size.height, ==, 16);
+      g_assert_cmpfloat (view_bounds.origin.y, ==, bar_bounds.size.height);
       GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
       GtkTextIter end;
       gtk_text_buffer_get_end_iter (buffer, &end);
@@ -336,16 +356,42 @@ code_block_layout (gconstpointer data)
       gtk_text_buffer_get_start_iter (buffer, &start);
       GdkRectangle first;
       gtk_text_view_get_iter_location (GTK_TEXT_VIEW (view), &start, &first);
+      int first_x, first_y, last_bottom;
+      gtk_text_view_buffer_to_window_coords (GTK_TEXT_VIEW (view),
+                                             GTK_TEXT_WINDOW_WIDGET,
+                                             first.x, first.y,
+                                             &first_x, &first_y);
+      gtk_text_view_buffer_to_window_coords (GTK_TEXT_VIEW (view),
+                                             GTK_TEXT_WINDOW_WIDGET,
+                                             glyph.x, glyph.y + glyph.height,
+                                             NULL, &last_bottom);
       g_assert_cmpfloat (label_bounds.origin.x, ==,
-                         view_bounds.origin.x + first.x);
-      gdouble bottom_gap = gtk_widget_get_height (card) -
-                           view_bounds.origin.y - glyph.y - glyph.height;
-      g_test_message ("code case %u: bottom gap %.1f px", i, bottom_gap);
-      g_assert_cmpfloat (bottom_gap, >=, 16);
-      g_assert_cmpfloat (bottom_gap, <=, 24);
-      g_assert_cmpint (glyph.y + glyph.height, <=,
-                       gtk_widget_get_height (view));
+                         view_bounds.origin.x + first_x);
+      g_assert_cmpint (first_y, >=, 16);
+      int bottom_gap = gtk_widget_get_height (view) - last_bottom;
+      g_test_message ("code case %u: bottom gap %d px", i, bottom_gap);
+      g_assert_cmpint (bottom_gap, >=, 16);
+      g_assert_cmpint (bottom_gap, <=, 24);
+      g_assert_cmpint (last_bottom, <=, gtk_widget_get_height (view));
+      g_assert_cmpint (gtk_text_view_get_wrap_mode (GTK_TEXT_VIEW (view)), ==,
+                       GTK_WRAP_NONE);
+      double right = scroll_block_to_end (scroller);
+      g_assert_true (gtk_widget_get_first_child (area) ==
+                     gtk_widget_get_last_child (area));
+      if (i == 2)
+        {
+          g_assert_cmpfloat (right, >, 0);
+          g_assert_cmpint (glyph.y, ==, first.y);
+          GdkRectangle visible;
+          gtk_text_view_get_visible_rect (GTK_TEXT_VIEW (view), &visible);
+          g_assert_cmpint (glyph.x + glyph.width, <=,
+                           visible.x + visible.width);
+          g_assert_cmpint (glyph.x, >=, visible.x);
+        }
+      else
+        g_assert_cmpfloat (right, ==, 0);
     }
+  g_object_set (settings, "gtk-overlay-scrolling", overlay_scrolling, NULL);
   apply_theme ("system");
   teardown ();
 }
@@ -498,14 +544,19 @@ reading_rhythm (gconstpointer data)
       msg, "content", "Reading 中文\nReading 中文\n\n"
                       "paragraph\n\n#### Heading\n\n- first\n- second\n\n"
                       "```c\nint value;\nint value;\n```\n\n"
-                      "| Header |\n| --- |\n| body |\n");
+                      "| Header | Description |\n| --- | --- |\n"
+                      "| Body | A deliberately wide cell that stays on one "
+                      "line and can scroll all the way to its end. |\n\n"
+                      "---\n\n#### Next section\n");
   render_chat ();
   show_window ();
   GtkWidget *bubble = gtk_widget_get_last_child (app->messages);
   GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
   GtkWidget *prose = gtk_widget_get_first_child (body);
   GtkWidget *card = gtk_widget_get_next_sibling (prose);
-  GtkWidget *code = gtk_widget_get_last_child (card);
+  GtkWidget *code_area = gtk_widget_get_last_child (card);
+  GtkWidget *code = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (gtk_widget_get_first_child (code_area)));
   for (guint i = 0; i < 2; i++)
     {
       if (i == 1)
@@ -516,22 +567,58 @@ reading_rhythm (gconstpointer data)
           wait_for_layout ();
         }
       assert_line_height (prose, 1.3);
-      assert_line_height (code, 1.6);
+      assert_line_height (code, 1.25);
       assert_paragraph_gap (prose, "paragraph", 16);
       assert_paragraph_gap (prose, "Heading", 8);
       assert_paragraph_gap (prose, "first", 6);
       g_assert_cmpint (gtk_text_view_get_pixels_inside_wrap (
                            GTK_TEXT_VIEW (prose)),
                        ==, 0);
-      g_assert_cmpint (gtk_widget_get_margin_top (code), ==, 16);
-      g_assert_cmpint (gtk_widget_get_margin_bottom (code), ==, 16);
-      g_assert_cmpint (gtk_widget_get_margin_start (code), ==, 16);
-      g_assert_cmpint (gtk_widget_get_margin_end (code), ==, 16);
+      g_assert_cmpint (gtk_text_view_get_top_margin (GTK_TEXT_VIEW (code)),
+                       ==, 16);
+      g_assert_cmpint (gtk_text_view_get_bottom_margin (GTK_TEXT_VIEW (code)),
+                       ==, 16);
+      g_assert_cmpint (gtk_text_view_get_left_margin (GTK_TEXT_VIEW (code)),
+                       ==, 16);
+      g_assert_cmpint (gtk_text_view_get_right_margin (GTK_TEXT_VIEW (code)),
+                       ==, 16);
     }
-  GtkWidget *table = gtk_widget_get_next_sibling (card);
+  GtkWidget *table_area = gtk_widget_get_next_sibling (card);
+  GtkScrolledWindow *scroller =
+      GTK_SCROLLED_WINDOW (gtk_widget_get_first_child (table_area));
+  GtkWidget *viewport = gtk_scrolled_window_get_child (scroller);
+  GtkWidget *table = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
   GtkWidget *grid = gtk_widget_get_first_child (table);
   GtkWidget *header = gtk_grid_get_child_at (GTK_GRID (grid), 0, 0);
   GtkWidget *cell = gtk_grid_get_child_at (GTK_GRID (grid), 0, 2);
+  GtkWidget *wide = gtk_grid_get_child_at (GTK_GRID (grid), 1, 2);
+  PangoLayout *layout = gtk_label_get_layout (GTK_LABEL (cell));
+  PangoLayout *wide_layout = gtk_label_get_layout (GTK_LABEL (wide));
+  g_assert_cmpint (pango_layout_get_line_count (wide_layout), ==, 1);
+  g_assert_true (gtk_label_get_selectable (GTK_LABEL (wide)));
+  int text_height, y;
+  pango_layout_get_pixel_size (layout, NULL, &text_height);
+  gtk_label_get_layout_offsets (GTK_LABEL (cell), NULL, &y);
+  GtkWidget *above = gtk_grid_get_child_at (GTK_GRID (grid), 0, 1);
+  GtkWidget *below = gtk_widget_get_last_child (table);
+  g_assert_true (GTK_IS_SEPARATOR (below));
+  graphene_rect_t top, bottom;
+  g_assert_true (gtk_widget_compute_bounds (above, cell, &top));
+  g_assert_true (gtk_widget_compute_bounds (below, cell, &bottom));
+  double top_gap = y - (top.origin.y + top.size.height);
+  double bottom_gap = bottom.origin.y - (y + text_height);
+  g_assert_cmpfloat (fabs (top_gap - bottom_gap), <=, 1);
+  g_assert_cmpint (gtk_widget_get_width (table_area), ==,
+                   gtk_widget_get_width (body));
+  g_assert_cmpfloat (scroll_block_to_end (scroller), >, 0);
+  g_assert_true (gtk_widget_get_first_child (table_area) ==
+                 gtk_widget_get_last_child (table_area));
+  wait_for_layout ();
+  graphene_rect_t cell_bounds;
+  g_assert_true (gtk_widget_compute_bounds (wide, viewport, &cell_bounds));
+  g_assert_cmpfloat (fabs (gtk_widget_get_width (viewport) - 16 -
+                           cell_bounds.origin.x - cell_bounds.size.width),
+                     <=, 1);
   g_assert_false (gtk_widget_has_css_class (header, "dimmed"));
   g_assert_cmpint (gtk_widget_get_margin_top (cell), ==, 10);
   g_assert_cmpint (gtk_widget_get_margin_bottom (cell), ==, 10);
@@ -1153,6 +1240,8 @@ content_width_layout (void)
           g_assert_cmpint (ABS (gtk_widget_get_width (code) - messages), <=, 2);
           g_assert_cmpint (ABS (gtk_widget_get_width (table) - messages), <=,
                            2);
+          g_assert_true (gtk_widget_get_first_child (table) ==
+                         gtk_widget_get_last_child (table));
           graphene_rect_t message_bounds, input_bounds;
           g_assert_true (gtk_widget_compute_bounds (app->messages, app->window,
                                                     &message_bounds));
@@ -1485,7 +1574,9 @@ font_settings (void)
   GtkWidget *view = gtk_widget_get_first_child (body);
   GtkWidget *card = gtk_widget_get_next_sibling (view);
   g_assert_true (gtk_widget_has_css_class (card, "code-card"));
-  GtkWidget *code = gtk_widget_get_last_child (card);
+  GtkWidget *area = gtk_widget_get_last_child (card);
+  GtkWidget *code = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (gtk_widget_get_first_child (area)));
   assert_font_size (view, 14);
   assert_font_size (code, 13);
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));

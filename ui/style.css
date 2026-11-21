@@ -71,7 +71,7 @@
 .source-code, .source-code text, .thought-text, .thought-text text {
   background: transparent;
 }
-.source-code { line-height: 1.6; }
+.source-code { line-height: 1.25; }
 .thought-toggle {
   background: none;
   box-shadow: none;
