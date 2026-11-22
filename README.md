@@ -74,6 +74,10 @@ App shortcuts use Cmd on macOS and Ctrl on Linux. Tab navigation uses the themeâ
 | `Shift+Enter` | `Shift+Enter` | New line |
 | `Esc` | `Esc` | Cancel an edit, or clear the search |
 
+In the macOS message input, `Ctrl+F` and `Ctrl+B` move the cursor one character forward and back. `Ctrl+P` and `Ctrl+N` move it up and down one displayed line. `Ctrl+A` and `Ctrl+E` move to the start and end of the current displayed line, including wrapped lines.
+
+`Ctrl+K` cuts the selection or the text to the end of the paragraph. `Ctrl+Y` pastes it back. These keys leave the system clipboard unchanged.
+
 ## Data
 
 - Sessions: `~/.local/share/gchat/session.db`. Image copies are in `attachments/` beside it.

@@ -161,6 +161,15 @@ The rules are:
 
 - `Cmd+L` on macOS and `Ctrl+L` on Linux focus the input box. The input box
   does not show a hover hint.
+- The macOS message input handles `Ctrl+F/B` for character movement and
+  `Ctrl+P/N` for movement between displayed lines. `Ctrl+A/E` move to the
+  start or end of the current displayed line. During composition, the input
+  method keeps these keys.
+- In the macOS message input, `Ctrl+K` cuts the selection or the text to the
+  end of the paragraph. At the paragraph end, it cuts the line break.
+  Consecutive cuts append. `Ctrl+Y` pastes the stored text, replacing any
+  selection. The stored text stays in memory for the app session. Neither key
+  uses the system clipboard or overrides the input method during composition.
 - `Cmd+W` on macOS and `Ctrl+W` on Linux close the window through the regular
   close handler, which saves the draft before closing.
 - `Cmd+Q` on macOS and `Ctrl+Q` on Linux activate the application quit action.

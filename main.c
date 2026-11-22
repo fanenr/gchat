@@ -167,6 +167,9 @@ typedef struct
 
   gchar        *model, *effort, *api_key;
 
+  gchar        *kill_text;
+  gboolean      append_kill;
+
   gboolean      busy, syncing, preedit, restoring_input, closing;
   gboolean      web_enabled, auto_title, confirm_delete_chat;
   gboolean      request_title;
@@ -2869,13 +2872,83 @@ start_request (gchar   *body,
 
 /* ---------- input ---------- */
 
+static void
+kill_or_yank_input (guint keyval)
+{
+  GtkTextView *view = GTK_TEXT_VIEW (app->input);
+  if (!gtk_text_view_get_editable (view))
+    return;
+
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  GtkTextIter start, end;
+  gboolean selected = gtk_text_buffer_get_selection_bounds (buffer, &start,
+                                                            &end);
+  if (keyval == GDK_KEY_k)
+    {
+      if (!selected)
+        {
+          if (gtk_text_iter_ends_line (&end))
+            gtk_text_iter_forward_line (&end);
+          else
+            gtk_text_iter_forward_to_line_end (&end);
+        }
+      if (gtk_text_iter_equal (&start, &end))
+        return;
+
+      g_autofree gchar *text =
+          gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+      g_autofree gchar *previous = g_steal_pointer (&app->kill_text);
+      if (app->append_kill)
+        app->kill_text = g_strconcat (previous, text, NULL);
+      else
+        app->kill_text = g_steal_pointer (&text);
+
+      gtk_text_buffer_begin_user_action (buffer);
+      gtk_text_buffer_delete (buffer, &start, &end);
+      gtk_text_buffer_end_user_action (buffer);
+      app->append_kill = TRUE;
+    }
+  else if (app->kill_text != NULL)
+    {
+      gtk_text_buffer_begin_user_action (buffer);
+      if (selected)
+        gtk_text_buffer_delete (buffer, &start, &end);
+      gtk_text_buffer_insert_at_cursor (buffer, app->kill_text, -1);
+      gtk_text_buffer_end_user_action (buffer);
+    }
+  gtk_text_view_scroll_mark_onscreen (view,
+                                      gtk_text_buffer_get_insert (buffer));
+}
+
+static void
+on_input_mark_set (GtkTextBuffer     *buffer,
+                   const GtkTextIter *location G_GNUC_UNUSED,
+                   GtkTextMark       *mark,
+                   gpointer           data G_GNUC_UNUSED)
+{
+  if (mark == gtk_text_buffer_get_insert (buffer) ||
+      mark == gtk_text_buffer_get_selection_bound (buffer))
+    app->append_kill = FALSE;
+}
+
 static gboolean
-on_input_key (GtkEventControllerKey *controller G_GNUC_UNUSED,
+on_input_key (GtkEventControllerKey *controller,
               guint                  keyval,
               guint                  keycode G_GNUC_UNUSED,
               GdkModifierType        state,
               gpointer               data G_GNUC_UNUSED)
 {
+  GdkModifierType mods = state & gtk_accelerator_get_default_mod_mask ();
+  guint lower = gdk_keyval_to_lower (keyval);
+  if (app->append_kill && (lower != GDK_KEY_k || mods != GDK_CONTROL_MASK))
+    {
+      GdkEvent *event = NULL;
+      if (controller != NULL)
+        event = gtk_event_controller_get_current_event (
+            GTK_EVENT_CONTROLLER (controller));
+      if (event == NULL || !gdk_key_event_is_modifier (event))
+        app->append_kill = FALSE;
+    }
   if (keyval == GDK_KEY_Escape && !app->preedit &&
       app->chat->edit_from != G_MAXUINT)
     {
@@ -2895,6 +2968,34 @@ on_input_key (GtkEventControllerKey *controller G_GNUC_UNUSED,
       else
         send_message ();
       return GDK_EVENT_STOP;
+    }
+  if (!app->preedit && mods == GDK_CONTROL_MASK && uses_command_shortcuts ())
+    {
+      if (lower == GDK_KEY_k || lower == GDK_KEY_y)
+        {
+          kill_or_yank_input (lower);
+          return GDK_EVENT_STOP;
+        }
+      static const struct
+      {
+        guint           key;
+        GtkMovementStep step;
+        gint            count;
+      } moves[] = {
+        { GDK_KEY_f, GTK_MOVEMENT_LOGICAL_POSITIONS, 1 },
+        { GDK_KEY_b, GTK_MOVEMENT_LOGICAL_POSITIONS, -1 },
+        { GDK_KEY_p, GTK_MOVEMENT_DISPLAY_LINES, -1 },
+        { GDK_KEY_n, GTK_MOVEMENT_DISPLAY_LINES, 1 },
+        { GDK_KEY_a, GTK_MOVEMENT_DISPLAY_LINE_ENDS, -1 },
+        { GDK_KEY_e, GTK_MOVEMENT_DISPLAY_LINE_ENDS, 1 },
+      };
+      for (guint i = 0; i < G_N_ELEMENTS (moves); i++)
+        if (lower == moves[i].key)
+          {
+            g_signal_emit_by_name (app->input, "move-cursor", moves[i].step,
+                                   moves[i].count, FALSE);
+            return GDK_EVENT_STOP;
+          }
     }
   return GDK_EVENT_PROPAGATE;
 }
@@ -2946,6 +3047,8 @@ on_input_preedit (GtkTextView *view G_GNUC_UNUSED,
                   gpointer     data G_GNUC_UNUSED)
 {
   app->preedit = preedit != NULL && *preedit;
+  if (app->preedit)
+    app->append_kill = FALSE;
   update_send_state ();
 }
 
@@ -3117,6 +3220,7 @@ static void
 on_input_changed (GtkTextBuffer *buffer,
                   gpointer       data G_GNUC_UNUSED)
 {
+  app->append_kill = FALSE;
   if (!app->restoring_input)
     {
       GtkTextIter start, end;
@@ -4496,8 +4600,9 @@ build_content (void)
                     NULL);
   g_signal_connect (input_adj, "value-changed",
                     G_CALLBACK (on_input_value_changed), NULL);
-  g_signal_connect (gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input)),
-                    "changed", G_CALLBACK (on_input_changed), NULL);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  g_signal_connect (buffer, "changed", G_CALLBACK (on_input_changed), NULL);
+  g_signal_connect (buffer, "mark-set", G_CALLBACK (on_input_mark_set), NULL);
   g_signal_connect (app->input_frame, "notify::width",
                     G_CALLBACK (on_frame_width), NULL);
 
@@ -4826,6 +4931,7 @@ main (int     argc,
   g_free (app->model);
   g_free (app->effort);
   g_free (app->api_key);
+  g_free (app->kill_text);
   g_free (app);
   app = NULL;
   close (lock);

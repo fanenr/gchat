@@ -113,6 +113,7 @@ teardown (void)
   g_free (app->model);
   g_free (app->effort);
   g_free (app->api_key);
+  g_free (app->kill_text);
   g_free (app);
   app = NULL;
   chat_stick = (Stick){ 0 };
@@ -2941,6 +2942,106 @@ keyboard_actions (void)
 }
 
 static void
+input_cursor_shortcuts (void)
+{
+  if (!setup_ui ())
+    return;
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  gtk_text_buffer_set_text (buffer, "abc\nabc\nabc", -1);
+  show_window ();
+
+  gboolean macos = expected_shortcut_modifier () == GDK_META_MASK;
+  const guint keys[] = { GDK_KEY_f, GDK_KEY_b, GDK_KEY_p,
+                         GDK_KEY_n, GDK_KEY_a, GDK_KEY_e };
+  const gint offsets[] = { 6, 4, 1, 9, 4, 7 };
+  for (guint i = 0; i < G_N_ELEMENTS (keys); i++)
+    {
+      GtkTextIter cursor;
+      gtk_text_buffer_get_iter_at_offset (buffer, &cursor, 5);
+      gtk_text_buffer_place_cursor (buffer, &cursor);
+
+      app->preedit = TRUE;
+      g_assert_false (on_input_key (NULL, keys[i], 0, GDK_CONTROL_MASK, NULL));
+      app->preedit = FALSE;
+      g_assert_false (on_input_key (NULL, keys[i], 0,
+                                    GDK_CONTROL_MASK | GDK_SHIFT_MASK, NULL));
+      g_assert_false (on_input_key (NULL, keys[i], 0, GDK_META_MASK, NULL));
+      g_assert_cmpint (on_input_key (NULL, keys[i], 0, GDK_CONTROL_MASK, NULL),
+                       ==, macos);
+      gtk_text_buffer_get_iter_at_mark (buffer, &cursor,
+                                        gtk_text_buffer_get_insert (buffer));
+      g_assert_cmpint (gtk_text_iter_get_offset (&cursor),
+                       ==, macos ? offsets[i] : 5);
+      g_assert_false (gtk_text_buffer_get_has_selection (buffer));
+    }
+  assert_input ("abc\nabc\nabc");
+  teardown ();
+}
+
+static void
+input_kill_yank_shortcuts (void)
+{
+  if (!setup_ui ())
+    return;
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  gtk_text_buffer_set_text (buffer, "abc\ndef\nghi", -1);
+  show_window ();
+
+  GtkTextIter start, end;
+  gtk_text_buffer_get_iter_at_offset (buffer, &start, 1);
+  gtk_text_buffer_place_cursor (buffer, &start);
+  gboolean macos = expected_shortcut_modifier () == GDK_META_MASK;
+  g_assert_cmpint (on_input_key (NULL, GDK_KEY_y, 0, GDK_CONTROL_MASK, NULL),
+                   ==, macos);
+  assert_input ("abc\ndef\nghi");
+
+  app->preedit = TRUE;
+  g_assert_false (on_input_key (NULL, GDK_KEY_k, 0, GDK_CONTROL_MASK, NULL));
+  g_assert_false (on_input_key (NULL, GDK_KEY_y, 0, GDK_CONTROL_MASK, NULL));
+  app->preedit = FALSE;
+  g_assert_false (on_input_key (NULL, GDK_KEY_k, 0, GDK_META_MASK, NULL));
+  g_assert_cmpint (on_input_key (NULL, GDK_KEY_k, 0, GDK_CONTROL_MASK, NULL),
+                   ==, macos);
+  if (!macos)
+    {
+      assert_input ("abc\ndef\nghi");
+      teardown ();
+      return;
+    }
+
+  assert_input ("a\ndef\nghi");
+  g_assert_true (on_input_key (NULL, GDK_KEY_k, 0, GDK_CONTROL_MASK, NULL));
+  assert_input ("adef\nghi");
+  g_assert_true (on_input_key (NULL, GDK_KEY_y, 0, GDK_CONTROL_MASK, NULL));
+  assert_input ("abc\ndef\nghi");
+
+  gtk_text_buffer_get_iter_at_offset (buffer, &start, 4);
+  gtk_text_buffer_get_iter_at_offset (buffer, &end, 6);
+  gtk_text_buffer_select_range (buffer, &end, &start);
+  g_assert_true (on_input_key (NULL, GDK_KEY_k, 0, GDK_CONTROL_MASK, NULL));
+  assert_input ("abc\nf\nghi");
+  gtk_text_buffer_get_end_iter (buffer, &end);
+  gtk_text_buffer_get_iter_at_offset (buffer, &start, 6);
+  gtk_text_buffer_select_range (buffer, &end, &start);
+  g_assert_true (on_input_key (NULL, GDK_KEY_y, 0, GDK_CONTROL_MASK, NULL));
+  assert_input ("abc\nf\nde");
+  gtk_text_buffer_undo (buffer);
+  assert_input ("abc\nf\nghi");
+
+  gtk_text_buffer_get_iter_at_offset (buffer, &start, 1);
+  gtk_text_buffer_place_cursor (buffer, &start);
+  g_assert_true (on_input_key (NULL, GDK_KEY_k, 0, GDK_CONTROL_MASK, NULL));
+  gtk_text_buffer_get_iter_at_offset (buffer, &start, 4);
+  gtk_text_buffer_place_cursor (buffer, &start);
+  g_assert_true (on_input_key (NULL, GDK_KEY_k, 0, GDK_CONTROL_MASK, NULL));
+  assert_input ("a\nf\n");
+  g_assert_true (on_input_key (NULL, GDK_KEY_k, 0, GDK_CONTROL_MASK, NULL));
+  g_assert_true (on_input_key (NULL, GDK_KEY_y, 0, GDK_CONTROL_MASK, NULL));
+  assert_input ("a\nf\nghi");
+  teardown ();
+}
+
+static void
 payload_filters_reasoning (void)
 {
   setup ();
@@ -4736,6 +4837,8 @@ main (int    argc,
   g_test_add_data_func ("/app/sidebar-layout/body-search", GUINT_TO_POINTER (2),
                         sidebar_layout);
   g_test_add_func ("/app/keyboard-actions", keyboard_actions);
+  g_test_add_func ("/app/input-cursor-shortcuts", input_cursor_shortcuts);
+  g_test_add_func ("/app/input-kill-yank-shortcuts", input_kill_yank_shortcuts);
   g_test_add_func ("/app/pointer-focus", pointer_focus);
   g_test_add_data_func ("/app/search-ime/plain", GUINT_TO_POINTER (0),
                         search_ime_commit);

@@ -74,6 +74,10 @@
 | `Shift+Enter` | `Shift+Enter` | 换行 |
 | `Esc` | `Esc` | 取消编辑，或清空搜索 |
 
+在 macOS 的消息输入框中，`Ctrl+F` 和 `Ctrl+B` 将光标向前、向后移动一个字符，`Ctrl+P` 和 `Ctrl+N` 将光标向上、向下移动一行。`Ctrl+A` 和 `Ctrl+E` 跳到当前显示行的行首和行尾。自动折行也算一行。
+
+`Ctrl+K` 剪切选区或光标到段尾的文字，`Ctrl+Y` 粘回。这两个键不改动系统剪贴板。
+
 ## 数据
 
 - 会话：`~/.local/share/gchat/session.db`。图片副本位于同目录的 `attachments/`。
