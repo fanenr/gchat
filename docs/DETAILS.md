@@ -10,16 +10,17 @@ This page covers what [README](../README.md) does not.
 
 - The message and input areas stay aligned as the window is resized.
 - The window requests a minimum size of 640 × 480 logical pixels. The platform or content may require a larger size.
-- The content uses 85% of the available width up to 760 logical pixels and 75% from 1200 logical pixels. The proportion changes smoothly in between. Both sides keep at least 16 logical pixels of margin; very narrow windows prioritize the margins.
+- The content uses 85% of the available width up to 760 logical pixels and 65% from 1200 logical pixels. The proportion changes smoothly in between. Both sides keep at least 16 logical pixels of margin; very narrow windows prioritize the margins.
+- The message scrollbar sits one logical pixel from the right edge without taking width from the message area.
 - A pointer press in the main window clears the keyboard focus ring before the clicked widget handles the event. The click still acts normally, and text field focus indicators are unchanged. The Web toggle, model and reasoning selector, and reasoning disclosure button all use the theme’s keyboard focus rings.
 
 ### Streaming replies
 
-- The client reads SSE asynchronously with libsoup3 and shows text as it arrives. It joins multiple `data` lines with newlines and processes each event at the blank line.
+- The client reads SSE asynchronously with libsoup3. It joins multiple `data` lines with newlines and processes each event at the blank line. It batches text updates before each frame’s layout and appends new reasoning without replacing the existing text.
 - The button becomes a stop button during generation. A click stops at once and keeps the text and reasoning received so far.
 - If a record has only reasoning, the client does not send it to the API as an empty reply.
-- After layout, streaming text and the Markdown tail follow the bottom.
-- When you read upward, the view does not jump back to the end.
+- While following, the view stays at the bottom in the same layout pass when streaming text or final Markdown changes the message height.
+- Scrolling up pauses following. Returning to the bottom resumes it.
 
 ### Web search and link reading
 
@@ -97,7 +98,7 @@ The gear at the bottom of the sidebar opens Settings on the **General** page. Us
 
 - **General**: API key and its source, conversation options, and interface language.
 - **Appearance**: theme and reading fonts. The theme can follow the system, or use light or dark mode. Message and code block font families and sizes are independent. Font pickers list installed fonts. Font and size reset buttons appear only when their own value differs from the application default; each restores only its own setting. Sizes range from 6 to 72 logical pixels. The defaults are 14px for prose and 13px for code. Changes apply immediately and persist.
-- **Other**: the **About** section shows the app version and conversation data location. Click **GitHub repository** to open `fanenr/gchat` in your default browser.
+- **Other**: the **About** section shows the app version and conversation data location. In the **Source code** row, click `fanenr/gchat` to open the repository in your default browser.
 
 Reading settings leave the sidebar, input box, and reasoning text unchanged. Inline code keeps its monospace family and scales with prose. Table text and streaming replies follow the prose font. Font changes keep message selections, drafts, and active requests. List margins and user-bubble widths are recalculated without replacing widgets or reloading images. On a save failure, the control returns to its previous value. Missing or invalid font settings use the defaults; unavailable fonts fall back through GTK.
 
@@ -296,6 +297,7 @@ Layout tests check the bottom spacing and the visibility of the last line under 
 The layout cases show a separate test window. They check bubble wrapping, fixed padding, and the centering of a short sentence.
 A case also rebuilds a user bubble in a shown window. It checks that the height does not grow from an old measurement cache.
 The local streaming case clicks the real Regenerate button. It checks the bubble layout during generation, at the end, and after a history re-render.
+Tests also check that chunks share a frame update, that finishing keeps pending text, and that changing the scroll range updates the bottom without pulling the reader back.
 The tests also check the visible end after upward reading and after input box changes. They do not check scrolling values only.
 The tests use only temporary directories and a local HTTP service. They do not contact DeepSeek and do not read user sessions or keys.
 

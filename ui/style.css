@@ -161,7 +161,9 @@ undershoot.right {
   background: none;
   border: none;
   min-width: 0;
-  padding: 0 3px;
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0 1px 0 7px;
 }
 .chat-scrollbar.vertical > range > trough > slider {
   background: alpha(@window_fg_color, .2);

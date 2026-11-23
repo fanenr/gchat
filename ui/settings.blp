@@ -167,14 +167,13 @@ Adw.PreferencesDialog settings_dialog {
       }
 
       Adw.ActionRow {
-        title: _("GitHub repository");
-        activatable-widget: repository_link;
+        title: _("Source code");
 
         [suffix]
-        Gtk.LinkButton repository_link {
+        Gtk.Label {
           valign: center;
-          label: "fanenr/gchat";
-          uri: "https://github.com/fanenr/gchat";
+          use-markup: true;
+          label: "<a href='https://github.com/fanenr/gchat'>fanenr/gchat</a>";
         }
       }
     }

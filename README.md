@@ -69,12 +69,12 @@ under `Contents/Resources/Licenses`.
 
 ## Features
 
-- Streaming replies: the client reads SSE asynchronously with libsoup3 and shows text as it arrives. It supports multi-line event data. A stop button interrupts generation and keeps the text received so far.
+- Streaming replies: the client reads SSE asynchronously with libsoup3 and updates the text display at most once per frame. Scroll up to read earlier messages, and return to the bottom to resume following. Multi-line event data is supported. The stop button keeps the text received so far.
 - Markdown rendering: md4c parses the text and renders it as native widgets, with headings, lists, quotes, tables, code blocks, and HTTPS images outside tables. Remote image servers can see your IP address and request time.
 - Code blocks: a separate card with compact line spacing and a tinted header for the language label and copy button. GtkSourceView does the highlighting.
 - Multiple sessions: search, pin, duplicate, rename, and delete sessions from the sidebar. New Flash conversations get an automatic title by default. Turn it off under **Settings → General → Conversation → Automatic conversation titles**.
 - Deletion confirmation: on by default. Turn it off under **Settings → General → Conversation → Confirm conversation deletion**.
-- Settings: **General** for the API key, conversation options, and language; **Appearance** for the theme and reading fonts; **Other** for the app version, conversation data location, and GitHub repository link.
+- Settings: **General** for the API key, conversation options, and language; **Appearance** for the theme and reading fonts; **Other** for the app version, conversation data location, and **Source code** link.
 - Adaptive layout: messages and the input area widen together on wide windows. The window requests a minimum size of 640 × 480 logical pixels.
 - Reading: choose separate fonts and sizes for messages and code blocks. Line heights scale with their fonts; headings have distinct levels, lists use hanging indents, and tables keep a light, borderless layout with vertically centered cells. Code blocks and tables scroll horizontally without showing a scrollbar. Reset buttons appear only for non-default values. Changes apply immediately and persist; the sidebar and input box are unchanged.
 - Message actions: copy, edit and resend, fork into a new session, regenerate, and delete.

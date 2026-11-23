@@ -497,8 +497,8 @@ msgid "Conversation data"
 msgstr "会话数据"
 
 #: ui/settings.blp:170
-msgid "GitHub repository"
-msgstr "GitHub 仓库"
+msgid "Source code"
+msgstr "源代码"
 
 #: main.c:4335
 #, c-format

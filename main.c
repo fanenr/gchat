@@ -24,6 +24,7 @@
 
 #define API_URL "https://api.deepseek.com/chat/completions"
 
+#define CHAT_BAR_FADE_MS 1200
 #define INPUT_MIN_HEIGHT 92
 #define INPUT_MAX_HEIGHT 210
 #define ATTACHMENT_THUMB_SIZE 64
@@ -31,7 +32,7 @@
 #define REQUEST_MAX_SIZE (48 * 1024 * 1024)
 #define REQUEST_MAX_IMAGES 600
 
-/* Keep content aligned and transition smoothly from 85% to 75%. */
+/* Keep content aligned and transition smoothly from 85% to 65%. */
 typedef struct
 {
   GtkWidget  parent_instance;
@@ -46,7 +47,7 @@ static int
 chat_width_for (int width)
 {
   double progress = CLAMP ((width - 760) / 440.0, 0.0, 1.0);
-  double fraction = 0.85 - 0.10 * progress;
+  double fraction = 0.85 * (1.0 - progress) + 0.65 * progress;
   /* The child has 16px margins on both sides. */
   return MIN (width, (int) (width * fraction) + 32);
 }
@@ -178,6 +179,8 @@ typedef struct
   gboolean      request_title;
 
   guint         draft_save_source;
+  guint         stream_tick;
+  gsize         reasoning_shown;
   guint         web_searches, web_reads;
   gint64        request_started;
   gdouble       thought_seconds; /* Store the first content token's arrival
@@ -520,9 +523,17 @@ chat_bar_show (void)
   if (app->chat_bar == NULL)
     return;
   gtk_widget_remove_css_class (app->chat_bar, "faded");
-  if (chat_bar_timer)
-    g_source_remove (chat_bar_timer);
-  chat_bar_timer = g_timeout_add (1200, chat_bar_fade_cb, NULL);
+  if (chat_bar_timer == 0)
+    {
+      chat_bar_timer = g_timeout_add (CHAT_BAR_FADE_MS, chat_bar_fade_cb, NULL);
+      return;
+    }
+
+  /* Extend the existing timeout rather than replace it for each scroll. */
+  GSource *source = g_main_context_find_source_by_id (NULL, chat_bar_timer);
+  gint64 deadline = g_get_monotonic_time () +
+                    CHAT_BAR_FADE_MS * G_TIME_SPAN_MILLISECOND;
+  g_source_set_ready_time (source, deadline);
 }
 
 static void
@@ -543,7 +554,7 @@ update_chat_bar (GtkAdjustment *adj)
   gtk_widget_add_css_class (app->chat_bar, "faded");
 }
 
-/* Do not fade out while the pointer is on the scrollbar, so dragging works. */
+/* Reveal the scrollbar on hover so it can be dragged even after fading. */
 static void
 on_chat_bar_enter (GtkEventControllerMotion *motion G_GNUC_UNUSED,
                    double                    x G_GNUC_UNUSED,
@@ -553,15 +564,14 @@ on_chat_bar_enter (GtkEventControllerMotion *motion G_GNUC_UNUSED,
   chat_bar_show ();
 }
 
-/* Stick to the bottom only when the content height changes (changed); plain
-   scrolling goes through value-changed. */
 static void
 on_content_changed (GtkAdjustment *adj)
 {
-  update_chat_bar (adj);
-
+  /* GtkViewport updates the range before positioning its child. Pin the
+     value now so the child is positioned at the bottom in the same layout. */
   if (chat_stick.follow)
-    stick_queue_scroll (&chat_stick);
+    stick_scroll (&chat_stick);
+  update_chat_bar (adj);
 }
 
 static void
@@ -594,15 +604,6 @@ on_chat_focus_changed (GtkWindow  *window,
     }
 
   gtk_viewport_scroll_to (GTK_VIEWPORT (viewport), focus, NULL);
-}
-
-/* Streaming and the final pass keep the user's scroll choice and do not
-   interrupt reading upward. */
-static void
-scroll_if_following (void)
-{
-  if (chat_stick.follow)
-    stick_queue_scroll (&chat_stick);
 }
 
 /* ---------- SSE ---------- */
@@ -2096,8 +2097,18 @@ short_title (const gchar *text)
 }
 
 static void
+cancel_stream_update (void)
+{
+  if (app->stream_tick == 0)
+    return;
+  gtk_widget_remove_tick_callback (app->window, app->stream_tick);
+  app->stream_tick = 0;
+}
+
+static void
 clear_stream_state (void)
 {
+  cancel_stream_update ();
   g_clear_object (&app->cancel);
   g_clear_pointer (&app->reply_title, g_free);
   app->request_title = FALSE;
@@ -2108,6 +2119,7 @@ clear_stream_state (void)
   app->reason_box = NULL;
   app->reason_view = NULL;
   app->reason_title = NULL;
+  app->reasoning_shown = 0;
   app->web_searches = 0;
   app->web_reads = 0;
   g_string_truncate (app->answer, 0);
@@ -2154,6 +2166,45 @@ record_reply (void)
 }
 
 static void
+append_pending_reasoning (void)
+{
+  if (app->reason_view == NULL || app->reasoning_shown == app->reasoning->len)
+    return;
+
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (
+      GTK_TEXT_VIEW (app->reason_view));
+  GtkTextIter end;
+  gtk_text_buffer_get_end_iter (buffer, &end);
+  gtk_text_buffer_insert (buffer, &end,
+                          app->reasoning->str + app->reasoning_shown, -1);
+  app->reasoning_shown = app->reasoning->len;
+}
+
+/* Apply all text received since the last frame before GTK lays out the chat. */
+static gboolean
+update_stream_frame (GtkWidget     *widget G_GNUC_UNUSED,
+                     GdkFrameClock *clock G_GNUC_UNUSED,
+                     gpointer       data G_GNUC_UNUSED)
+{
+  app->stream_tick = 0;
+  append_pending_reasoning ();
+  if (app->answer->len > 0)
+    {
+      g_autofree gchar *shown = g_strconcat (app->answer->str, "▍", NULL);
+      gtk_label_set_text (GTK_LABEL (app->reply_label), shown);
+    }
+  return G_SOURCE_REMOVE;
+}
+
+static void
+queue_stream_update (void)
+{
+  if (app->stream_tick == 0)
+    app->stream_tick = gtk_widget_add_tick_callback (
+        app->window, update_stream_frame, NULL, NULL);
+}
+
+static void
 end_stream (void)
 {
   if (!app->busy)
@@ -2172,6 +2223,7 @@ end_stream (void)
     }
   if (app->reason_box != NULL)
     {
+      append_pending_reasoning ();
       set_thought_label (
           json_object_get_double_member (app->reply_msg, "duration"));
       if (app->answer->len == 0)
@@ -2192,7 +2244,6 @@ end_stream (void)
   add_fork_action (app->reply_bubble);
   add_bubble_action (app->reply_bubble, "user-trash-symbolic",
                      _ ("Delete message"), G_CALLBACK (on_delete_message));
-  scroll_if_following ();
   clear_stream_state ();
   save_session ();
 }
@@ -2284,22 +2335,15 @@ process_sse_event (const gchar *event)
       g_string_append (app->reasoning, reasoning);
       if (app->reason_box == NULL)
         {
-          app->reason_box =
-              thought_widget (app->reasoning->str, 0, &app->reason_view,
-                              &app->reason_title);
+          app->reason_box = thought_widget ("", 0, &app->reason_view,
+                                            &app->reason_title);
           gtk_box_prepend (GTK_BOX (app->reply_body), app->reason_box);
           if (app->answer->len == 0)
             set_thought_expanded (app->reason_box, TRUE);
           gtk_label_set_text (GTK_LABEL (app->reason_title), _ ("Thinking…"));
+          progress = TRUE;
         }
-      else
-        {
-          gtk_text_buffer_set_text (
-              gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->reason_view)),
-              app->reasoning->str, -1);
-        }
-      progress = TRUE;
-      scroll_if_following ();
+      queue_stream_update ();
     }
   if (progress && app->answer->len == 0)
     show_reply_status ();
@@ -2312,9 +2356,7 @@ process_sse_event (const gchar *event)
           set_thought_expanded (app->reason_box, FALSE);
         }
       g_string_append (app->answer, content);
-      g_autofree gchar *shown = g_strconcat (app->answer->str, "▍", NULL);
-      gtk_label_set_text (GTK_LABEL (app->reply_label), shown);
-      scroll_if_following ();
+      queue_stream_update ();
     }
 }
 
@@ -3780,6 +3822,7 @@ flush_stream (void)
 static void
 cancel_ui_updates (void)
 {
+  cancel_stream_update ();
   g_clear_handle_id (&app->draft_save_source, g_source_remove);
   g_clear_handle_id (&chat_stick.scroll_source, g_source_remove);
   g_clear_handle_id (&input_stick.scroll_source, g_source_remove);

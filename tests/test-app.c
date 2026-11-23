@@ -773,6 +773,19 @@ message_focus_scroll (void)
   gtk_adjustment_set_value (adj, 0);
   wait_for_layout ();
 
+  /* Check the painted thumb rather than the wider scrollbar widget. */
+  GtkWidget *bar = app->chat_bar;
+  g_autoptr (GtkSnapshot) snapshot = gtk_snapshot_new ();
+  GTK_WIDGET_GET_CLASS (bar)->snapshot (bar, snapshot);
+  g_autoptr (GskRenderNode) node =
+      gtk_snapshot_free_to_node (g_steal_pointer (&snapshot));
+  g_assert_nonnull (node);
+  graphene_rect_t thumb, bar_bounds;
+  gsk_render_node_get_bounds (node, &thumb);
+  g_assert_true (gtk_widget_compute_bounds (bar, app->scroller, &bar_bounds));
+  gdouble right = bar_bounds.origin.x + thumb.origin.x + thumb.size.width;
+  g_assert_cmpfloat (gtk_widget_get_width (app->scroller) - right, ==, 1);
+
   GtkWidget *first = gtk_widget_get_first_child (app->messages);
   first = gtk_widget_get_next_sibling (first);
   GtkWidget *last = gtk_widget_get_last_child (app->messages);
@@ -821,6 +834,7 @@ begin_reply (gboolean reasoning)
       g_string_append (app->reasoning, "已收到的推理");
       app->reason_box = thought_widget (app->reasoning->str, 0,
                                         &app->reason_view, &app->reason_title);
+      app->reasoning_shown = app->reasoning->len;
       gtk_box_prepend (GTK_BOX (app->reply_body), app->reason_box);
     }
 }
@@ -1171,10 +1185,10 @@ content_width_layout (void)
   g_assert_cmpint (chat_width_for (400), ==, 372);
   g_assert_cmpint (chat_width_for (640), ==, 576);
   g_assert_cmpint (chat_width_for (760), ==, 678);
-  g_assert_cmpint (chat_width_for (800), ==, 704);
-  g_assert_cmpint (chat_width_for (1000), ==, 827);
-  g_assert_cmpint (chat_width_for (1200), ==, 932);
-  g_assert_cmpint (chat_width_for (2000), ==, 1532);
+  g_assert_cmpint (chat_width_for (800), ==, 697);
+  g_assert_cmpint (chat_width_for (1000), ==, 772);
+  g_assert_cmpint (chat_width_for (1200), ==, 812);
+  g_assert_cmpint (chat_width_for (2000), ==, 1332);
   for (int width = 1; width <= 2400; width++)
     {
       int difference = chat_width_for (width) - chat_width_for (width - 1);
@@ -1235,9 +1249,7 @@ content_width_layout (void)
           g_test_message ("sidebar=%u window=%d available=%d content=%d",
                           sidebar, widths[i], available, messages);
           g_assert_cmpint (ABS (messages - input), <=, 2);
-          double progress = CLAMP ((available - 760) / 440.0, 0.0, 1.0);
-          double fraction = 0.85 - 0.10 * progress;
-          int expected = MIN (available - 32, (int) (available * fraction));
+          int expected = chat_width_for (available) - 32;
           g_assert_cmpint (ABS (messages - expected), <=, 2);
           g_assert_cmpint (ABS (gtk_widget_get_width (code) - messages), <=, 2);
           g_assert_cmpint (ABS (gtk_widget_get_width (table) - messages), <=,
@@ -1306,6 +1318,16 @@ minimum_window_layout (void)
   teardown ();
 }
 
+static gboolean
+on_source_link_activated (GtkLabel    *label G_GNUC_UNUSED,
+                          const gchar *uri,
+                          gboolean    *activated)
+{
+  g_assert_cmpstr (uri, ==, "https://github.com/fanenr/gchat");
+  *activated = TRUE;
+  return TRUE;
+}
+
 static void
 settings_pages (void)
 {
@@ -1337,16 +1359,27 @@ settings_pages (void)
       g_assert_true (gtk_widget_get_mapped (row));
     }
 
-  GtkWidget *label = find_label (GTK_WIDGET (dialog), _ ("GitHub repository"));
+  GtkWidget *label = find_label (GTK_WIDGET (dialog), _ ("Source code"));
   g_assert_nonnull (label);
   GtkWidget *row = gtk_widget_get_ancestor (label, ADW_TYPE_ACTION_ROW);
   g_assert_nonnull (row);
   g_assert_true (gtk_widget_get_mapped (row));
-  GtkWidget *link =
-      adw_action_row_get_activatable_widget (ADW_ACTION_ROW (row));
-  g_assert_true (GTK_IS_LINK_BUTTON (link));
-  g_assert_cmpstr (gtk_link_button_get_uri (GTK_LINK_BUTTON (link)), ==,
-                   "https://github.com/fanenr/gchat");
+
+  GtkWidget *link = find_label (row, "fanenr/gchat");
+  g_assert_nonnull (link);
+  graphene_rect_t title_bounds, link_bounds;
+  g_assert_true (gtk_widget_compute_bounds (label, row, &title_bounds));
+  g_assert_true (gtk_widget_compute_bounds (link, row, &link_bounds));
+  gdouble right = gtk_widget_get_width (row) -
+                  (link_bounds.origin.x + link_bounds.size.width);
+  g_assert_cmpfloat_with_epsilon (right, title_bounds.origin.x, 1);
+
+  gboolean activated = FALSE;
+  g_signal_connect (link, "activate-link",
+                    G_CALLBACK (on_source_link_activated), &activated);
+  g_assert_true (gtk_widget_grab_focus (link));
+  g_signal_emit_by_name (link, "activate-current-link");
+  g_assert_true (activated);
   teardown ();
 }
 
@@ -4523,6 +4556,91 @@ title_request (gconstpointer data)
 }
 
 static void
+stream_frame_batch (void)
+{
+  if (!setup_ui ())
+    return;
+  render_chat ();
+  begin_reply (FALSE);
+  show_window ();
+
+  process_sse_event ("{\"choices\":[{\"delta\":{"
+                     "\"reasoning_content\":\"甲\"}}]}");
+  guint tick = app->stream_tick;
+  g_assert_cmpuint (tick, !=, 0);
+  process_sse_event ("{\"choices\":[{\"delta\":{"
+                     "\"reasoning_content\":\"乙\"}}]}");
+  g_assert_cmpuint (app->stream_tick, ==, tick);
+  GtkTextBuffer *reason = gtk_text_view_get_buffer (
+      GTK_TEXT_VIEW (app->reason_view));
+  g_assert_cmpint (gtk_text_buffer_get_char_count (reason), ==, 0);
+  wait_for_layout ();
+  g_assert_cmpuint (app->stream_tick, ==, 0);
+  g_assert_cmpint (gtk_text_buffer_get_char_count (reason), ==, 2);
+
+  GtkTextIter start, selected_end;
+  gtk_text_buffer_get_start_iter (reason, &start);
+  selected_end = start;
+  gtk_text_iter_forward_char (&selected_end);
+  gtk_text_buffer_select_range (reason, &start, &selected_end);
+
+  process_sse_event ("{\"choices\":[{\"delta\":{\"content\":\"one\"}}]}");
+  tick = app->stream_tick;
+  g_assert_cmpuint (tick, !=, 0);
+  process_sse_event ("{\"choices\":[{\"delta\":{\"content\":\" two\"}}]}");
+  g_assert_cmpuint (app->stream_tick, ==, tick);
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->reply_label)), ==,
+                   _ ("Thinking…"));
+  wait_for_layout ();
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->reply_label)), ==,
+                   "one two▍");
+
+  /* An end event can arrive before the frame that would display the tail. */
+  process_sse_event ("{\"choices\":[{\"delta\":{\"reasoning_content\":\"丙\","
+                     "\"content\":\" three\"}}]}");
+  g_assert_cmpuint (app->stream_tick, !=, 0);
+  end_stream ();
+  g_assert_cmpuint (app->stream_tick, ==, 0);
+  JsonObject *reply = json_array_get_object_element (app->chat->messages, 2);
+  g_assert_cmpstr (member_string (reply, "content"), ==, "one two three");
+  g_assert_cmpstr (member_string (reply, "reasoning"), ==, "甲乙丙");
+  GtkTextIter end;
+  gtk_text_buffer_get_bounds (reason, &start, &end);
+  g_autofree gchar *shown = gtk_text_buffer_get_text (reason, &start, &end,
+                                                      FALSE);
+  g_assert_cmpstr (shown, ==, "甲乙丙");
+  g_assert_true (gtk_text_buffer_get_selection_bounds (reason, &start, &end));
+  g_assert_cmpint (gtk_text_iter_get_offset (&start), ==, 0);
+  g_assert_cmpint (gtk_text_iter_get_offset (&end), ==, 1);
+  teardown ();
+}
+
+static void
+chat_follow_range (void)
+{
+  if (!setup_ui ())
+    return;
+  GtkAdjustment *adj = chat_stick.adj;
+  chat_stick.follow = TRUE;
+  gtk_adjustment_configure (adj, 0, 0, 800, 20, 200, 300);
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 500);
+  guint timer = chat_bar_timer;
+  g_assert_cmpuint (timer, !=, 0);
+
+  gtk_adjustment_set_value (adj, 100);
+  g_assert_false (chat_stick.follow);
+  gtk_adjustment_set_upper (adj, 900);
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 100);
+
+  gtk_adjustment_set_value (adj, 600);
+  g_assert_true (chat_stick.follow);
+  gtk_adjustment_set_upper (adj, 1000);
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 700);
+  g_assert_cmpuint (chat_bar_timer, ==, timer);
+  teardown ();
+}
+
+static void
 stream_layout (gconstpointer data)
 {
   if (!setup_ui ())
@@ -4885,6 +5003,8 @@ main (int    argc,
   g_test_add_data_func ("/app/shutdown/save-failure", GINT_TO_POINTER (2),
                         shutdown_snapshot);
   g_test_add_func ("/app/stream-snapshot", stream_snapshot);
+  g_test_add_func ("/app/stream/frame-batch", stream_frame_batch);
+  g_test_add_func ("/app/chat/follow-range", chat_follow_range);
   g_test_add_func ("/app/reasoning/visibility", reasoning_visibility);
   g_test_add_func ("/app/reasoning/stop", reasoning_stop);
   g_test_add_func ("/app/reasoning/failure", reasoning_failure);

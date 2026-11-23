@@ -501,7 +501,7 @@ msgid "Conversation data"
 msgstr ""
 
 #: ui/settings.blp:170
-msgid "GitHub repository"
+msgid "Source code"
 msgstr ""
 
 #: main.c:4335
