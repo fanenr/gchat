@@ -213,8 +213,8 @@
 翻译目录为 `po/`。英语原文在 C 和 Blueprint 文件中，简体中文译文在 `po/zh_CN.po`。
 `po/POTFILES` 列出这些文件；Blueprint 字符串使用与 C 相同的 `_()` 语法。
 构建需要 gettext 的 `msgfmt`。
-编译后的词典位于构建目录的 `po/` 下，运行时必须保留此目录。
-只复制单个 `gchat` 可执行文件无法运行。
+运行源码构建时，保留构建目录 `po/` 下编译好的词典。
+Flatpak 把词典安装到 `/app/share/locale`。
 更新翻译模板和词典：
 
 ```sh
@@ -226,6 +226,27 @@ meson compile -C build gchat-update-po
 文件位置、备份、数据库格式和升级流程见 [gchat 存储](STORAGE.zh-CN.md)。
 
 发送消息时，当前会话的正文和图片历史发往 DeepSeek。本地草稿和推理记录不回传。
+
+## Flatpak 打包
+
+[独立分发 manifest](../packaging/flatpak/io.github.fanenr.gchat.yml) 使用
+GNOME SDK 51，并从带校验和的源码归档构建 md4c。它构建当前检出目录的代码，
+导出与构建机架构匹配的安装包。发版请使用干净的检出目录。
+
+manifest 将 Meson 的安装前缀设为 `/app`，并开启 `-Dflatpak=true`。
+Meson 安装可执行文件、简体中文词典、桌面入口、AppStream 元数据、应用图标
+和项目许可证。manifest 也安装 md4c 许可证。简体中文词典保留在包内，在英文
+系统上也能使用。不影响默认源码构建或 macOS 的 Bundle ID。
+
+沙箱允许访问网络，用于连接 DeepSeek API 和加载远程图片。优先使用原生
+Wayland，回退到 X11。选文件和打开链接通过桌面门户。manifest 只授予
+`xdg-data/gchat` 和 `xdg-config/gchat` 的文件系统权限，以便与原生版共用数据。
+客户端按 `HOST_XDG_*` 或主目录下的默认路径找数据。不修改沙箱的 XDG 环境变量，
+也不授予会话总线权限。
+
+Flathub 源只提供运行时，应用不在 Flathub 上架。独立安装包不配置应用更新源。
+更新时用 `flatpak install --user --reinstall <安装包>` 安装面向同一架构、
+使用相同应用 ID 的新版安装包。
 
 ## 回归测试
 
@@ -313,6 +334,8 @@ GTK 相关测试需要显示后端。后端不可用时，测试跳过。
 | `po/` | gettext 翻译模板、简体中文词典与构建规则 |
 | `macos-bundle.c` / `macos-bundle.h` | macOS 应用包内的资源和运行时初始化 |
 | `packaging/macos/` | 组装 macOS DMG |
+| `packaging/linux/` | Flatpak 的桌面入口和 AppStream 元数据 |
+| `packaging/flatpak/` | 构建独立安装包的 manifest |
 | `assets/gchat.svg` | 应用图标的矢量源文件 |
 | `md.c` / `md.h` | md4c 回调转换为 GTK 控件。正文与表格共享行内样式和文本解码 |
 | `store.c` / `store.h` | SQLite 会话校验、升级和事务、进程锁、配置校验与合并写入 |

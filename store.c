@@ -53,10 +53,31 @@ chat_free (Chat *chat)
   g_free (chat);
 }
 
+static gchar *
+store_user_path (const gchar *xdg_dir,
+                 const gchar *host_env,
+                 const gchar *home_subdir,
+                 const gchar *filename)
+{
+  /* Flatpak replaces the normal XDG paths with sandbox-private paths. */
+  if (g_strcmp0 (g_getenv ("FLATPAK_ID"), GCHAT_APPLICATION_ID) == 0)
+    {
+      const gchar *host_dir = g_getenv (host_env);
+      if (host_dir != NULL && g_path_is_absolute (host_dir))
+        xdg_dir = host_dir;
+      else
+        return g_build_filename (g_get_home_dir (), home_subdir, "gchat",
+                                 filename, NULL);
+    }
+
+  return g_build_filename (xdg_dir, "gchat", filename, NULL);
+}
+
 gchar *
 store_session_path (void)
 {
-  return g_build_filename (g_get_user_data_dir (), "gchat", "session.db", NULL);
+  return store_user_path (g_get_user_data_dir (), "HOST_XDG_DATA_HOME",
+                          ".local/share", "session.db");
 }
 
 gint
@@ -87,8 +108,8 @@ store_lock (const gchar *path,
 gchar *
 store_config_path (void)
 {
-  return g_build_filename (g_get_user_config_dir (), "gchat", "config.json",
-                           NULL);
+  return store_user_path (g_get_user_config_dir (), "HOST_XDG_CONFIG_HOME",
+                          ".config", "config.json");
 }
 
 gchar *

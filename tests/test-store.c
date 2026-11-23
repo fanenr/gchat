@@ -397,6 +397,48 @@ image_storage (Fixture      *f,
 }
 
 static void
+assert_storage_paths (const gchar *data_dir,
+                      const gchar *config_dir)
+{
+  g_autofree gchar *session = store_session_path ();
+  g_autofree gchar *config = store_config_path ();
+  g_autofree gchar *expected_session =
+      g_build_filename (data_dir, "gchat", "session.db", NULL);
+  g_autofree gchar *expected_config =
+      g_build_filename (config_dir, "gchat", "config.json", NULL);
+
+  g_assert_cmpstr (session, ==, expected_session);
+  g_assert_cmpstr (config, ==, expected_config);
+}
+
+static void
+storage_paths (void)
+{
+  g_autofree gchar *host_data =
+      g_build_filename (g_get_tmp_dir (), "gchat-host-data", NULL);
+  g_autofree gchar *host_config =
+      g_build_filename (g_get_tmp_dir (), "gchat-host-config", NULL);
+  g_autofree gchar *default_data =
+      g_build_filename (g_get_home_dir (), ".local", "share", NULL);
+  g_autofree gchar *default_config =
+      g_build_filename (g_get_home_dir (), ".config", NULL);
+
+  g_setenv ("HOST_XDG_DATA_HOME", host_data, TRUE);
+  g_setenv ("HOST_XDG_CONFIG_HOME", host_config, TRUE);
+  assert_storage_paths (g_get_user_data_dir (), g_get_user_config_dir ());
+
+  g_setenv ("FLATPAK_ID", GCHAT_APPLICATION_ID, TRUE);
+  assert_storage_paths (host_data, host_config);
+
+  g_unsetenv ("HOST_XDG_DATA_HOME");
+  g_setenv ("HOST_XDG_CONFIG_HOME", "relative", TRUE);
+  assert_storage_paths (default_data, default_config);
+
+  g_unsetenv ("FLATPAK_ID");
+  g_unsetenv ("HOST_XDG_CONFIG_HOME");
+}
+
+static void
 invalid_config (gconstpointer data)
 {
   g_autofree gchar *dir =
@@ -458,8 +500,10 @@ main (int    argc,
   g_autofree gchar *config_dir =
       g_dir_make_tmp ("gchat-config-test-XXXXXX", NULL);
   g_assert_nonnull (config_dir);
+  g_unsetenv ("FLATPAK_ID");
   g_setenv ("XDG_CONFIG_HOME", config_dir, TRUE);
   i18n_init (NULL);
+  g_test_add_func ("/store/paths", storage_paths);
   g_test_add ("/store/roundtrip", Fixture, NULL, setup, roundtrip,
               teardown);
   g_test_add ("/store/incremental", Fixture, NULL, setup, incremental,

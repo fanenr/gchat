@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Arthur <arthur63@163.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+id: io.github.fanenr.gchat
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: gchat
+default-branch: stable
+separate-locales: false
+
+finish-args:
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --filesystem=xdg-data/gchat:create
+  - --filesystem=xdg-config/gchat:create
+
+modules:
+  - name: md4c
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_MD2HTML_EXECUTABLE=OFF
+    post-install:
+      - install -Dm644 LICENSE.md "$FLATPAK_DEST/share/licenses/$FLATPAK_ID/md4c/LICENSE.md"
+    cleanup:
+      - /include
+      - /lib/cmake
+      - /lib/pkgconfig
+      - /lib/libmd4c-html.so*
+    sources:
+      - type: archive
+        url: https://codeload.github.com/mity/md4c/tar.gz/refs/tags/release-0.5.3
+        sha256: 353c346f376b87c954a13f3415ede2d51264cc61dc5abcd38ff1d2aa0d059b9e
+        archive-type: tar-gzip
+
+  - name: gchat
+    buildsystem: meson
+    config-opts:
+      - -Dflatpak=true
+      - -Dwerror=true
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .cache
+          - .flatpak-builder
+          - build
+          - build-flatpak

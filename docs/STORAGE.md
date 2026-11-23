@@ -17,9 +17,22 @@ API key saved in settings.
 
 `XDG_DATA_HOME` and `XDG_CONFIG_HOME` override the corresponding base
 directories. Settings show the actual database path and the API key source.
-New files are created with `0600` permissions and new directories with `0700`.
+The client creates files with `0600` permissions and directories with `0700`.
 The data is not encrypted.
 `DEEPSEEK_API_KEY` overrides the key in `config.json`.
+
+On Linux, the Flatpak and the native build share the host paths above,
+including host XDG overrides. The Flatpak can create the two shared
+directories before the client starts. Quit one build before starting the
+other; both use the same database lock.
+
+Older Flatpak builds stored data under `~/.var/app/io.github.fanenr.gchat/`.
+The old `data/gchat/` and `config/gchat/` directories are not moved, deleted,
+or merged. If you want to use the old data, quit both builds and back up
+both locations first. You can copy `session.db` with `attachments/` into
+an empty native data directory, and copy `config.json` separately if
+there is no native configuration. Do not overwrite a native database to
+try to merge two histories.
 
 To back up conversations, quit gchat normally and copy `session.db` together
 with `attachments/`. Keep the copies together. A transaction is not a backup;

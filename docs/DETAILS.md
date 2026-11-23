@@ -216,8 +216,8 @@ An empty title of a new session is translated at display time. The client does n
 Translations live in `po/`. The English source is in C and Blueprint files. The Simplified Chinese translation is in `po/zh_CN.po`.
 `po/POTFILES` lists these files; Blueprint strings use the same `_()` syntax as C.
 The build needs `msgfmt` from gettext.
-The compiled catalogs are under `po/` in the build directory. You must keep this directory at run time.
-A single copied `gchat` binary will not run.
+Keep the compiled catalogs under the build directory's `po/` when running
+a source build. The Flatpak installs them under `/app/share/locale`.
 To update the template and the catalogs:
 
 ```sh
@@ -229,6 +229,33 @@ meson compile -C build gchat-update-po
 See [gchat storage](STORAGE.md) for file locations, backups, the database format, and upgrades.
 
 When you send a message, the text and image history of the current session goes to DeepSeek. Local drafts and reasoning records are not sent back.
+
+## Flatpak packaging
+
+The [standalone manifest](../packaging/flatpak/io.github.fanenr.gchat.yml)
+uses GNOME SDK 51 and builds md4c from a checksummed source archive. It
+builds the current checkout and exports a bundle for the build machine's
+architecture. Use a clean checkout for releases.
+
+The manifest enables Meson's `-Dflatpak=true` install layout with prefix
+`/app`. Meson installs the executable, the Simplified Chinese catalog,
+the desktop entry, the AppStream metadata, the application icon, and the
+project license. The manifest also installs the md4c license. The Chinese
+catalog stays in the bundle so it works on English systems. Default
+source builds and the macOS bundle ID are unchanged.
+
+The sandbox allows network access for the DeepSeek API and remote images.
+It uses native Wayland when available, with X11 as a fallback. File
+selection and opening links use desktop portals. The manifest grants
+filesystem access only to `xdg-data/gchat` and `xdg-config/gchat` to share
+storage with the native build. The client uses the host's `HOST_XDG_*`
+values or the usual home directory defaults. It does not change the
+sandbox's own XDG environment variables or grant session bus access.
+
+The Flathub remote supplies the runtime only. The app is not listed there,
+and the standalone bundle does not configure an app update repository.
+To update, install a newer bundle for the same architecture and app ID
+with `flatpak install --user --reinstall <bundle>`.
 
 ## Regression tests
 
@@ -315,6 +342,8 @@ GTK tests need a display backend. They skip when no backend is available.
 | `po/` | gettext template, Simplified Chinese catalog, and build rules |
 | `macos-bundle.c` / `macos-bundle.h` | Resource and runtime setup in a macOS app bundle |
 | `packaging/macos/` | macOS DMG assembly |
+| `packaging/linux/` | Desktop entry and AppStream metadata for Flatpak |
+| `packaging/flatpak/` | Manifest for standalone bundle builds |
 | `assets/gchat.svg` | Vector source for the application icon |
 | `md.c` / `md.h` | md4c callbacks to GTK widgets. Body text and tables share inline styles and text decoding |
 | `store.c` / `store.h` | SQLite session validation, upgrades and transactions, process lock, configuration validation and merged writes |

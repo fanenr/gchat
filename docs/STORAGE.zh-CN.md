@@ -14,8 +14,18 @@ SQLite 保存会话。图片本体仍保存在数据目录中。配置单独存�
 | `config.json` | `~/.config/gchat/` | API 密钥与应用设置 |
 
 `XDG_DATA_HOME` 和 `XDG_CONFIG_HOME` 分别覆盖数据与配置的基准目录。
-设置界面显示实际数据库路径和 API 密钥来源。新建文件的权限为 `0600`，新建目录的权限为 `0700`，
-内容不加密。`DEEPSEEK_API_KEY` 优先于 `config.json` 中的密钥。
+设置界面显示实际数据库路径和 API 密钥来源。客户端以 `0600` 权限创建文件，
+以 `0700` 权限创建目录。内容不加密。`DEEPSEEK_API_KEY` 优先于 `config.json` 中的密钥。
+
+在 Linux 上，Flatpak 版和原生版共用上表中的宿主机路径，也遵循宿主的 XDG 设置。
+Flatpak 可以在客户端启动前创建两个共享目录。两个版本使用同一把数据库锁，
+切换前先退出正在运行的版本。
+
+旧 Flatpak 版曾把数据放在 `~/.var/app/io.github.fanenr.gchat/`。其中的
+`data/gchat/` 和 `config/gchat/` 不会自动移动、删除或合并。若要使用旧数据，
+先退出两个版本，并备份两处数据。可以把 `session.db` 和 `attachments/` 一起
+复制到空的原生数据目录；如果没有原生配置，可另行复制 `config.json`。
+不要覆盖原生数据库来尝试合并两份会话历史。
 
 备份会话时，先正常退出 gchat，再将 `session.db` 和 `attachments/` 一起复制并保存。
 事务不能替代备份。gchat 不自动保存或恢复独立的数据库备份。

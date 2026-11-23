@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Arthur <arthur63@163.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+option('flatpak', type: 'boolean', value: false,
+  description: 'Use the Flatpak app ID and install layout',
+)

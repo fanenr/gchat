@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=gchat
+Comment=Chat with DeepSeek
+Comment[zh_CN]=与 DeepSeek 对话
+Exec=gchat
+Icon=io.github.fanenr.gchat
+Terminal=false
+Categories=GTK;Network;Chat;
+Keywords=DeepSeek;AI;Chat;
+Keywords[zh_CN]=DeepSeek;AI;聊天;对话;
+StartupNotify=true

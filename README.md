@@ -67,6 +67,44 @@ For public releases, publish the corresponding sources required by the
 licenses. The bundle records the dependency versions and license notices
 under `Contents/Resources/Licenses`.
 
+### Linux Flatpak
+
+Install the `.flatpak` file for your architecture, then launch **gchat**
+from the app menu or run it by ID. For example, on x86-64:
+
+```sh
+flatpak install --user ./gchat-x86_64.flatpak
+flatpak run io.github.fanenr.gchat
+```
+
+The app is distributed as a file, not through Flathub. The package uses
+the GNOME runtime from Flathub; you may need to download it on first
+install. The Flatpak shares [settings and conversations](docs/STORAGE.md)
+with the native build. Quit one before opening the other. Data from an
+older, isolated Flatpak is not moved automatically.
+
+On Linux, build a package from the checkout with Flatpak and Flatpak Builder:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.flatpak.Builder
+mkdir -p build-flatpak
+flatpak_dir="${FLATPAK_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/flatpak}"
+flatpak run --env=FLATPAK_USER_DIR="$flatpak_dir" \
+  --command=flatpak-builder org.flatpak.Builder \
+  --user --install-deps-from=flathub --force-clean \
+  --state-dir=build-flatpak/state --repo=build-flatpak/repo \
+  build-flatpak/app packaging/flatpak/io.github.fanenr.gchat.yml
+flatpak build-bundle \
+  --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+  build-flatpak/repo "build-flatpak/gchat-$(flatpak --default-arch).flatpak" \
+  io.github.fanenr.gchat stable
+```
+
+Share the `.flatpak` file from `build-flatpak/`, not the build directory
+or OSTree repository. For a public release, publish the corresponding
+sources required by the licenses. See [Flatpak packaging](docs/DETAILS.md#flatpak-packaging).
+
 ## Features
 
 - Streaming replies: the client reads SSE asynchronously with libsoup3 and updates the text display at most once per frame. Scroll up to read earlier messages, and return to the bottom to resume following. Multi-line event data is supported. The stop button keeps the text received so far.

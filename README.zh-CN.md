@@ -63,6 +63,41 @@ GCHAT_NOTARY_PROFILE='gchat' meson compile -C build macos-arm64
 公开发布时，按许可证要求同时提供对应源码。包内的
 `Contents/Resources/Licenses` 记录了依赖版本和许可证声明。
 
+### Linux Flatpak
+
+安装与系统架构匹配的 `.flatpak` 文件。安装后从应用菜单打开 **gchat**，
+或用应用 ID 启动。以 x86-64 为例：
+
+```sh
+flatpak install --user ./gchat-x86_64.flatpak
+flatpak run io.github.fanenr.gchat
+```
+
+应用通过文件分发，不在 Flathub 上架。包使用 Flathub 提供的 GNOME 运行时，
+首次安装时可能需要下载。Flatpak 版和原生版共用[配置和会话数据](docs/STORAGE.zh-CN.md)。
+切换版本前先退出正在运行的版本。旧 Flatpak 隔离目录中的数据不会自动迁移。
+
+在 Linux 上，从仓库根目录用 Flatpak 和 Flatpak Builder 构建安装包：
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.flatpak.Builder
+mkdir -p build-flatpak
+flatpak_dir="${FLATPAK_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/flatpak}"
+flatpak run --env=FLATPAK_USER_DIR="$flatpak_dir" \
+  --command=flatpak-builder org.flatpak.Builder \
+  --user --install-deps-from=flathub --force-clean \
+  --state-dir=build-flatpak/state --repo=build-flatpak/repo \
+  build-flatpak/app packaging/flatpak/io.github.fanenr.gchat.yml
+flatpak build-bundle \
+  --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+  build-flatpak/repo "build-flatpak/gchat-$(flatpak --default-arch).flatpak" \
+  io.github.fanenr.gchat stable
+```
+
+只需分享 `build-flatpak/` 下的 `.flatpak` 文件，不用分享构建目录或 OSTree 仓库。
+公开发布时，按许可证要求提供对应源码。细节见 [Flatpak 打包](docs/DETAILS.zh-CN.md#flatpak-打包)。
+
 ## 功能
 
 - 流式回复：用 libsoup3 异步读 SSE，支持多行事件数据，文字每帧最多刷新一次。向上滚动可阅读前文，回到底部后继续跟随。生成中可以停止，已收到的正文保留。

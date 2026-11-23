@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.fanenr.gchat</id>
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>gchat</name>
+  <summary>Chat with DeepSeek</summary>
+  <summary xml:lang="zh-CN">与 DeepSeek 对话</summary>
+  <developer id="io.github.fanenr">
+    <name>Arthur</name>
+  </developer>
+  <description>
+    <p>gchat is an independent desktop client for the DeepSeek API. Read
+       streaming replies with formatted Markdown and highlighted code, and
+       organize conversations with search and pins.</p>
+    <p xml:lang="zh-CN">gchat 是独立的 DeepSeek API 桌面客户端。支持查看流式回复、
+       渲染 Markdown 和代码高亮，也可以搜索和置顶会话。</p>
+    <p>Conversations and drafts are saved locally. To send messages, you
+       need your own DeepSeek API key. DeepSeek may charge for API usage.</p>
+    <p xml:lang="zh-CN">会话和草稿保存在本地。发送消息需要你自己的 DeepSeek API
+       密钥。DeepSeek 可能会对 API 用量收费。</p>
+  </description>
+  <launchable type="desktop-id">io.github.fanenr.gchat.desktop</launchable>
+  <url type="homepage">https://github.com/fanenr/gchat</url>
+  <url type="bugtracker">https://github.com/fanenr/gchat/issues</url>
+  <url type="vcs-browser">https://github.com/fanenr/gchat</url>
+</component>

@@ -5,12 +5,22 @@ project('gchat', 'c', version: '0.1.0',
   default_options: ['c_std=gnu11', 'warning_level=2'],
 )
 
+flatpak = get_option('flatpak')
 app_id = 'cc.arthur63.gchat'
+locale_dir = meson.current_build_dir() / 'po'
+if flatpak
+  if host_machine.system() != 'linux'
+    error('The Flatpak install layout is only available on Linux')
+  endif
+  app_id = 'io.github.fanenr.gchat'
+  locale_dir = get_option('prefix') / get_option('localedir')
+endif
+
 config = configuration_data()
 config.set_quoted('GETTEXT_PACKAGE', 'gchat')
 config.set_quoted('GCHAT_APPLICATION_ID', app_id)
 config.set_quoted('GCHAT_VERSION', meson.project_version())
-config.set_quoted('LOCALEDIR', meson.current_build_dir() / 'po')
+config.set_quoted('LOCALEDIR', locale_dir)
 configure_file(output: 'config.h', configuration: config)
 subdir('po')
 
@@ -59,8 +69,22 @@ app_deps = store_deps + md_deps
 gchat = executable('gchat', ['main.c', 'md.c', 'store.c', resources],
   dependencies: app_deps + [i18n_dep],
   link_depends: translations,
-  install: false,
+  install: flatpak,
 )
+
+if flatpak
+  datadir = get_option('datadir')
+  install_data('packaging/linux' / (app_id + '.desktop'),
+    install_dir: datadir / 'applications',
+  )
+  install_data('packaging/linux' / (app_id + '.metainfo.xml'),
+    install_dir: datadir / 'metainfo',
+  )
+  install_data('assets/gchat.svg', rename: app_id + '.svg',
+    install_dir: datadir / 'icons/hicolor/scalable/apps',
+  )
+  install_data('LICENSE', install_dir: datadir / 'licenses' / app_id)
+endif
 
 if (build_machine.system() == 'darwin' and host_machine.system() == 'darwin' and
     host_machine.cpu_family() == 'aarch64')

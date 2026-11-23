@@ -4835,6 +4835,7 @@ main (int    argc,
   g_autoptr (GError) error = NULL;
   test_dir = g_dir_make_tmp ("gchat-app-test-XXXXXX", &error);
   g_assert_no_error (error);
+  g_unsetenv ("FLATPAK_ID");
   g_setenv ("XDG_DATA_HOME", test_dir, TRUE);
   g_setenv ("XDG_CONFIG_HOME", test_dir, TRUE);
   g_test_init (&argc, &argv, NULL);
