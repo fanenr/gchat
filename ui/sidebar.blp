@@ -8,17 +8,15 @@ Adw.ToolbarView sidebar {
 
   [top]
   Adw.HeaderBar {
-    title-widget: Gtk.Label {};
+    centering-policy: strict;
 
-    [start]
-    Gtk.Label {
+    title-widget: Gtk.Label {
       label: "gchat";
-      margin-start: 6;
 
       styles [
         "heading",
       ]
-    }
+    };
   }
 
   content: Gtk.Box {

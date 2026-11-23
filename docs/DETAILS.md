@@ -75,7 +75,8 @@ This page covers what [README](../README.md) does not.
 ### Multiple sessions
 
 - The sidebar groups pinned sessions first, then other sessions as "Today / Yesterday / Earlier". Each group is sorted by creation time, newest first.
-- The "New chat" button is on the top row. A delete button appears at a session row end on hover. Right-click a session to pin or unpin, copy, or rename it.
+- The sidebar header centers the "gchat" title above the "New chat" button.
+- A delete button appears at a session row end on hover. Right-click a session to pin or unpin, copy, or rename it.
 - Copying opens a new, unpinned session with independent messages, reasoning, and drafts, including any edit in progress.
 - History, the current session, the model, the reasoning level, and each session draft are stored in `~/.local/share/gchat/session.db`.
 - History includes reasoning and think time.
