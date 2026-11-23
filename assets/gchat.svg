@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
+     viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">gchat</title>
+  <desc id="description">Two overlapping speech bubbles with three white dots
+    on a white rounded square.</desc>
+  <rect width="128" height="128" rx="28" fill="#fff"/>
+  <path fill="#fff" stroke="#000" stroke-width="7" stroke-linejoin="round" d="
+    M 67 49 H 84
+    C 97 49 106 58 106 71
+    C 106 78 103 84 98 88
+    L 101 101 L 87 93
+    Q 85 94 81 94 H 67
+    C 54 94 44 84 44 71
+    S 54 49 67 49 Z"/>
+  <path fill="#000" stroke="#fff" stroke-width="11" stroke-linejoin="round"
+        paint-order="stroke fill" d="
+    M 44 24 H 63
+    C 78 24 89 34 89 49
+    S 78 74 63 74
+    H 45 Q 42 74 39 73
+    L 26 82 Q 24 83 24.5 80.5
+    L 27 68 C 21 63 18 57 18 49
+    C 18 34 29 24 44 24 Z"/>
+  <g fill="#fff">
+    <circle cx="38.5" cy="49" r="4.5"/>
+    <circle cx="53.5" cy="49" r="4.5"/>
+    <circle cx="68.5" cy="49" r="4.5"/>
+  </g>
+</svg>

@@ -310,9 +310,20 @@ GTK tests need a display backend. They skip when no backend is available.
 | `ui/` | Blueprint layouts, CSS, and the GResource manifest. The layouts compile to GtkBuilder XML and are embedded in the app |
 | `i18n.c` / `i18n.h` | Language matching and gettext setup at startup |
 | `po/` | gettext template, Simplified Chinese catalog, and build rules |
+| `macos-bundle.c` / `macos-bundle.h` | Resource and runtime setup in a macOS app bundle |
+| `packaging/macos/` | macOS DMG assembly |
+| `assets/gchat.svg` | Vector source for the application icon |
 | `md.c` / `md.h` | md4c callbacks to GTK widgets. Body text and tables share inline styles and text decoding |
 | `store.c` / `store.h` | SQLite session validation, upgrades and transactions, process lock, configuration validation and merged writes |
 | `tests/` | Regression tests for session storage, app state and requests, and Markdown rendering |
+
+`macos-arm64` assembles `gchat.app` in a temporary directory. It copies
+non-system libraries and runtime modules into `Contents/Frameworks`,
+rewrites library references to bundle-relative paths, and checks the
+dependency closure before signing. The app loads icons, gettext catalogs,
+image loader metadata, and the TLS trust store from its own resources.
+The minimum macOS version is the highest deployment target in the app
+or its bundled libraries and modules.
 
 ## Known limits
 

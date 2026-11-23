@@ -30,7 +30,7 @@ The client needs these packages:
 2. Compile:
 
    ```sh
-   meson setup build && ninja -C build
+   meson setup build && meson compile -C build
    ```
 
 3. Start the client:
@@ -38,6 +38,34 @@ The client needs these packages:
    ```sh
    ./build/gchat
    ```
+
+### Apple Silicon DMG
+
+On an Apple Silicon Mac with the dependencies above and Python 3.9 or
+later, run:
+
+```sh
+brew install librsvg
+meson compile -C build macos-arm64
+```
+
+Copy `gchat.app` from the image to Applications. It uses the same settings
+and conversations as `./build/gchat`. The target Mac does not need Homebrew.
+The build prints the minimum macOS version for the image.
+
+The target writes `build/gchat-<version>-arm64.dmg`. The app is ad-hoc
+signed by default, so macOS can block it after download. To build a
+notarized image at the same path, use a Developer ID Application identity
+and a `notarytool` keychain profile:
+
+```sh
+GCHAT_CODESIGN_IDENTITY='Developer ID Application: Example (TEAMID)' \
+GCHAT_NOTARY_PROFILE='gchat' meson compile -C build macos-arm64
+```
+
+For public releases, publish the corresponding sources required by the
+licenses. The bundle records the dependency versions and license notices
+under `Contents/Resources/Licenses`.
 
 ## Features
 

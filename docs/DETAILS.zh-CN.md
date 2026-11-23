@@ -308,9 +308,17 @@ GTK 相关测试需要显示后端。后端不可用时，测试跳过。
 | `ui/` | Blueprint 布局、CSS 和 GResource 清单。布局编译为 GtkBuilder XML 并嵌入应用 |
 | `i18n.c` / `i18n.h` | 启动时的语言匹配与 gettext 初始化 |
 | `po/` | gettext 翻译模板、简体中文词典与构建规则 |
+| `macos-bundle.c` / `macos-bundle.h` | macOS 应用包内的资源和运行时初始化 |
+| `packaging/macos/` | 组装 macOS DMG |
+| `assets/gchat.svg` | 应用图标的矢量源文件 |
 | `md.c` / `md.h` | md4c 回调转换为 GTK 控件。正文与表格共享行内样式和文本解码 |
 | `store.c` / `store.h` | SQLite 会话校验、升级和事务、进程锁、配置校验与合并写入 |
 | `tests/` | 会话存储、应用状态与请求、Markdown 渲染的回归测试 |
+
+`macos-arm64` 在临时目录组装 `gchat.app`，将非系统动态库和运行时模块放到
+`Contents/Frameworks`，再将动态库引用改为包内相对路径。签名前检查依赖是否齐全。
+应用从包内加载图标、gettext 词典、图片加载器配置和 TLS 信任库。最低 macOS
+版本取应用、包内动态库和模块中最高的部署目标版本。
 
 ## 已知限制
 

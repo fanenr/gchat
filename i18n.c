@@ -6,6 +6,10 @@
 
 #include "i18n.h"
 
+#ifdef __APPLE__
+#include "macos-bundle.h"
+#endif
+
 #include <locale.h>
 #include <string.h>
 
@@ -68,7 +72,17 @@ i18n_init (const gchar *preference)
         g_setenv ("LC_MESSAGES", locale, TRUE);
     }
   g_setenv ("LANGUAGE", language, TRUE);
-  bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
+  const gchar *locale_dir = LOCALEDIR;
+#ifdef __APPLE__
+  g_autofree gchar *resources = macos_bundle_dup_resources_dir ();
+  g_autofree gchar *bundle_locale_dir = NULL;
+  if (resources != NULL)
+    {
+      bundle_locale_dir = g_build_filename (resources, "locale", NULL);
+      locale_dir = bundle_locale_dir;
+    }
+#endif
+  bindtextdomain (GETTEXT_PACKAGE, locale_dir);
   bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
   textdomain (GETTEXT_PACKAGE);
 }

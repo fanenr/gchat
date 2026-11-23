@@ -5,8 +5,10 @@ project('gchat', 'c', version: '0.1.0',
   default_options: ['c_std=gnu11', 'warning_level=2'],
 )
 
+app_id = 'cc.arthur63.gchat'
 config = configuration_data()
 config.set_quoted('GETTEXT_PACKAGE', 'gchat')
+config.set_quoted('GCHAT_APPLICATION_ID', app_id)
 config.set_quoted('GCHAT_VERSION', meson.project_version())
 config.set_quoted('LOCALEDIR', meson.current_build_dir() / 'po')
 configure_file(output: 'config.h', configuration: config)
@@ -28,9 +30,18 @@ resources = gnome.compile_resources('gchat-resources',
   dependencies: ui_files,
 )
 
+i18n_deps = [dependency('glib-2.0', version: '>=2.66')]
+i18n_sources = files('i18n.c')
+if host_machine.system() == 'darwin'
+  i18n_deps += [
+    dependency('appleframeworks', modules: ['CoreFoundation']),
+    dependency('gio-2.0', version: '>=2.66'),
+  ]
+  i18n_sources += files('macos-bundle.c')
+endif
 i18n_dep = declare_dependency(
-  sources: 'i18n.c',
-  dependencies: dependency('glib-2.0', version: '>=2.66'),
+  sources: i18n_sources,
+  dependencies: i18n_deps,
 )
 store_deps = [
   dependency('json-glib-1.0', version: '>=1.6'),
@@ -45,11 +56,28 @@ md_deps = [
 ]
 app_deps = store_deps + md_deps
 
-executable('gchat', ['main.c', 'md.c', 'store.c', resources],
+gchat = executable('gchat', ['main.c', 'md.c', 'store.c', resources],
   dependencies: app_deps + [i18n_dep],
   link_depends: translations,
   install: false,
 )
+
+if (build_machine.system() == 'darwin' and host_machine.system() == 'darwin' and
+    host_machine.cpu_family() == 'aarch64')
+  bundle_config = configuration_data()
+  bundle_config.set('APP_ID', app_id)
+  bundle_config.set('VERSION', meson.project_version())
+  bundle_info = configure_file(
+    input: 'packaging/macos/Info.plist.in',
+    output: 'gchat-Info.plist',
+    configuration: bundle_config,
+  )
+  run_target('macos-arm64', command: [
+    find_program('python3'), files('packaging/macos/dmg.py'), gchat,
+    bundle_info, files('assets/gchat.svg', 'LICENSE'),
+    meson.current_build_dir(), translations,
+  ])
+endif
 
 store_tests = executable('test-store', ['tests/test-store.c', 'store.c'],
   dependencies: store_deps + [i18n_dep],

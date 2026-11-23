@@ -5,6 +5,9 @@
 #include "config.h"
 
 #include "i18n.h"
+#ifdef __APPLE__
+#include "macos-bundle.h"
+#endif
 #include "md.h"
 #include "store.h"
 
@@ -4799,6 +4802,9 @@ activate (GtkApplication *gtk_app,
       return;
     }
 
+#ifdef __APPLE__
+  macos_bundle_bind_domains ();
+#endif
   g_autofree gchar *theme = config_get ("theme");
   apply_theme (theme);
 
@@ -4833,11 +4839,18 @@ main (int     argc,
   g_autofree gchar *language = config_get ("language");
   i18n_init (language);
 
+  g_autoptr (GError) error = NULL;
+#ifdef __APPLE__
+  if (!macos_bundle_init (&error))
+    {
+      g_printerr ("%s\n", error->message);
+      return 1;
+    }
+#endif
   g_autofree gchar *current_id = NULL;
   g_autofree gchar *model = NULL;
   g_autofree gchar *effort = NULL;
   g_autofree gchar *path = store_session_path ();
-  g_autoptr (GError) error = NULL;
   gint lock = store_lock (path, &error);
   if (lock < 0)
     {
@@ -4906,8 +4919,8 @@ main (int     argc,
                                                 "gchat/" GCHAT_VERSION, NULL);
 
   gtk_disable_setlocale ();
-  g_autoptr (AdwApplication) gtk_app =
-      adw_application_new ("cc.arthur63.gchat", G_APPLICATION_DEFAULT_FLAGS);
+  g_autoptr (AdwApplication) gtk_app = adw_application_new (
+      GCHAT_APPLICATION_ID, G_APPLICATION_DEFAULT_FLAGS);
   g_signal_connect (gtk_app, "activate", G_CALLBACK (activate), NULL);
   g_signal_connect (gtk_app, "shutdown", G_CALLBACK (on_shutdown), NULL);
 

@@ -30,7 +30,7 @@
 2. 编译：
 
    ```sh
-   meson setup build && ninja -C build
+   meson setup build && meson compile -C build
    ```
 
 3. 启动：
@@ -38,6 +38,30 @@
    ```sh
    ./build/gchat
    ```
+
+### Apple Silicon DMG
+
+在装有上述依赖和 Python 3.9 或更高版本的 Apple Silicon Mac 上运行：
+
+```sh
+brew install librsvg
+meson compile -C build macos-arm64
+```
+
+将镜像中的 `gchat.app` 拖到「应用程序」。它与 `./build/gchat` 共用设置和会话。
+目标 Mac 不需要装 Homebrew。构建时会打印该镜像要求的最低 macOS 版本。
+
+输出文件为 `build/gchat-<版本>-arm64.dmg`。包内应用默认使用临时签名，下载后
+可能被 macOS 拦截。如需在同一路径生成公证版，使用 Developer ID Application
+证书和 `notarytool` 钥匙串配置：
+
+```sh
+GCHAT_CODESIGN_IDENTITY='Developer ID Application: Example (TEAMID)' \
+GCHAT_NOTARY_PROFILE='gchat' meson compile -C build macos-arm64
+```
+
+公开发布时，按许可证要求同时提供对应源码。包内的
+`Contents/Resources/Licenses` 记录了依赖版本和许可证声明。
 
 ## 功能
 
