@@ -344,6 +344,8 @@ messages_valid (JsonArray *messages)
           !string_member_valid (msg, "content") ||
           (json_object_has_member (msg, "reasoning") &&
            !string_member_valid (msg, "reasoning")) ||
+          (json_object_has_member (msg, "latest_reminder") &&
+           !string_member_valid (msg, "latest_reminder")) ||
           (json_object_has_member (msg, "duration") &&
            !number_member_valid (msg, "duration")))
         return FALSE;

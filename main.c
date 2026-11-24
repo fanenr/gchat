@@ -177,7 +177,7 @@ typedef struct
   gboolean      append_kill;
 
   gboolean      busy, syncing, preedit, restoring_input, closing;
-  gboolean      web_enabled, auto_title, confirm_delete_chat;
+  gboolean      web_enabled, auto_title, confirm_delete_chat, latest_reminder;
   gboolean      request_title;
 
   guint         draft_save_source;
@@ -2952,6 +2952,15 @@ request_body (guint        turns,
       const gchar *content = json_object_get_string_member (msg, "content");
       if (g_str_equal (role, "assistant") && !*content)
         continue;
+      const gchar *reminder = member_string (msg, "latest_reminder");
+      if (app->latest_reminder && g_str_equal (role, "user") &&
+          reminder != NULL && *reminder)
+        {
+          g_autoptr (JsonObject) marker = json_object_new ();
+          json_object_set_string_member (marker, "role", "latest_reminder");
+          json_object_set_string_member (marker, "content", reminder);
+          json_array_add_object_element (payload, g_steal_pointer (&marker));
+        }
       g_autoptr (JsonObject) clean = json_object_new ();
       json_object_set_string_member (clean, "role", role);
       if (g_str_equal (role, "assistant") && web_tools_supported ())
@@ -3046,6 +3055,26 @@ request_body (guint        turns,
   return g_steal_pointer (&body);
 }
 
+/* Return an owned marker using the active interface language. */
+static gchar *
+format_latest_reminder (GDateTime   *now,
+                        const gchar *language)
+{
+  static const gchar *const english[] = {
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    "Sunday"
+  };
+  static const gchar *const chinese[] = {
+    "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"
+  };
+  gboolean zh = g_strcmp0 (language, "zh_CN") == 0;
+  guint day = g_date_time_get_day_of_week (now) - 1;
+  g_autofree gchar *date = g_date_time_format (now, "%Y-%m-%d");
+  return g_strdup_printf ("%s,%s,,App,%s", date,
+                          zh ? chinese[day] : english[day],
+                          zh ? "中文" : "English");
+}
+
 /* Return an owned message with a reference to the current attachments. */
 static JsonObject *
 new_user_message (const gchar *text)
@@ -3054,6 +3083,13 @@ new_user_message (const gchar *text)
   g_autoptr (JsonObject) msg = json_object_new ();
   json_object_set_string_member (msg, "role", "user");
   json_object_set_string_member (msg, "content", text);
+  if (app->latest_reminder)
+    {
+      g_autoptr (GDateTime) now = g_date_time_new_now_local ();
+      g_autofree gchar *reminder =
+          format_latest_reminder (now, g_getenv ("LANGUAGE"));
+      json_object_set_string_member (msg, "latest_reminder", reminder);
+    }
   if (images != NULL)
     json_object_set_array_member (msg, "images", json_array_ref (images));
   return g_steal_pointer (&msg);
@@ -3062,10 +3098,9 @@ new_user_message (const gchar *text)
 /* Truncate the history when the edit draft is sent; a normal draft is
    unaffected by an edit and resend. */
 static void
-commit_message (const gchar *text)
+commit_message (JsonObject *user_msg)
 {
   gboolean editing = app->chat->edit_from != G_MAXUINT;
-  g_autoptr (JsonObject) user_msg = new_user_message (text);
   while (editing &&
          json_array_get_length (app->chat->messages) > app->chat->edit_from)
     json_array_remove_element (app->chat->messages, app->chat->edit_from);
@@ -3077,7 +3112,7 @@ commit_message (const gchar *text)
       g_clear_pointer (&app->chat->draft_images, json_array_unref);
     }
   json_array_add_object_element (app->chat->messages,
-                                 g_steal_pointer (&user_msg));
+                                 json_object_ref (user_msg));
 }
 
 /* Treat only blank text as empty; do not trim code indentation or trailing
@@ -3192,7 +3227,7 @@ send_message (void)
       return;
     }
 
-  commit_message (text);
+  commit_message (extra);
 
   if (!*app->chat->title)
     {
@@ -4224,9 +4259,9 @@ load_enabled_preference (const gchar *key)
 }
 
 static gboolean
-load_web_preference (void)
+load_disabled_preference (const gchar *key)
 {
-  g_autofree gchar *saved = config_get ("web_enabled");
+  g_autofree gchar *saved = config_get (key);
   return g_strcmp0 (saved, "true") == 0;
 }
 
@@ -4519,6 +4554,7 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
                           G_CALLBACK (on_language_selected));
 
   setup_switch_preference (builder, "auto_title", &app->auto_title);
+  setup_switch_preference (builder, "latest_reminder", &app->latest_reminder);
   setup_switch_preference (builder, "confirm_delete_chat",
                            &app->confirm_delete_chat);
 
@@ -5042,7 +5078,8 @@ main (int     argc,
   app->effort = g_steal_pointer (&effort);
   app->auto_title = load_enabled_preference ("auto_title");
   app->confirm_delete_chat = load_enabled_preference ("confirm_delete_chat");
-  app->web_enabled = load_web_preference ();
+  app->web_enabled = load_disabled_preference ("web_enabled");
+  app->latest_reminder = load_disabled_preference ("latest_reminder");
 
   /* The configuration accepts only the supported options; an unknown value
      falls back to the default. */

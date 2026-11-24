@@ -40,7 +40,8 @@ setup (void)
   app->effort = g_strdup ("high");
   app->auto_title = load_enabled_preference ("auto_title");
   app->confirm_delete_chat = load_enabled_preference ("confirm_delete_chat");
-  app->web_enabled = load_web_preference ();
+  app->web_enabled = load_disabled_preference ("web_enabled");
+  app->latest_reminder = load_disabled_preference ("latest_reminder");
   app->chats = g_ptr_array_new_with_free_func ((GDestroyNotify) chat_free);
   app->chat = chat_new ("42", "测试");
   g_ptr_array_add (app->chats, app->chat);
@@ -598,6 +599,89 @@ payload_filters_reasoning (void)
   teardown ();
 }
 
+static void
+latest_reminder_payload (void)
+{
+  g_autoptr (GDateTime) date = g_date_time_new_utc (2026, 11, 9, 12, 0, 0);
+  g_autofree gchar *en = format_latest_reminder (date, "en");
+  g_autofree gchar *zh = format_latest_reminder (date, "zh_CN");
+  g_assert_cmpstr (en, ==, "2026-11-09,Monday,,App,English");
+  g_assert_cmpstr (zh, ==, "2026-11-09,星期一,,App,中文");
+
+  g_assert_true (config_set ("latest_reminder", NULL));
+  setup ();
+  g_assert_false (app->latest_reminder);
+  app->latest_reminder = TRUE;
+  g_autoptr (JsonObject) user = new_user_message ("new question");
+  json_object_set_string_member (user, "latest_reminder", en);
+  gsize len;
+  g_autofree gchar *body = request_body (2, user, FALSE, &len, NULL);
+  g_autoptr (JsonParser) parser = json_parser_new ();
+  g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
+  JsonObject *root = json_node_get_object (json_parser_get_root (parser));
+  JsonArray *messages = json_object_get_array_member (root, "messages");
+  g_assert_cmpuint (json_array_get_length (messages), ==, 4);
+  JsonObject *marker = json_array_get_object_element (messages, 2);
+  g_assert_cmpstr (member_string (marker, "role"), ==, "latest_reminder");
+  g_assert_cmpstr (member_string (marker, "content"), ==, en);
+  g_assert_cmpstr (member_string (json_array_get_object_element (messages, 3),
+                                  "role"), ==, "user");
+  commit_message (user);
+  g_autoptr (GError) error = NULL;
+  g_assert_true (store_save (app->db, app->chats, app->deleted_chat_ids,
+                             app->chat->id, app->model, app->effort, &error));
+  g_assert_no_error (error);
+  g_autofree gchar *current = NULL;
+  g_autofree gchar *model = NULL;
+  g_autofree gchar *effort = NULL;
+  g_autoptr (GPtrArray) chats = store_load (app->db, &current, &model,
+                                            &effort, &error);
+  g_assert_no_error (error);
+  Chat *chat = g_ptr_array_index (chats, 0);
+  JsonObject *saved = json_array_get_object_element (chat->messages, 2);
+  g_assert_cmpstr (member_string (saved, "latest_reminder"), ==, en);
+
+  g_clear_pointer (&body, g_free);
+  body = request_body (3, NULL, FALSE, &len, NULL);
+  g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
+  root = json_node_get_object (json_parser_get_root (parser));
+  messages = json_object_get_array_member (root, "messages");
+  marker = json_array_get_object_element (messages, 2);
+  g_assert_cmpstr (member_string (marker, "content"), ==, en);
+
+  app->latest_reminder = FALSE;
+  g_clear_pointer (&body, g_free);
+  body = request_body (3, NULL, FALSE, &len, NULL);
+  g_assert_true (json_parser_load_from_data (parser, body, len, NULL));
+  root = json_node_get_object (json_parser_get_root (parser));
+  messages = json_object_get_array_member (root, "messages");
+  g_assert_cmpuint (json_array_get_length (messages), ==, 3);
+  g_assert_false (json_object_has_member (
+      json_array_get_object_element (messages, 2), "latest_reminder"));
+  teardown ();
+}
+
+static void
+latest_reminder_setting (void)
+{
+  g_assert_true (config_set ("latest_reminder", NULL));
+  if (!setup_ui ())
+    return;
+  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/settings.ui");
+  AdwSwitchRow *row = ADW_SWITCH_ROW (
+      gtk_builder_get_object (builder, "latest_reminder"));
+  setup_switch_preference (builder, "latest_reminder", &app->latest_reminder);
+  g_assert_false (adw_switch_row_get_active (row));
+  adw_switch_row_set_active (row, TRUE);
+  g_assert_true (app->latest_reminder);
+  g_assert_true (load_disabled_preference ("latest_reminder"));
+  adw_switch_row_set_active (row, FALSE);
+  g_assert_false (app->latest_reminder);
+  g_assert_false (load_disabled_preference ("latest_reminder"));
+  teardown ();
+}
+
 static JsonArray *
 image_ids (const gchar *first,
            const gchar *second)
@@ -828,7 +912,8 @@ message_whitespace (void)
   gtk_text_buffer_set_text (buffer, code, -1);
   g_autofree gchar *text = input_message ();
   g_assert_cmpstr (text, ==, code);
-  commit_message (text);
+  g_autoptr (JsonObject) user_msg = new_user_message (text);
+  commit_message (user_msg);
   JsonObject *msg = json_array_get_object_element (app->chat->messages, 2);
   g_assert_cmpstr (json_object_get_string_member (msg, "content"), ==, code);
   teardown ();
@@ -863,7 +948,8 @@ edit_and_fork (void)
   g_assert_cmpuint (source->edit_from, ==, 1);
   g_assert_cmpuint (json_array_get_length (source->messages), ==, 3);
 
-  commit_message ("edited question two");
+  g_autoptr (JsonObject) edited = new_user_message ("edited question two");
+  commit_message (edited);
   g_assert_cmpuint (json_array_get_length (source->messages), ==, 2);
   g_assert_cmpstr (
       json_object_get_string_member (
@@ -1144,6 +1230,8 @@ main (int    argc,
   g_test_add_func ("/app/web/toggle", web_toggle);
   g_test_add_func ("/app/title-generation", title_generation);
   g_test_add_func ("/app/payload-filters-reasoning", payload_filters_reasoning);
+  g_test_add_func ("/app/latest-reminder", latest_reminder_payload);
+  g_test_add_func ("/app/latest-reminder-setting", latest_reminder_setting);
   g_test_add_func ("/app/image-payload", image_payload);
   g_test_add_func ("/app/image-payload-limits", image_payload_limits);
   g_test_add_func ("/app/image-import", image_import);

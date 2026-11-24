@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gchat\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-19 12:00+0800\n"
+"POT-Creation-Date: 2026-11-24 16:47+0800\n"
 "PO-Revision-Date: 2026-11-13 21:20+0800\n"
 "Last-Translator: gchat contributors\n"
 "Language-Team: Simplified Chinese\n"
@@ -13,37 +13,391 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: main.c:137
+#: main.c:144
 msgid "Off"
 msgstr "关闭"
 
-#: main.c:138
+#: main.c:145
 msgid "Low"
 msgstr "低"
 
-#: main.c:139
+#: main.c:146
 msgid "High"
 msgstr "高"
 
-#: main.c:140
+#: main.c:147
 msgid "Max"
 msgstr "最高"
 
-#: main.c:965
+#: main.c:317 main.c:3550
+msgid "Image exceeds the 8 MiB limit."
+msgstr "图片超过 8 MiB 的上限。"
+
+#: main.c:397 main.c:428
+msgid "Unsupported image format."
+msgstr "不支持的图片格式。"
+
+#: main.c:417 main.c:3759
+msgid "Image dimensions are too large."
+msgstr "图片尺寸过大。"
+
+#: main.c:458
+msgid "Retry"
+msgstr "重试"
+
+#: main.c:925
+msgid "Copied"
+msgstr "已复制"
+
+#: main.c:1018
+msgid "Copy message"
+msgstr "复制这条消息"
+
+#: main.c:1018
+msgid "Copy reply"
+msgstr "复制整条回复"
+
+#: main.c:1053
+msgid "No text"
+msgstr "无文字"
+
+#: main.c:1211 main.c:1216
+msgid "Image unavailable"
+msgstr "图片不可用"
+
+#: main.c:1240
+msgid "Attached image"
+msgstr "已附加图片"
+
+#: main.c:1285
+#, c-format
+msgid "Remove image %u"
+msgstr "移除第 %u 张图片"
+
+#: main.c:1331
+msgid "Thought"
+msgstr "已思考"
+
+#: main.c:1332
+#, c-format
+msgid "Thought (%.0f s)"
+msgstr "已思考（用时 %.0f 秒）"
+
+#: main.c:1333
+#, c-format
+msgid "Thought (%.1f s)"
+msgstr "已思考（用时 %.1f 秒）"
+
+#: main.c:1415
 msgid "Sources"
 msgstr "来源"
 
-#: main.c:2144
+#: main.c:1547
+#, c-format
+msgid "%s (Fork)"
+msgstr "%s（分叉）"
+
+#: main.c:1548
+msgid "Fork"
+msgstr "分叉"
+
+#: main.c:1591
+msgid "Fork conversation"
+msgstr "分叉会话"
+
+#: main.c:1647
+msgid "Edit and resend"
+msgstr "编辑后重发"
+
+#: main.c:1668 main.c:2582
+msgid "Regenerate"
+msgstr "重新生成"
+
+#: main.c:1672 main.c:2585
+msgid "Delete message"
+msgstr "删除这条消息"
+
+#: main.c:1728
+#, c-format
+msgid "Stop generating (%s+.)"
+msgstr "停止生成 (%s+.)"
+
+#: main.c:1730 ui/content.blp:290
+msgid "Send"
+msgstr "发送"
+
+#: main.c:1757
+msgid "Earlier"
+msgstr "更早"
+
+#: main.c:1761
+msgid "Today"
+msgstr "今天"
+
+#: main.c:1763
+msgid "Yesterday"
+msgstr "昨天"
+
+#: main.c:1800 main.c:2059 main.c:2084 ui/sidebar.blp:45
+msgid "New chat"
+msgstr "新对话"
+
+#: main.c:1917
+msgid "Rename conversation"
+msgstr "重命名会话"
+
+#: main.c:1925 main.c:2062 ui/content.blp:155
+msgid "Cancel"
+msgstr "取消"
+
+#: main.c:1925 main.c:2381
+msgid "Save"
+msgstr "保存"
+
+#: main.c:1957
+#, c-format
+msgid "%s (Copy)"
+msgstr "%s（副本）"
+
+#: main.c:1958 main.c:1992
+msgid "Copy"
+msgstr "复制"
+
+#: main.c:1991
+msgid "Unpin"
+msgstr "取消置顶"
+
+#: main.c:1991
+msgid "Pin"
+msgstr "置顶"
+
+#: main.c:1992
+msgid "Rename"
+msgstr "重命名"
+
+#: main.c:2058
+#, c-format
+msgid "Delete “%s” and all its messages and drafts? This cannot be undone."
+msgstr "要删除“%s”及其全部消息和草稿吗？此操作无法撤销。"
+
+#: main.c:2061
+msgid "Delete conversation?"
+msgstr "删除对话？"
+
+#: main.c:2063
+msgid "Delete"
+msgstr "删除"
+
+#: main.c:2090
+msgid "Delete conversation"
+msgstr "删除对话"
+
+#: main.c:2117
+msgid "Right-click for conversation menu"
+msgstr "右键打开会话菜单"
+
+#: main.c:2171
+msgid "Pinned"
+msgstr "置顶"
+
+#: main.c:2224 main.c:4281
+msgid "Failed to save setting"
+msgstr "无法保存设置"
+
+#: main.c:2308
+msgid "Model"
+msgstr "模型"
+
+#: main.c:2319
+msgid "Reasoning level"
+msgstr "推理级别"
+
+#: main.c:2348
+msgid "Failed to save API key"
+msgstr "API 密钥保存失败"
+
+#: main.c:2365 main.c:4310
+msgid "API key saved"
+msgstr "API 密钥已保存"
+
+#: main.c:2373
+#, c-format
+msgid "Your key is saved in %s for future use."
+msgstr "填写后保存在 %s，之后无需再输入。"
+
+#: main.c:2375
+msgid "DeepSeek API key required"
+msgstr "需要 DeepSeek API Key"
+
+#: main.c:2381
+msgid "Later"
+msgstr "稍后"
+
+#: main.c:2502 main.c:4004
+msgid "Failed to save conversation"
+msgstr "会话保存失败"
+
+#: main.c:2555
+msgid "No response received"
+msgstr "没有收到回复"
+
+#: main.c:2635
 msgid "Reading links…"
 msgstr "正在阅读链接…"
 
-#: main.c:2146
+#: main.c:2637
 msgid "Searching the web…"
 msgstr "正在搜索网页…"
 
-#: ui/content.blp:188
-msgid "Web"
-msgstr "联网"
+#: main.c:2639 main.c:2682
+msgid "Thinking…"
+msgstr "思考中…"
+
+#: main.c:2732
+msgid "Connection interrupted. The response may be incomplete."
+msgstr "连接中断，回复可能不完整"
+
+#: main.c:2840
+msgid "Request failed"
+msgstr "请求失败"
+
+#: main.c:2889 main.c:3673 main.c:3809
+msgid "A request can contain at most 600 images."
+msgstr "单次请求最多包含 600 张图片。"
+
+#: main.c:2896
+msgid "Invalid image reference."
+msgstr "图片引用无效。"
+
+#: main.c:2913
+msgid "With 15 or more images, each side must be at most 4096 pixels."
+msgstr "请求包含 15 张或更多图片时，每张图片的最长边不得超过 4096 像素。"
+
+#: main.c:2922 main.c:3052
+msgid "The conversation is too large to send."
+msgstr "对话内容过大，无法发送。"
+
+#: main.c:2984
+msgid "Images require the DeepSeek-Flash model."
+msgstr "图片需要使用 DeepSeek-Flash 模型。"
+
+#: main.c:3199 main.c:3727 main.c:3908
+msgid "Wait for images to finish loading."
+msgstr "请等待图片加载完成。"
+
+#: main.c:3258
+msgid "Finish or cancel editing before regenerating."
+msgstr "正在编辑，发送或取消编辑后再重新生成"
+
+#: main.c:3386 main.c:3854 main.c:3903
+msgid "Generating. Click ■ to stop."
+msgstr "正在生成，点 ■ 可停止"
+
+#: main.c:3732
+msgid "Select images"
+msgstr "选择图片"
+
+#: main.c:3734
+msgid "Images"
+msgstr "图片"
+
+#: main.c:3771
+msgid "Unable to encode clipboard image."
+msgstr "无法编码剪贴板图片。"
+
+#: main.c:3884
+msgid "Only local image files can be pasted."
+msgstr "只能粘贴本地图片文件。"
+
+#: main.c:4163
+msgid "System default"
+msgstr "跟随系统"
+
+#: main.c:4164
+msgid "Light"
+msgstr "浅色"
+
+#: main.c:4165
+msgid "Dark"
+msgstr "深色"
+
+#: main.c:4166
+msgid "System language"
+msgstr "跟随系统"
+
+#: main.c:4211
+msgid "Failed to save theme"
+msgstr "主题保存失败"
+
+#: main.c:4224
+msgid "Failed to save language"
+msgstr "语言保存失败"
+
+#: main.c:4226 ui/settings.blp:48
+msgid "Restart the app to apply language changes."
+msgstr "重启应用后语言设置生效。"
+
+#: main.c:4306
+msgid "API key cannot be empty"
+msgstr "API 密钥不能为空"
+
+#: main.c:4410 main.c:4448
+msgid "Failed to save font"
+msgstr "字体保存失败"
+
+#: main.c:4432
+msgid "Failed to save font size"
+msgstr "字号保存失败"
+
+#: main.c:4545
+msgid "DEEPSEEK_API_KEY environment variable (overrides this setting)"
+msgstr "环境变量 DEEPSEEK_API_KEY（优先级高于这里）"
+
+#: main.c:4547
+#, c-format
+msgid "Local configuration file: %s"
+msgstr "本机配置文件：%s"
+
+#: main.c:4665
+#, c-format
+msgid "New chat (%s+N)"
+msgstr "新对话 (%s+N)"
+
+#: main.c:4666
+#, c-format
+msgid "Search conversations (%s+F)"
+msgstr "搜索对话 (%s+F)"
+
+#: main.c:4667
+#, c-format
+msgid "Settings (%s+,)"
+msgstr "设置 (%s+,)"
+
+#: main.c:4674 ui/sidebar.blp:52
+msgid "Search conversations"
+msgstr "搜索对话"
+
+#: main.c:4680
+msgid "No conversations found"
+msgstr "未找到对话"
+
+#: main.c:4741
+#, c-format
+msgid "Enter to send · Shift+Enter for a new line · %s+N for a new chat"
+msgstr "Enter 发送 · Shift+Enter 换行 · %s+N 新对话"
+
+#: main.c:4791
+msgid "Message DeepSeek. Enter to send, Shift+Enter for a new line."
+msgstr "给 DeepSeek 发消息，Enter 发送，Shift+Enter 换行"
+
+#: main.c:5063
+#, c-format
+msgid "Unable to open conversation database: %s\n"
+msgstr "无法打开会话数据库：%s\n"
+
+#: ui/content.blp:16
+msgid "Conversations"
+msgstr "会话列表"
 
 #: ui/content.blp:26 ui/content.blp:34
 msgid "Message navigation"
@@ -61,394 +415,43 @@ msgstr "没有匹配的消息"
 msgid "Jump to latest"
 msgstr "跳到最新消息"
 
-#: main.c:1053
-msgid "No text"
-msgstr "无文字"
-
-#: ui/content.blp:189
-msgid "Search the web and read links"
-msgstr "搜索网页和阅读链接"
-
-#: main.c:254 main.c:2988
-msgid "Image exceeds the 8 MiB limit."
-msgstr "图片超过 8 MiB 的上限。"
-
-#: main.c:330 main.c:370
-msgid "Unsupported image format."
-msgstr "不支持的图片格式。"
-
-#: main.c:350 main.c:3197
-msgid "Image dimensions are too large."
-msgstr "图片尺寸过大。"
-
-#: main.c:400
-msgid "Retry"
-msgstr "重试"
-
-#: main.c:679
-msgid "Copied"
-msgstr "已复制"
-
-#: main.c:726
-msgid "Fork conversation"
-msgstr "分叉会话"
-
-#: main.c:811
-msgid "Copy message"
-msgstr "复制这条消息"
-
-#: main.c:811
-msgid "Copy reply"
-msgstr "复制整条回复"
-
-#: main.c:886 main.c:891
-msgid "Image unavailable"
-msgstr "图片不可用"
-
-#: main.c:915
-msgid "Attached image"
-msgstr "已附加图片"
-
-#: main.c:948
-msgid "Edit and resend"
-msgstr "编辑后重发"
-
-#: main.c:968 main.c:2011
-msgid "Regenerate"
-msgstr "重新生成"
-
-#: main.c:972 main.c:2014
-msgid "Delete message"
-msgstr "删除这条消息"
-
-#: main.c:1043 main.c:3441
-msgid "Failed to save conversation"
-msgstr "会话保存失败"
-
-#: main.c:1147
-#, c-format
-msgid "Stop generating (%s+.)"
-msgstr "停止生成 (%s+.)"
-
-#: main.c:1055 ui/content.blp:221
-msgid "Send"
-msgstr "发送"
-
-#: main.c:1081
-msgid "Earlier"
-msgstr "更早"
-
-#: main.c:1085
-msgid "Today"
-msgstr "今天"
-
-#: main.c:1087
-msgid "Yesterday"
-msgstr "昨天"
-
-#: main.c:1124 main.c:1232 main.c:1634 ui/sidebar.blp:48
-msgid "New chat"
-msgstr "新对话"
-
-#: main.c:1219
-msgid "Pinned"
-msgstr "置顶"
-
-#: main.c:1238
-msgid "Delete conversation"
-msgstr "删除对话"
-
-#: main.c:1266
-msgid "Right-click for conversation menu"
-msgstr "右键打开会话菜单"
-
-#: main.c:1376
-#, c-format
-msgid "%s (Fork)"
-msgstr "%s（分叉）"
-
-#: main.c:1377
-msgid "Fork"
-msgstr "分叉"
-
-#: main.c:1486
-msgid "Rename conversation"
-msgstr "重命名会话"
-
-#: main.c:1494 main.c:1637 ui/content.blp:95
-msgid "Cancel"
-msgstr "取消"
-
-#: main.c:1494 main.c:1829
-msgid "Save"
-msgstr "保存"
-
-#: main.c:1526
-#, c-format
-msgid "%s (Copy)"
-msgstr "%s（副本）"
-
-#: main.c:1527 main.c:1571
-msgid "Copy"
-msgstr "复制"
-
-#: main.c:1570
-msgid "Unpin"
-msgstr "取消置顶"
-
-#: main.c:1570
-msgid "Pin"
-msgstr "置顶"
-
-#: main.c:1571
-msgid "Rename"
-msgstr "重命名"
-
-#: main.c:1633
-#, c-format
-msgid "Delete “%s” and all its messages and drafts? This cannot be undone."
-msgstr "要删除“%s”及其全部消息和草稿吗？此操作无法撤销。"
-
-#: main.c:1636
-msgid "Delete conversation?"
-msgstr "删除对话？"
-
-#: main.c:1638
-msgid "Delete"
-msgstr "删除"
-
-#: main.c:1756
-msgid "Model"
-msgstr "模型"
-
-#: main.c:1767
-msgid "Reasoning level"
-msgstr "推理级别"
-
-#: main.c:1796
-msgid "Failed to save API key"
-msgstr "API 密钥保存失败"
-
-#: main.c:1813 main.c:3677
-msgid "API key saved"
-msgstr "API 密钥已保存"
-
-#: main.c:1821
-#, c-format
-msgid "Your key is saved in %s for future use."
-msgstr "填写后保存在 %s，之后无需再输入。"
-
-#: main.c:1823
-msgid "DeepSeek API key required"
-msgstr "需要 DeepSeek API Key"
-
-#: main.c:1829
-msgid "Later"
-msgstr "稍后"
-
-#: main.c:1867
-msgid "Thought"
-msgstr "已思考"
-
-#: main.c:1868
-#, c-format
-msgid "Thought (%.0f s)"
-msgstr "已思考（用时 %.0f 秒）"
-
-#: main.c:1869
-#, c-format
-msgid "Thought (%.1f s)"
-msgstr "已思考（用时 %.1f 秒）"
-
-#: main.c:1986
-msgid "No response received"
-msgstr "没有收到回复"
-
-#: main.c:2055 main.c:2064
-msgid "Thinking…"
-msgstr "思考中…"
-
-#: main.c:2112
-msgid "Connection interrupted. The response may be incomplete."
-msgstr "连接中断，回复可能不完整"
-
-#: main.c:2212
-msgid "Request failed"
-msgstr "请求失败"
-
-#: main.c:2261 main.c:3111 main.c:3247
-msgid "A request can contain at most 600 images."
-msgstr "单次请求最多包含 600 张图片。"
-
-#: main.c:2268
-msgid "Invalid image reference."
-msgstr "图片引用无效。"
-
-#: main.c:2285
-msgid "With 15 or more images, each side must be at most 4096 pixels."
-msgstr "请求包含 15 张或更多图片时，每张图片的最长边不得超过 4096 像素。"
-
-#: main.c:2294 main.c:2388
-msgid "The conversation is too large to send."
-msgstr "对话内容过大，无法发送。"
-
-#: main.c:2339
-msgid "Images require the DeepSeek-Flash model."
-msgstr "图片需要使用 DeepSeek-Flash 模型。"
-
-#: main.c:2454 main.c:3165 main.c:3346
-msgid "Wait for images to finish loading."
-msgstr "请等待图片加载完成。"
-
-#: main.c:2511
-msgid "Finish or cancel editing before regenerating."
-msgstr "正在编辑，发送或取消编辑后再重新生成"
-
-#: main.c:2622 main.c:3292 main.c:3341
-msgid "Generating. Click ■ to stop."
-msgstr "正在生成，点 ■ 可停止"
-
-#: main.c:2920
-#, c-format
-msgid "Remove image %u"
-msgstr "移除第 %u 张图片"
-
-#: main.c:3170
-msgid "Select images"
-msgstr "选择图片"
-
-#: main.c:3172
-msgid "Images"
-msgstr "图片"
-
-#: main.c:3209
-msgid "Unable to encode clipboard image."
-msgstr "无法编码剪贴板图片。"
-
-#: main.c:3322
-msgid "Only local image files can be pasted."
-msgstr "只能粘贴本地图片文件。"
-
-#: main.c:3600
-msgid "System default"
-msgstr "跟随系统"
-
-#: main.c:3601
-msgid "Light"
-msgstr "浅色"
-
-#: main.c:3602
-msgid "Dark"
-msgstr "深色"
-
-#: main.c:3603
-msgid "System language"
-msgstr "跟随系统"
-
-#: main.c:3648
-msgid "Failed to save theme"
-msgstr "主题保存失败"
-
-#: main.c:3661
-msgid "Failed to save language"
-msgstr "语言保存失败"
-
-#: main.c:3893
-msgid "Failed to save setting"
-msgstr "无法保存设置"
-
-#: ui/settings.blp:30
-msgid "Conversation"
-msgstr "会话"
-
-#: ui/settings.blp:33
-msgid "Automatic conversation titles"
-msgstr "自动生成会话标题"
-
-#: ui/settings.blp:37
-msgid "Confirm conversation deletion"
-msgstr "删除会话前确认"
-
-#: main.c:3924 ui/settings.blp:44
-msgid "Restart the app to apply language changes."
-msgstr "重启应用后语言设置生效。"
-
-#: main.c:3673
-msgid "API key cannot be empty"
-msgstr "API 密钥不能为空"
-
-#: main.c:3777 main.c:3815
-msgid "Failed to save font"
-msgstr "字体保存失败"
-
-#: main.c:3799
-msgid "Failed to save font size"
-msgstr "字号保存失败"
-
-#: main.c:3916
-msgid "DEEPSEEK_API_KEY environment variable (overrides this setting)"
-msgstr "环境变量 DEEPSEEK_API_KEY（优先级高于这里）"
-
-#: main.c:3918
-#, c-format
-msgid "Local configuration file: %s"
-msgstr "本机配置文件：%s"
-
-#: main.c:4062 ui/sidebar.blp:55
-msgid "Search conversations"
-msgstr "搜索对话"
-
-#: main.c:4068
-msgid "No conversations found"
-msgstr "未找到对话"
-
-#: main.c:4140
-msgid "Message DeepSeek. Enter to send, Shift+Enter for a new line."
-msgstr "给 DeepSeek 发消息，Enter 发送，Shift+Enter 换行"
-
-#: main.c:4361
-#, c-format
-msgid "Unable to open conversation database: %s\n"
-msgstr "无法打开会话数据库：%s\n"
-
-#: ui/content.blp:16
-msgid "Conversations"
-msgstr "会话列表"
-
-#: ui/content.blp:69
+#: ui/content.blp:130
 msgid "Start a conversation with DeepSeek"
 msgstr "开始和 DeepSeek 对话"
 
-#: main.c:4403
-#, c-format
-msgid "Enter to send · Shift+Enter for a new line · %s+N for a new chat"
-msgstr "Enter 发送 · Shift+Enter 换行 · %s+N 新对话"
-
-#: ui/content.blp:89
+#: ui/content.blp:149
 msgid "Editing message"
 msgstr "正在编辑消息"
 
-#: ui/content.blp:96
+#: ui/content.blp:156
 msgid "Cancel editing (Esc)"
 msgstr "取消编辑 (Esc)"
 
-#: ui/content.blp:148
+#: ui/content.blp:207
 msgid "Message DeepSeek"
 msgstr "给 DeepSeek 发消息"
 
-#: ui/content.blp:173
+#: ui/content.blp:232
 msgid "Attach images"
 msgstr "添加图片"
 
-#: ui/content.blp:188
+#: ui/content.blp:247
+msgid "Web"
+msgstr "联网"
+
+#: ui/content.blp:248
+msgid "Search the web and read links"
+msgstr "搜索网页和阅读链接"
+
+#: ui/content.blp:257
 msgid "Model and reasoning level"
 msgstr "模型与推理级别"
 
-#: ui/content.blp:236
+#: ui/content.blp:305
 msgid "AI-generated content. Please verify important information."
 msgstr "内容由 AI 生成，请仔细甄别"
 
-#: ui/settings.blp:7 ui/sidebar.blp:99
+#: ui/settings.blp:7 ui/sidebar.blp:94
 msgid "Settings"
 msgstr "设置"
 
@@ -464,106 +467,112 @@ msgstr "API 密钥"
 msgid "Key source"
 msgstr "密钥来源"
 
-#: ui/settings.blp:51
-msgid "Appearance"
-msgstr "外观"
+#: ui/settings.blp:30
+msgid "Conversation"
+msgstr "会话"
 
-#: ui/settings.blp:56
-msgid "Theme"
-msgstr "主题"
+#: ui/settings.blp:33
+msgid "Automatic conversation titles"
+msgstr "自动生成会话标题"
 
-#: ui/settings.blp:43
+#: ui/settings.blp:37
+msgid "Share user metadata"
+msgstr "分享用户元信息"
+
+#: ui/settings.blp:41
+msgid "Confirm conversation deletion"
+msgstr "删除会话前确认"
+
+#: ui/settings.blp:47
 msgid "Language"
 msgstr "语言"
 
-#: ui/settings.blp:61
+#: ui/settings.blp:55
+msgid "Appearance"
+msgstr "外观"
+
+#: ui/settings.blp:60
+msgid "Theme"
+msgstr "主题"
+
+#: ui/settings.blp:65
 msgid "Reading"
 msgstr "阅读"
 
-#: ui/settings.blp:64 ui/settings.blp:72
+#: ui/settings.blp:68 ui/settings.blp:76
 msgid "Message font"
 msgstr "正文字体"
 
-#: ui/settings.blp:81 ui/settings.blp:124
+#: ui/settings.blp:85 ui/settings.blp:128
 msgid "Use default font"
 msgstr "使用默认字体"
 
-#: ui/settings.blp:87
+#: ui/settings.blp:91
 msgid "Message font size"
 msgstr "正文字号"
 
-#: ui/settings.blp:101 ui/settings.blp:144
+#: ui/settings.blp:105 ui/settings.blp:148
 msgid "Use default font size"
 msgstr "使用默认字号"
 
-#: ui/settings.blp:107 ui/settings.blp:115
+#: ui/settings.blp:111 ui/settings.blp:119
 msgid "Code block font"
 msgstr "代码块字体"
 
-#: ui/settings.blp:130
+#: ui/settings.blp:134
 msgid "Code block font size"
 msgstr "代码块字号"
 
-#: ui/settings.blp:153
+#: ui/settings.blp:157
 msgid "Other"
 msgstr "其他"
 
-#: ui/settings.blp:157
+#: ui/settings.blp:161
 msgid "About"
 msgstr "关于"
 
-#: ui/settings.blp:165
+#: ui/settings.blp:169
 msgid "Conversation data"
 msgstr "会话数据"
 
-#: ui/settings.blp:170
+#: ui/settings.blp:174
 msgid "Source code"
 msgstr "源代码"
 
-#: main.c:4335
-#, c-format
-msgid "New chat (%s+N)"
-msgstr "新对话 (%s+N)"
-
-#: main.c:4336
-#, c-format
-msgid "Search conversations (%s+F)"
-msgstr "搜索对话 (%s+F)"
-
-#: main.c:4337
-#, c-format
-msgid "Settings (%s+,)"
-msgstr "设置 (%s+,)"
-
-#: md.c:252
+#: md.c:314
 msgid "Code copied"
 msgstr "代码已复制"
 
-#: md.c:276
+#: md.c:336
 msgid "Copy code"
 msgstr "复制代码"
 
-#: md.c:496
+#: md.c:557
 msgid "Image"
 msgstr "图片"
 
-#: store.c:82
+#: store.c:103
 #, c-format
 msgid "Cannot lock conversation file %s: %s"
 msgstr "无法锁定会话文件 %s：%s"
 
-#: store.c:177
+#: store.c:198
 msgid "Unversioned conversation database is not empty"
 msgstr "没有版本号的会话数据库不是空库"
 
-#: store.c:213
+#: store.c:234
 #, c-format
 msgid "Unsupported conversation database version %d (maximum supported: %d)"
 msgstr "不支持会话数据库版本 %d（最高支持版本：%d）"
 
-#: store.c:435
+#: store.c:458
 msgid "Invalid conversation database data"
 msgstr "会话数据库中的数据无效"
+
+#~ msgid ""
+#~ "Send local date, weekday, app platform and interface language; location "
+#~ "is not shared."
+#~ msgstr "发送本地日期、星期、应用平台和界面语言；不分享位置。"
 
 #~ msgid "Paste exactly one image file."
 #~ msgstr "请只粘贴一个图片文件。"
