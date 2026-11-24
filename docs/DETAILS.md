@@ -39,6 +39,8 @@ This document describes the codebase structure, core runtime mechanisms, packagi
 - Each session maintains its own message list, reasoning history, normal draft, and edit draft (used when editing a prior user message before resending).
 - Typing triggers a debounced save after 750 ms; switching sessions, sending a message, or closing the window flushes changes immediately in a single SQLite transaction.
 - Editing or forking a message preserves image references without modifying existing history until the edited message is sent.
+- The message navigator lists the user messages currently shown in the transcript, in order. Its search matches the full text of each user message, not just the preview. Jumping to an earlier message pauses auto-follow; **Jump to latest** restores it.
+- If a search in the message navigator finds no results, the list shows **No matching messages**.
 
 ### Localization
 

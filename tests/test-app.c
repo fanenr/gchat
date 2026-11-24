@@ -919,6 +919,130 @@ history_search (void)
 }
 
 static void
+message_navigation_rows (void)
+{
+  if (!setup_ui ())
+    return;
+
+  GtkListBox *list = GTK_LIST_BOX (app->message_nav_list);
+  g_autoptr (GtkWidget) placeholder = g_object_ref (app->message_nav_empty);
+  g_autoptr (GString) question = g_string_new ("  例子\n");
+  for (guint i = 0; i < 120; i++)
+    g_string_append (question, "正文");
+  g_string_append (question, "Needle [a.*]");
+  add_message ("user", question->str);
+  add_message ("assistant", "reply-only term");
+  add_message ("user", "");
+  render_chat ();
+
+  GtkEditable *search = GTK_EDITABLE (app->message_nav_search);
+  GtkListBoxRow *first = gtk_list_box_get_row_at_index (list, 0);
+  GtkListBoxRow *second = gtk_list_box_get_row_at_index (list, 1);
+  GtkListBoxRow *third = gtk_list_box_get_row_at_index (list, 2);
+  g_assert_true (gtk_widget_get_visible (app->message_nav));
+  g_assert_nonnull (first);
+  g_assert_nonnull (second);
+  g_assert_nonnull (third);
+  g_assert_null (gtk_list_box_get_row_at_index (list, 3));
+  g_assert_false (gtk_widget_get_visible (placeholder));
+  GtkLabel *label = GTK_LABEL (gtk_list_box_row_get_child (second));
+  const gchar *preview = gtk_label_get_text (label);
+  g_assert_true (g_utf8_validate (preview, -1, NULL));
+  g_assert_true (g_str_has_prefix (preview, "2. 例子 正文"));
+  g_assert_true (g_str_has_suffix (preview, "…"));
+  label = GTK_LABEL (gtk_list_box_row_get_child (third));
+  g_assert_cmpstr (gtk_label_get_text (label), ==, "3. No text");
+
+  gtk_editable_set_text (search, "needle [a.*]");
+  g_assert_false (gtk_widget_get_visible (GTK_WIDGET (first)));
+  g_assert_true (gtk_widget_get_visible (GTK_WIDGET (second)));
+  g_assert_false (gtk_widget_get_visible (GTK_WIDGET (third)));
+  g_assert_false (gtk_widget_get_visible (placeholder));
+  gtk_editable_set_text (search, "reply-only term");
+  g_assert_false (gtk_widget_get_visible (GTK_WIDGET (second)));
+  g_assert_true (gtk_widget_get_parent (placeholder) == GTK_WIDGET (list));
+  g_assert_true (gtk_widget_get_visible (placeholder));
+  g_assert_true (gtk_widget_get_child_visible (placeholder));
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (placeholder)), ==,
+                   "No matching messages");
+
+  app->chat->edit_from = 2;
+  render_chat ();
+  first = gtk_list_box_get_row_at_index (list, 0);
+  g_assert_nonnull (first);
+  g_assert_true (gtk_widget_get_visible (GTK_WIDGET (first)));
+  g_assert_false (gtk_widget_get_visible (placeholder));
+  g_assert_null (gtk_list_box_get_row_at_index (list, 1));
+  g_assert_cmpstr (gtk_editable_get_text (search), ==, "");
+
+  app->chat = chat_new ("43", "New chat");
+  g_ptr_array_add (app->chats, app->chat);
+  render_chat ();
+  g_assert_false (gtk_widget_get_visible (app->message_nav));
+  g_assert_null (gtk_list_box_get_row_at_index (list, 0));
+  teardown ();
+}
+
+static void
+message_navigation_jump (void)
+{
+  if (!setup_ui ())
+    return;
+
+  add_message ("user", "Jump target");
+  add_message ("assistant", "target answer");
+  for (guint i = 0; i < 24; i++)
+    {
+      add_message ("user", "Later question");
+      add_message ("assistant", "Later answer");
+    }
+  render_chat ();
+  gtk_window_present (GTK_WINDOW (app->window));
+
+  gint64 deadline = g_get_monotonic_time () + 3 * G_TIME_SPAN_SECOND;
+  while (g_get_monotonic_time () < deadline)
+    {
+      while (g_main_context_iteration (NULL, FALSE))
+        {
+        }
+      if (stick_bottom (&chat_stick) > 0 &&
+          gtk_adjustment_get_value (chat_stick.adj) == stick_bottom (&chat_stick))
+        break;
+      g_usleep (1000);
+    }
+  g_assert_cmpfloat (stick_bottom (&chat_stick), >, 0);
+  g_assert_cmpfloat (gtk_adjustment_get_value (chat_stick.adj), ==,
+                     stick_bottom (&chat_stick));
+
+  GtkMenuButton *menu = GTK_MENU_BUTTON (app->message_nav);
+  gtk_menu_button_popup (menu);
+  g_assert_true (gtk_widget_get_visible (GTK_WIDGET (
+      gtk_menu_button_get_popover (menu))));
+  gtk_editable_set_text (GTK_EDITABLE (app->message_nav_search), "jump target");
+  g_signal_emit_by_name (app->message_nav_search, "activate");
+  g_assert_false (chat_stick.follow);
+  GtkWidget *bubble = gtk_widget_get_first_child (app->messages);
+  bubble = gtk_widget_get_next_sibling (gtk_widget_get_next_sibling (bubble));
+  GtkWidget *viewport = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (app->scroller));
+  GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+  graphene_rect_t bounds;
+  g_assert_true (gtk_widget_compute_bounds (bubble, content, &bounds));
+  g_assert_cmpfloat (bounds.origin.y, >, 12);
+  g_assert_cmpfloat (gtk_adjustment_get_value (chat_stick.adj), ==,
+                     bounds.origin.y - 12);
+
+  on_message_nav_latest (NULL, NULL);
+  while (g_main_context_iteration (NULL, FALSE))
+    {
+    }
+  g_assert_true (chat_stick.follow);
+  g_assert_cmpfloat (gtk_adjustment_get_value (chat_stick.adj), ==,
+                     stick_bottom (&chat_stick));
+  teardown ();
+}
+
+static void
 config_and_font_helpers (void)
 {
   g_autofree gchar *previous_env = g_strdup (g_getenv ("DEEPSEEK_API_KEY"));
@@ -1026,6 +1150,8 @@ main (int    argc,
   g_test_add_func ("/app/message-whitespace", message_whitespace);
   g_test_add_func ("/app/edit-and-fork", edit_and_fork);
   g_test_add_func ("/app/history-search", history_search);
+  g_test_add_func ("/app/message-navigation/rows", message_navigation_rows);
+  g_test_add_func ("/app/message-navigation/jump", message_navigation_jump);
   g_test_add_func ("/app/config-and-font-helpers", config_and_font_helpers);
   g_test_add_func ("/app/corrupt-startup", corrupt_startup);
   g_test_add_func ("/app/locked-startup", locked_startup);

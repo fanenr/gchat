@@ -49,6 +49,26 @@ msgstr ""
 msgid "Web"
 msgstr ""
 
+#: ui/content.blp:26 ui/content.blp:34
+msgid "Message navigation"
+msgstr ""
+
+#: ui/content.blp:43
+msgid "Search your messages"
+msgstr ""
+
+#: ui/content.blp:62
+msgid "No matching messages"
+msgstr ""
+
+#: ui/content.blp:74
+msgid "Jump to latest"
+msgstr ""
+
+#: main.c:1053
+msgid "No text"
+msgstr ""
+
 #: ui/content.blp:189
 msgid "Search the web and read links"
 msgstr ""

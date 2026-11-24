@@ -19,6 +19,67 @@ Adw.ToolbarView content {
         "flat",
       ]
     }
+
+    [end]
+    Gtk.MenuButton message_nav {
+      icon-name: "view-list-ordered-symbolic";
+      tooltip-text: _("Message navigation");
+      visible: false;
+
+      styles [
+        "flat",
+      ]
+
+      accessibility {
+        label: _("Message navigation");
+      }
+
+      popover: Gtk.Popover {
+        child: Gtk.Box {
+          orientation: vertical;
+          spacing: 6;
+
+          Gtk.SearchEntry message_nav_search {
+            placeholder-text: _("Search your messages");
+          }
+
+          Gtk.ScrolledWindow message_nav_scroller {
+            hscrollbar-policy: never;
+            min-content-width: 280;
+            max-content-height: 320;
+            propagate-natural-height: true;
+
+            child: Gtk.ListBox message_nav_list {
+              selection-mode: none;
+
+              styles [
+                "boxed-list",
+                "message-nav-list",
+              ]
+
+              [placeholder]
+              Gtk.Label message_nav_empty {
+                label: _("No matching messages");
+                margin-top: 12;
+                margin-bottom: 12;
+
+                styles [
+                  "dimmed",
+                ]
+              }
+            };
+          }
+
+          Gtk.Button message_nav_latest {
+            label: _("Jump to latest");
+
+            styles [
+              "flat",
+            ]
+          }
+        };
+      };
+    }
   }
 
   content: Gtk.Box {

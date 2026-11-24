@@ -10,6 +10,7 @@
 - **Web search and images**: Optional web search with source citations and multi-image input (file picker or clipboard paste) on `deepseek-flash`.
 - **Native Markdown**: Renders headings, lists, blockquotes, tables, syntax-highlighted code blocks, and HTTPS images directly as GTK widgets without a WebView.
 - **Conversations**: Search, pin, rename, duplicate, and delete sessions; copy, edit and resend, regenerate, or fork any message into a new session; automatic titles and per-session drafts.
+- **Message navigation**: Open the numbered list in the chat header to search your messages, jump to an earlier question, or return to the latest message.
 - **Appearance and language**: System, light, or dark theme; independent fonts and sizes for message prose and code blocks; English and Simplified Chinese interface.
 
 ## Build and run

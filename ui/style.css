@@ -34,6 +34,7 @@
 .sidebar-row { min-height: 32px; }
 .sidebar-list label { font-size: 14px; }
 .sidebar-list row:selected { background: alpha(@window_fg_color, .095); }
+.message-nav-list.boxed-list { box-shadow: none; }
 .sidebar-group {
   min-height: 0;
   padding: 10px 16px 3px 16px;

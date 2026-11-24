@@ -45,6 +45,26 @@ msgstr "正在搜索网页…"
 msgid "Web"
 msgstr "联网"
 
+#: ui/content.blp:26 ui/content.blp:34
+msgid "Message navigation"
+msgstr "消息导航"
+
+#: ui/content.blp:43
+msgid "Search your messages"
+msgstr "搜索你发过的消息"
+
+#: ui/content.blp:62
+msgid "No matching messages"
+msgstr "没有匹配的消息"
+
+#: ui/content.blp:74
+msgid "Jump to latest"
+msgstr "跳到最新消息"
+
+#: main.c:1053
+msgid "No text"
+msgstr "无文字"
+
 #: ui/content.blp:189
 msgid "Search the web and read links"
 msgstr "搜索网页和阅读链接"

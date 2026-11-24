@@ -152,6 +152,8 @@ typedef struct
   GtkWidget    *sidebar_list, *search;
   GtkWidget    *messages, *scroller, *chat_bar, *input, *input_frame, *send,
                *stack, *placeholder;
+  GtkWidget    *message_nav, *message_nav_list, *message_nav_search,
+               *message_nav_scroller, *message_nav_empty;
   GtkWidget    *model_chip, *chip_model, *chip_effort, *choice_popover,
                *web_toggle;
   GtkWidget    *new_btn, *title_label, *edit_bar;
@@ -1040,8 +1042,128 @@ bubble_new (const gchar *role)
 /* ---------- chat rendering ---------- */
 
 static void
+add_message_nav_row (GtkWidget   *bubble,
+                     const gchar *content,
+                     guint        turn)
+{
+  const gchar *start = content;
+  while (g_ascii_isspace (*start))
+    start++;
+  if (*start == '\0')
+    start = _ ("No text");
+  const gchar *end = start;
+  for (guint i = 0; i < 100 && *end != '\0'; i++)
+    end = g_utf8_next_char (end);
+  g_autofree gchar *preview = g_strndup (start, end - start);
+  g_strdelimit (preview, "\r\n\t", ' ');
+  g_autofree gchar *text = g_strdup_printf ("%u. %s%s", turn, preview,
+                                            *end != '\0' ? "…" : "");
+  GtkWidget *label = gtk_label_new (text);
+  gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_single_line_mode (GTK_LABEL (label), TRUE);
+  gtk_label_set_xalign (GTK_LABEL (label), 0);
+  g_object_set (label, "margin-start", 8, "margin-end", 8,
+                "margin-top", 6, "margin-bottom", 6, NULL);
+
+  GtkWidget *row = gtk_list_box_row_new ();
+  gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (row), label);
+  /* The transcript owns the bubble and outlives its navigation row. */
+  g_object_set_data (G_OBJECT (row), "bubble", bubble);
+  g_object_set_data_full (G_OBJECT (row), "search-text",
+                          g_utf8_casefold (content, -1), g_free);
+  gtk_list_box_append (GTK_LIST_BOX (app->message_nav_list), row);
+}
+
+static void
+reset_message_nav_scroll (void)
+{
+  GtkScrolledWindow *scroller = GTK_SCROLLED_WINDOW (app->message_nav_scroller);
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroller);
+  gtk_adjustment_set_value (adj, 0);
+}
+
+static void
+on_message_nav_search_changed (GtkEditable *entry,
+                               gpointer     data G_GNUC_UNUSED)
+{
+  const gchar *text = gtk_editable_get_text (entry);
+  g_autofree gchar *query = g_utf8_casefold (text, -1);
+  g_strstrip (query);
+
+  /* Hide non-results from CSS so the theme can style the last visible row. */
+  gboolean found = FALSE;
+  for (GtkWidget *row = gtk_widget_get_first_child (app->message_nav_list);
+       row != NULL; row = gtk_widget_get_next_sibling (row))
+    {
+      if (!GTK_IS_LIST_BOX_ROW (row))
+        continue;
+      const gchar *message = g_object_get_data (G_OBJECT (row), "search-text");
+      gboolean matches = strstr (message, query) != NULL;
+      gtk_widget_set_visible (row, matches);
+      found |= matches;
+    }
+  gtk_widget_set_visible (app->message_nav_empty, !found);
+  reset_message_nav_scroll ();
+}
+
+static void
+on_message_nav_activate (GtkListBox    *list G_GNUC_UNUSED,
+                         GtkListBoxRow *row,
+                         gpointer       data G_GNUC_UNUSED)
+{
+  GtkWidget *bubble = g_object_get_data (G_OBJECT (row), "bubble");
+  GtkWidget *viewport = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (app->scroller));
+  GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+  graphene_rect_t bounds;
+  if (!gtk_widget_compute_bounds (bubble, content, &bounds))
+    return;
+
+  gtk_menu_button_popdown (GTK_MENU_BUTTON (app->message_nav));
+  /* A history jump must suspend following even when the value is clamped. */
+  chat_stick.follow = FALSE;
+  chat_stick.setting = TRUE;
+  gtk_adjustment_set_value (chat_stick.adj, bounds.origin.y - 12);
+  chat_stick.setting = FALSE;
+}
+
+static void
+on_message_nav_search_activate (GtkSearchEntry *entry G_GNUC_UNUSED,
+                                gpointer        data G_GNUC_UNUSED)
+{
+  GtkListBox *list = GTK_LIST_BOX (app->message_nav_list);
+  for (gint i = 0;; i++)
+    {
+      GtkListBoxRow *row = gtk_list_box_get_row_at_index (list, i);
+      if (row == NULL)
+        return;
+      if (gtk_widget_get_visible (GTK_WIDGET (row)))
+        {
+          on_message_nav_activate (list, row, NULL);
+          return;
+        }
+    }
+}
+
+static void
+on_message_nav_latest (GtkButton *button G_GNUC_UNUSED,
+                       gpointer   data G_GNUC_UNUSED)
+{
+  gtk_menu_button_popdown (GTK_MENU_BUTTON (app->message_nav));
+  scroll_bottom ();
+}
+
+static void
 clear_messages (void)
 {
+  gtk_menu_button_popdown (GTK_MENU_BUTTON (app->message_nav));
+  GtkListBox *list = GTK_LIST_BOX (app->message_nav_list);
+  GtkListBoxRow *row;
+  /* Remove only rows so the empty-state placeholder stays installed. */
+  while ((row = gtk_list_box_get_row_at_index (list, 0)) != NULL)
+    gtk_list_box_remove (list, GTK_WIDGET (row));
+  gtk_editable_set_text (GTK_EDITABLE (app->message_nav_search), "");
+  reset_message_nav_scroll ();
   clear_box_children (GTK_BOX (app->messages));
 }
 
@@ -1497,6 +1619,7 @@ on_regenerate_message (GtkButton *button G_GNUC_UNUSED,
 static void
 render_history (guint count)
 {
+  guint turn = 0;
   for (guint i = 0; i < count; i++)
     {
       JsonObject *msg = json_array_get_object_element (app->chat->messages, i);
@@ -1507,6 +1630,7 @@ render_history (guint count)
       GtkBox *body = GTK_BOX (g_object_get_data (G_OBJECT (bubble), "body"));
       if (g_str_equal (role, "user"))
         {
+          add_message_nav_row (bubble, content, ++turn);
           JsonArray *images = image_array_member (msg, "images");
           if (images != NULL)
             {
@@ -1549,6 +1673,8 @@ render_history (guint count)
                          G_CALLBACK (on_delete_message));
       set_copy_text (bubble, content);
     }
+  gtk_widget_set_visible (app->message_nav_empty, turn == 0);
+  gtk_widget_set_visible (app->message_nav, turn > 0);
 }
 
 static void
@@ -4540,6 +4666,18 @@ build_content (void)
   app->stack = GTK_WIDGET (gtk_builder_get_object (builder, "stack"));
   app->scroller = GTK_WIDGET (gtk_builder_get_object (builder, "scroller"));
   app->messages = GTK_WIDGET (gtk_builder_get_object (builder, "messages"));
+  app->message_nav =
+      GTK_WIDGET (gtk_builder_get_object (builder, "message_nav"));
+  app->message_nav_list =
+      GTK_WIDGET (gtk_builder_get_object (builder, "message_nav_list"));
+  app->message_nav_search =
+      GTK_WIDGET (gtk_builder_get_object (builder, "message_nav_search"));
+  app->message_nav_scroller =
+      GTK_WIDGET (gtk_builder_get_object (builder, "message_nav_scroller"));
+  app->message_nav_empty =
+      GTK_WIDGET (gtk_builder_get_object (builder, "message_nav_empty"));
+  GtkWidget *message_nav_latest =
+      GTK_WIDGET (gtk_builder_get_object (builder, "message_nav_latest"));
   app->chat_bar = GTK_WIDGET (gtk_builder_get_object (builder, "chat_bar"));
   app->edit_bar = GTK_WIDGET (gtk_builder_get_object (builder, "edit_bar"));
   app->image_bar = GTK_WIDGET (gtk_builder_get_object (builder, "image_bar"));
@@ -4579,6 +4717,19 @@ build_content (void)
   gtk_image_set_pixel_size (
       GTK_IMAGE (gtk_button_get_child (GTK_BUTTON (toggle))), 15);
   g_signal_connect (toggle, "clicked", G_CALLBACK (on_toggle_sidebar), NULL);
+
+  g_signal_connect (app->message_nav_list, "row-activated",
+                    G_CALLBACK (on_message_nav_activate), NULL);
+  connect_search_ime (app->message_nav_search);
+  g_signal_connect (app->message_nav_search, "changed",
+                    G_CALLBACK (on_message_nav_search_changed), NULL);
+  g_signal_connect (app->message_nav_search, "activate",
+                    G_CALLBACK (on_message_nav_search_activate), NULL);
+  g_signal_connect_swapped (app->message_nav_search, "stop-search",
+                            G_CALLBACK (gtk_menu_button_popdown),
+                            app->message_nav);
+  g_signal_connect (message_nav_latest, "clicked",
+                    G_CALLBACK (on_message_nav_latest), NULL);
 
   GtkScrolledWindow *scroller = GTK_SCROLLED_WINDOW (app->scroller);
   GtkWidget *viewport = gtk_scrolled_window_get_child (scroller);
