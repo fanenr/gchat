@@ -2,369 +2,80 @@
 
 **English** | [简体中文](DETAILS.zh-CN.md)
 
-This page covers what [README](../README.md) does not.
-
-## Feature details
-
-### Conversation layout
-
-- The message and input areas stay aligned as the window is resized.
-- The window requests a minimum size of 640 × 480 logical pixels. The platform or content may require a larger size.
-- The content uses 85% of the available width up to 760 logical pixels and 65% from 1200 logical pixels. The proportion changes smoothly in between. Both sides keep at least 16 logical pixels of margin; very narrow windows prioritize the margins.
-- The message scrollbar sits one logical pixel from the right edge without taking width from the message area.
-- A pointer press in the main window clears the keyboard focus ring before the clicked widget handles the event. The click still acts normally, and text field focus indicators are unchanged. The Web toggle, model and reasoning selector, and reasoning disclosure button all use the theme’s keyboard focus rings.
-
-### Streaming replies
-
-- The client reads SSE asynchronously with libsoup3. It joins multiple `data` lines with newlines and processes each event at the blank line. It batches text updates before each frame’s layout and appends new reasoning without replacing the existing text.
-- The button becomes a stop button during generation. A click stops at once and keeps the text and reasoning received so far.
-- If a record has only reasoning, the client does not send it to the API as an empty reply.
-- While following, the view stays at the bottom in the same layout pass when streaming text or final Markdown changes the message height.
-- Scrolling up pauses following. Returning to the bottom resumes it.
-
-### Web search and link reading
-
-- The **Web** toggle sits next to the model and reasoning selector. It is available only with `deepseek-flash` and is off by default. Its state is saved in the app configuration, applies across chats, and is remembered if you switch away from Flash and back.
-- When the toggle is on, DeepSeek decides whether to search or read links. With thinking enabled, it can search over multiple steps. These server-side tools have no separate charge; model token charges still apply.
-- While waiting for the answer, the client shows search or link-reading progress. The reply lists cited HTTP and HTTPS sources once per URL. The source list does not load site icons or open URLs automatically.
-- In later Flash turns, the client resends the server tool records with chat history, even with **Web** off. This lets DeepSeek restore pages it previously read from user links. Raw search results are not restored.
-- If generation stops before the final event, the client keeps the received text and reasoning but has no final sources or tool records to save.
-
-### Markdown rendering
-
-- md4c parses the Markdown. CommonMark and part of GFM are supported.
-- The client renders Markdown as native widgets. Message prose defaults to a 14px font; the sidebar and input box keep their 14px font. Prose uses 1.3 times the selected font’s natural line height. Table text and streaming replies use the same line-height rule.
-- The widgets cover headings, bold, italic, strikethrough, inline code, multi-level lists, nested quotes, rules, and tables. Bold prose uses weight 600. Headings 1–3 use 1.5, 1.375, and 1.25 times the prose size with weight 700; headings 4–6 keep the prose size with weight 600. Inline emphasis does not override a heading’s size or weight.
-- Paragraph gaps are 16 logical pixels. Headings 1–3 have a 24-pixel gap before them; headings 4–6 have 16. Consecutive headings have an 8-pixel gap. List items have 6-pixel gaps, later paragraphs within an item have 8, and nested lists have 4. A top-level list has a 16-pixel gap before it, or 8 after a heading.
-- Lists support task lists and ordered lists. An ordered list can start at 0. Wrapped lines and later paragraphs align with the text after the marker. Marker widths are measured, so multi-digit numbers and checkboxes keep their alignment.
-- Tables support column alignment, row separators, and inline code. Cells do not wrap; wide tables scroll horizontally with the header and rows together, without showing a scrollbar. They use a transparent background without an enclosing border. Cell contents are vertically centered within each row. Cells have 16-pixel horizontal and 10-pixel vertical padding. A Markdown rule immediately after a table sits against its bottom edge, so the last row has the same padding above and below its content. Headers use weight 500 at full text contrast; bold cell text uses weight 600.
-- HTTPS images outside tables load automatically. Image servers can see your IP address and request time. Private-network HTTPS addresses are not filtered. Loading starts after a streaming reply finishes; history is loaded again when rendered.
-- Images use a separate request without API credentials. PNG, JPEG, GIF, and WebP are supported when the system decoder is available. GIF and WebP are displayed as static images.
-- Images are displayed at no more than 320 × 240 logical pixels, preserving aspect ratio without enlarging small images. The image can set a minimum width for the message, so very narrow layouts may not shrink to fit it.
-- Image requests do not follow redirects. They time out after 20 seconds and are limited to 8 MiB and 16 million decoded pixels. Failed or unsupported images show `[alt text]`; empty alt text shows `[Image]`.
-- Links open only HTTP, HTTPS, and mailto.
-- Local files, relative links, and other app schemes show as plain text. The client does not launch external programs.
-
-### Image input
-
-- Use the attachment button to select one or more local images. You can also paste image pixels, a screenshot, or multiple copied local image files into the input box. Each import appends to the current draft.
-- Review attachments in the thumbnail strip inside the input box. Scroll horizontally if needed, and use the close button on a thumbnail to remove just that image.
-- If the clipboard contains both an image and text, the image takes priority. Plain text still pastes normally. Pasted image pixels are converted to PNG and may lose metadata; pasted image files are stored unchanged.
-- You can send an image without text. Images appear in messages. Normal and edit drafts keep their own images.
-- PNG, JPEG, GIF, and WebP work when their system decoders are available. The format is detected from the contents. GIF and WebP previews are static.
-- Each image is limited to 8 MiB, 8192 pixels per side, and 16 million pixels total. For pasted image pixels, the size is measured after PNG encoding; GTK may decode the image before the client checks its dimensions. A request can contain up to 600 images. With 15 or more images, each side of every image is limited to 4096 pixels. These limits include history. The full request body is limited to 48 MiB, including image history and Base64 overhead.
-- Images are sent again with the history on each request. This can increase upload time and cost. Selected files are sent unchanged, including any metadata.
-- Images require `deepseek-flash`. If the current message or history contains an image, switch back to Flash before sending or regenerating.
-- Wait for the current batch to finish before adding more images or sending. Switching sessions, starting an edit, or canceling an edit cancels the current import. If any file in a batch cannot be imported, none of that batch is added. On a missing image or request limit error, the client reports the error without committing the draft.
-- Image copies are stored in the data directory under `attachments/`, with `0600` permissions and no encryption. Editing, copying, and forking retain image references.
-- After a successful database load at startup, the client removes unreferenced image files from `attachments/`. It does not scan the old `images/` directory.
-- Dragging images is not supported. Request construction and history previews read images on the UI thread, so long conversations can briefly pause the UI.
-
-### Code blocks
-
-- A code block shows as a separate card with a full-width header for the language label and copy button. The header has 8px of vertical padding, and the language label aligns with the code’s left edge, 16px inside the card.
-- The code area has 16px padding on all sides and uses 1.25 times the selected font’s natural line height. Padding and line-height rules are fixed; the font family and size remain configurable.
-- The card has a subtle background and border. The header has a contrasting background in both light and dark themes, without a divider line. The language label and copy button use a secondary color; the button returns to full contrast on hover or keyboard focus.
-- Long code lines do not wrap. Scroll the code area horizontally to read them; the language label and copy button stay in place, without showing a scrollbar.
-- The display drops only one trailing newline. Extra blank lines stay.
-- The copy button keeps the full parsed code, including trailing spaces and the final newline.
-- md4c normalizes line breaks inside a block to LF.
-- GtkSourceView does the highlighting. Available languages depend on the installed version.
-- The color scheme follows the light or dark theme and switches between Adwaita and Adwaita-dark.
-
-### Multiple sessions
-
-- The sidebar groups pinned sessions first, then other sessions as "Today / Yesterday / Earlier". Each group is sorted by creation time, newest first.
-- The sidebar header centers the "gchat" title above the "New chat" button.
-- A delete button appears at a session row end on hover. Right-click a session to pin or unpin, copy, or rename it.
-- Copying opens a new, unpinned session with independent messages, reasoning, and drafts, including any edit in progress.
-- History, the current session, the model, the reasoning level, and each session draft are stored in `~/.local/share/gchat/session.db`.
-- History includes reasoning and think time.
-- **Settings → General → Conversation → Confirm conversation deletion** is on by default. The confirmation dialog defaults to Cancel. If you turn the switch off, clicking the delete button deletes the session immediately. The change takes effect at once and persists.
-- A deletion also removes the messages and the draft of that session.
-- Sidebar search does a local, case-insensitive literal match on titles and bodies.
-- When the body matches, the client shows a nearby excerpt.
-- Search does not cover reasoning or drafts.
-
-### Automatic conversation titles
-
-- **Settings → General → Conversation → Automatic conversation titles** is on by default. Changes are saved and apply to requests sent after the change.
-- With the switch on, only the first send in an untitled `deepseek-flash` conversation requests a title. Existing titles, edited messages, and regenerated replies do not request a new title.
-- The client first uses up to 30 characters from the first line of the user’s text. An image without text leaves the title empty. If the stream finishes normally with a usable title, the client replaces the local title and saves it. If the title is missing or the stream is stopped or interrupted, the local title stays.
-- DeepSeek does not charge separately for the title. The answer streams as usual; after the answer, DeepSeek can wait up to five more seconds for the title. The stop button remains available.
-
-### Settings
-
-The gear at the bottom of the sidebar opens Settings on the **General** page. Use the page switcher to open **Appearance** or **Other**.
-
-- **General**: API key and its source, conversation options, and interface language.
-- **Appearance**: theme and reading fonts. The theme can follow the system, or use light or dark mode. Message and code block font families and sizes are independent. Font pickers list installed fonts. Font and size reset buttons appear only when their own value differs from the application default; each restores only its own setting. Sizes range from 6 to 72 logical pixels. The defaults are 14px for prose and 13px for code. Changes apply immediately and persist.
-- **Other**: the **About** section shows the app version and conversation data location. In the **Source code** row, click `fanenr/gchat` to open the repository in your default browser.
-
-Reading settings leave the sidebar, input box, and reasoning text unchanged. Inline code keeps its monospace family and scales with prose. Table text and streaming replies follow the prose font. Font changes keep message selections, drafts, and active requests. List margins and user-bubble widths are recalculated without replacing widgets or reloading images. On a save failure, the control returns to its previous value. Missing or invalid font settings use the defaults; unavailable fonts fall back through GTK.
-
-### Models and reasoning levels
-
-- The models are `deepseek-flash` and `deepseek-v4-pro`.
-- The reasoning levels are `none`, `low`, `high`, and `max`.
-- `none` turns thinking off. It maps to `thinking.type=disabled`.
-- The client merges the model and the reasoning level into one chip at the bottom right of the input box.
-- A click on the chip opens a grouped menu.
-- Reasoning expands while the model thinks and collapses when the answer starts or generation stops. You can still toggle it manually. Completed reasoning is shown under "Thought (x s)" (Chinese UI: 「已思考（用时 x 秒）」).
-
-### Message actions
-
-The latest message always shows its action row. Other messages show it while hovered or while the message or one of its controls has focus. Visible buttons use a secondary color and return to full contrast on hover or keyboard focus. The row offers these actions:
-
-- Copy the whole message.
-- Edit and resend. The client puts the body back in the input box. It withdraws this message and all later messages only when you send.
-- Fork into a new session. For a user message, the new session keeps the earlier history and puts the selected message in its draft. For a reply, it keeps the history through that reply, including reasoning. The original session stays unchanged. Forking does not send a request and is unavailable during generation.
-- Regenerate. This works only on the last reply.
-- Delete one message.
-
-The rules are:
-
-- You must not regenerate during an edit.
-- The edit state survives a session switch and a restart.
-- Click Cancel, or press `Esc` in the input box, to restore the previous normal draft.
-- User messages and replies both render as Markdown. Pasted code blocks, tables, and lists show correctly.
-- Sending keeps the indentation and trailing whitespace of the body. Without an image, the client rejects blank messages.
-- A user bubble shrinks to the width of the body. Padding is fixed at 16px left and right, 10px top and bottom.
-- The action row does not widen the background. Multi-line text stays left-aligned.
-- You can drag a selection across paragraphs. `Cmd+A` on macOS and `Ctrl+A` on Linux select the whole message. The selection background follows the text lines and excludes the extra spacing between paragraphs, headings, and list items.
-- Clicking visible message text does not move the viewport. Keyboard focus still brings off-screen controls into view.
-- While dragging to select message text, move beyond the top or bottom of the chat area to scroll and extend the selection within the same text block. Scrolling can reveal up to 48 logical pixels beyond the text block. Release the mouse button to stop.
-- A code block has its own copy button.
-
-### Reliability
-
-- A SQLite transaction saves changed sessions, deletions, and the current session state together.
-- Validation covers unique session IDs, message types, attachment IDs, and edit targets.
-- If the database cannot be loaded, the client reports the error and stops. It does not recreate the database or restore a separate backup.
-- One locked process writes to a data directory at a time.
-- On a second start, the new process reports the lock failure and exits, so the two do not overwrite each other.
-- When a request fails, the client shows a toast with a Retry button.
-- After you switch to another session, an old toast does not retry the current session.
-- If you close the window or quit during generation, the client saves the text and reasoning received so far.
-- A repeated quit notice does not save again.
-- If the save at window close fails, the client keeps the window and does not drop the in-memory draft.
-- If an app-level quit cannot be stopped, the client reports the save failure and returns a non-zero status.
-
-### Error handling
-
-- HTTP errors and network errors show as a plain-text toast with a summary of the response body.
-- The client does not interpret markup in the error text.
-- The client reads the error body asynchronously. The read is cancellable and does not block the UI.
-- A failure leaves no completely blank message.
-- The client reports a failed write of a session or of the configuration.
-- If a theme or language save fails, the client restores the previous choice.
-
-### Shortcuts
-
-- `Cmd+L` on macOS and `Ctrl+L` on Linux focus the input box. The input box
-  does not show a hover hint.
-- The macOS message input handles `Ctrl+F/B` for character movement and
-  `Ctrl+P/N` for movement between displayed lines. `Ctrl+A/E` move to the
-  start or end of the current displayed line. During composition, the input
-  method keeps these keys.
-- In the macOS message input, `Ctrl+K` cuts the selection or the text to the
-  end of the paragraph. At the paragraph end, it cuts the line break.
-  Consecutive cuts append. `Ctrl+Y` pastes the stored text, replacing any
-  selection. The stored text stays in memory for the app session. Neither key
-  uses the system clipboard or overrides the input method during composition.
-- `Cmd+W` on macOS and `Ctrl+W` on Linux close the window through the regular
-  close handler, which saves the draft before closing.
-- `Cmd+Q` on macOS and `Ctrl+Q` on Linux activate the application quit action.
-  GTK's macOS menu uses the same action.
-
-### Drafts
-
-- Each session stores a normal draft and an edit draft separately. The edit draft is the body held while you edit a message.
-- The client writes to disk 750ms after typing stops.
-- The client saves at once on a session switch, on send, and on a normal quit.
-- When the client saves a draft during generation, the same transaction also saves the text and reasoning received so far.
-- After an edit and resend, the client restores the previous normal draft. It does not send the draft to the API.
-- If a new empty session has a draft, the "New chat" button creates another empty session.
-
-The input box always shows "AI-generated content. Please verify important information."
-
-### Interface language
-
-The client supports English and Simplified Chinese.
-
-- The default is the system language.
-- If the system language is not supported, the client falls back to English.
-- Simplified Chinese matches `zh_CN`, `zh_SG`, `zh-Hans`, and the generic `zh`.
-- Traditional Chinese falls back to English.
-
-Choose System / English / Simplified Chinese in "Settings → General → Language".
-The choice is stored in the `language` field of `~/.config/gchat/config.json`.
-The value is `system`, `en`, or `zh_CN`. The choice takes effect after a **client restart**.
-If the save fails, the client shows a message and restores the previous choice. It does not change the input draft or the generation state.
-
-UI text, action hints, and error hints use gettext.
-These items are not translated:
-
-- Message bodies.
-- Reasoning.
-- Titles of existing sessions.
-- Error bodies that DeepSeek returns.
-
-The client also does not force the model to answer in one language through the API.
-An empty title of a new session is translated at display time. The client does not write the interface language into a session title.
-
-Translations live in `po/`. The English source is in C and Blueprint files. The Simplified Chinese translation is in `po/zh_CN.po`.
-`po/POTFILES` lists these files; Blueprint strings use the same `_()` syntax as C.
-The build needs `msgfmt` from gettext.
-Keep the compiled catalogs under the build directory's `po/` when running
-a source build. The Flatpak installs them under `/app/share/locale`.
-To update the template and the catalogs:
-
-```sh
-meson compile -C build gchat-update-po
-```
-
-## Storage
-
-See [gchat storage](STORAGE.md) for file locations, backups, the database format, and upgrades.
-
-When you send a message, the text and image history of the current session goes to DeepSeek. Local drafts and reasoning records are not sent back.
-
-## Flatpak packaging
-
-The [standalone manifest](../packaging/flatpak/io.github.fanenr.gchat.yml)
-uses GNOME SDK 51 and builds md4c from a checksummed source archive. It
-builds the current checkout and exports a bundle for the build machine's
-architecture. Use a clean checkout for releases.
-
-The manifest enables Meson's `-Dflatpak=true` install layout with prefix
-`/app`. Meson installs the executable, the Simplified Chinese catalog,
-the desktop entry, the AppStream metadata, the application icon, and the
-project license. The manifest also installs the md4c license. The Chinese
-catalog stays in the bundle so it works on English systems. Default
-source builds and the macOS bundle ID are unchanged.
-
-The sandbox allows network access for the DeepSeek API and remote images.
-It uses native Wayland when available, with X11 as a fallback. File
-selection and opening links use desktop portals. The manifest grants
-filesystem access only to `xdg-data/gchat` and `xdg-config/gchat` to share
-storage with the native build. The client uses the host's `HOST_XDG_*`
-values or the usual home directory defaults. It does not change the
-sandbox's own XDG environment variables or grant session bus access.
-
-The Flathub remote supplies the runtime only. The app is not listed there,
-and the standalone bundle does not configure an app update repository.
-To update, install a newer bundle for the same architecture and app ID
-with `flatpak install --user --reinstall <bundle>`.
-
-## Regression tests
-
-The test code lives in `tests/`, split as follows:
-
-- `test-app.c`: SSE parsing, and lookup of models and reasoning levels.
-- `test-store.c`: SQLite storage, upgrades, and configuration.
-- `test-md.c`: Markdown rendering.
-- `test-i18n.c`: language matching, English fallback, manual choice, and catalog loading under the C locale.
-
-The app tests run in English and in Simplified Chinese. They check these items:
-
-- Settings text.
-- The actual configuration path.
-- Version information.
-- The fallback when a save fails.
-- An unchanged draft and session state after a language switch.
-
-The configuration test verifies that a merged write creates no key backup.
-The Chinese search input test uses a separate IM module to replay the commit sequence. It checks these items:
-
-- Preedit notifications.
-- Prefix, selection, and mid-text insertion.
-- The actual cursor layout.
-- Search results.
-- The lifetime of the input method context.
-
-A separate check validates the format of the translation files.
-
-The regression tests also cover the following areas:
-
-- Database initialization, reopen, and refusal of unsupported versions.
-- Incremental writes, rollback on upgrade or save failure, and image cleanup.
-- Session structure validation, including invalid message roles and edit targets.
-- The process lock.
-- Protection of a broken configuration.
-- Theme and language fallback on a failed save.
-- App quit and window-close save failures.
-- A repeated quit.
-- Snapshots during generation and stale request callbacks.
-- A stale retry.
-- Plain-text display of an error body.
-- Edit protection.
-- Markdown inline style scope and language aliases.
-- Reasoning storage and request filtering.
-- A slow HTTP error body and cancellation.
-- SSE field types, multi-line events, CRLF, and incomplete events.
-- The Web toggle, streamed tool progress, citation rendering, and replay of saved tool records.
-- The automatic title switch, first-request eligibility, fallback, and title persistence.
-- A list number on the same line as the first paragraph.
-- An ordered list that starts at 0.
-- Multiple paragraphs and nested lists.
-- Prose font size, proportional prose and code line heights at default and doubled sizes, and hanging list indents in both themes, including multi-digit numbers, task lists, and later paragraphs.
-- All six heading levels, heading precedence over inline emphasis, paragraph/list spacing, code/table padding, and equal spacing above and below the last table row when it is followed by a Markdown rule. Wide tables stay on one line per cell and scroll to the last column.
-- Selection snapshots leave paragraph spacing unpainted in both themes at default and doubled prose sizes, including wrapped text, explicit line breaks, headings, task lists, cross-paragraph selections, and right-to-left text.
-- Focus moves between visible messages without scrolling, even when the second reply extends past the viewport. Focusing an off-screen message button still scrolls it into view.
-- Independent message and code fonts, saved sizes, conditional font and size reset buttons, save-failure rollback, invalid-value fallback, and font-family CSS escaping.
-- Default-font comparison ignores case and does not depend on whether a value is explicitly saved. Resetting one setting leaves the other unchanged.
-- Font changes that preserve selections and active requests, and update list margins across code cards without replacing text buffers.
-- Markdown scope across widgets.
-- Trailing whitespace of messages and code blocks.
-- Link scheme filtering and entity decoding.
-- Release of the code block buffer.
-
-Code block content tests check display and copy from Markdown input. They cover fenced blocks, indented code, raw HTML blocks, CRLF, an unclosed fence, an empty block, and extra blank lines.
-Layout tests check the bottom spacing and the visibility of the last line under the light and dark themes. They cover short code, multiple lines, and long lines that scroll horizontally without wrapping.
-The layout cases show a separate test window. They check bubble wrapping, fixed padding, and the centering of a short sentence.
-A case also rebuilds a user bubble in a shown window. It checks that the height does not grow from an old measurement cache.
-The local streaming case clicks the real Regenerate button. It checks the bubble layout during generation, at the end, and after a history re-render.
-Tests also check that chunks share a frame update, that finishing keeps pending text, and that changing the scroll range updates the bottom without pulling the reader back.
-The tests also check the visible end after upward reading and after input box changes. They do not check scrolling values only.
-The tests use only temporary directories and a local HTTP service. They do not contact DeepSeek and do not read user sessions or keys.
-
-GTK tests need a display backend. They skip when no backend is available.
+This document describes the codebase structure, core runtime mechanisms, packaging, and known limitations of `gchat`. For file locations, database schema, and migrations, see [Storage](STORAGE.md).
 
 ## Code structure
 
-| File | Responsibility |
+| Path | Responsibility |
 | --- | --- |
-| `meson.build` | Project version, build directory configuration, direct dependencies of the app and of each test. The version also feeds the About page and the User-Agent |
-| `main.c` | Window layout, sidebar and message area, settings panel, streaming requests and cancellation, session saves, and the quit lifecycle |
-| `ui/` | Blueprint layouts, CSS, and the GResource manifest. The layouts compile to GtkBuilder XML and are embedded in the app |
-| `i18n.c` / `i18n.h` | Language matching and gettext setup at startup |
-| `po/` | gettext template, Simplified Chinese catalog, and build rules |
-| `macos-bundle.c` / `macos-bundle.h` | Resource and runtime setup in a macOS app bundle |
-| `packaging/macos/` | macOS DMG assembly |
-| `packaging/linux/` | Desktop entry and AppStream metadata for Flatpak |
-| `packaging/flatpak/` | Manifest for standalone bundle builds |
-| `assets/gchat.svg` | Vector source for the application icon |
-| `md.c` / `md.h` | md4c callbacks to GTK widgets. Body text and tables share inline styles and text decoding |
-| `store.c` / `store.h` | SQLite session validation, upgrades and transactions, process lock, configuration validation and merged writes |
-| `tests/` | Regression tests for session storage, app state and requests, and Markdown rendering |
+| `meson.build` | Project version, build targets, and dependencies |
+| `main.c` | Application window, sidebar, message list, settings dialog, HTTP/SSE lifecycle, and quit handling |
+| `md.c` / `md.h` | Markdown parser (`md4c`) to native GTK4 widget builder, code cards, tables, and remote image loader |
+| `store.c` / `store.h` | SQLite session storage, schema migrations, process lock, and atomic `config.json` writes |
+| `i18n.c` / `i18n.h` | Locale matching and `gettext` initialization at startup |
+| `macos-bundle.c` / `macos-bundle.h` | Resource, locale, icon, and TLS trust store setup inside a macOS `.app` bundle |
+| `ui/` | Blueprint UI definitions, CSS styles, and `GResource` manifest |
+| `po/` | `gettext` template (`POTFILES`) and Simplified Chinese catalog (`zh_CN.po`) |
+| `packaging/` | macOS DMG assembly scripts and Linux Flatpak manifest / metadata |
+| `tests/` | Regression test suites (`test-app.c`, `test-store.c`, `test-md.c`, `test-i18n.c`) |
 
-`macos-arm64` assembles `gchat.app` in a temporary directory. It copies
-non-system libraries and runtime modules into `Contents/Frameworks`,
-rewrites library references to bundle-relative paths, and checks the
-dependency closure before signing. The app loads icons, gettext catalogs,
-image loader metadata, and the TLS trust store from its own resources.
-The minimum macOS version is the highest deployment target in the app
-or its bundled libraries and modules.
+## Core mechanisms
+
+### Requests and streaming
+
+- **SSE pipeline**: `main.c` streams responses asynchronously over `libsoup3`, joining multi-line `data:` fields and dispatching events on blank lines. Incoming text and reasoning deltas are coalesced and flushed to the UI at most once per GTK frame clock tick.
+- **History payload**: Sending a message transmits the conversation's user and assistant messages (plus any attached images) to DeepSeek. Local drafts and saved reasoning blocks (`reasoning_content`) are not sent back as message content.
+- **Web search and link reading**: Available on `deepseek-flash`. When enabled, DeepSeek can invoke server-side search and page-reading tools. The client displays tool progress during streaming, renders deduplicated HTTP/HTTPS source citations below the reply, and replays `server_tool_calls` in subsequent Flash turns so previously read user links remain in context.
+- **Automatic titles**: On the first turn of an untitled `deepseek-flash` session, the client sets a provisional title from the first line of user text and replaces it if the stream finishes with a server-generated title.
+
+### Markdown and media
+
+- **Native widget tree**: `md.c` parses CommonMark and GFM extensions via `md4c` into native GTK widgets (`GtkTextView` for prose, `GtkGrid` for tables, and `GtkSourceView` inside custom cards for syntax-highlighted code blocks).
+- **Remote images**: HTTPS images outside tables are fetched asynchronously without API credentials. Requests do not follow redirects, time out after 20 seconds, and enforce limits of 8 MiB and 16 megapixels (displayed within 320 × 240 logical pixels). Only `http`, `https`, and `mailto` links are opened externally.
+- **Image input**: `deepseek-flash` supports attaching PNG, JPEG, GIF, and WebP images via the file picker or clipboard paste. Each image is capped at 8 MiB, 8192 pixels per side (4096 pixels when a request carries 15 or more images), and 16 megapixels; a single request supports up to 600 images and a 48 MiB body including Base64 history. Accepted files are copied to `attachments/` by UUID and unreferenced files are cleaned up after a successful database load at startup.
+
+### Sessions and drafts
+
+- Each session maintains its own message list, reasoning history, normal draft, and edit draft (used when editing a prior user message before resending).
+- Typing triggers a debounced save after 750 ms; switching sessions, sending a message, or closing the window flushes changes immediately in a single SQLite transaction.
+- Editing or forking a message preserves image references without modifying existing history until the edited message is sent.
+
+### Localization
+
+- The interface supports English and Simplified Chinese (`system`, `en`, or `zh_CN` in `config.json`, applied on restart).
+- `i18n.c` maps `zh_CN`, `zh_SG`, `zh-Hans`, and generic `zh` to Simplified Chinese; other locales (including Traditional Chinese) fall back to English.
+- To refresh translation catalogs after changing UI strings:
+
+  ```sh
+  meson compile -C build gchat-update-po
+  ```
+
+## Packaging
+
+### macOS app bundle
+
+The `macos-arm64` build target assembles `gchat.app` in a staging directory, copies non-system dylibs and GIO/gdk-pixbuf modules into `Contents/Frameworks`, rewrites Mach-O load commands to bundle-relative paths, and verifies dependency closure before code signing. The minimum macOS deployment target is derived from the highest target among the binary and bundled libraries.
+
+### Flatpak packaging
+
+The [Flatpak manifest](../packaging/flatpak/io.github.fanenr.gchat.yml) builds against GNOME SDK 51 with `-Dflatpak=true` and prefix `/app`, compiling `md4c` from a checksummed archive. The sandbox allows network access, Wayland/X11 display, desktop portals for file selection and URI opening, and host paths `xdg-data/gchat` and `xdg-config/gchat` so Flatpak and native builds share the same database and configuration.
+
+## Tests
+
+The regression suite in `tests/` runs against temporary directories and a local mock HTTP server without external network access:
+
+- `test-app.c`: SSE framing, streaming lifecycle, web search / auto-title flows, settings, and UI interactions.
+- `test-store.c`: SQLite schema initialization, migrations, transactional saves, process locking, attachment garbage collection, and `config.json` handling.
+- `test-md.c`: Markdown widget rendering, code highlighting, table layout, and selection behavior.
+- `test-i18n.c`: Locale resolution, fallback behavior, and catalog loading.
 
 ## Known limits
 
-- A macOS IME can clear the preedit text before the commit and notify GTK only after it. The search box syncs the cleared preedit state before the commit. The state and commit hooks die with the matching input method context. The client does not disable the IME.
-- Table images show `[alt text]`. Table cells support inline code, but not multi-line code blocks.
-- Formulas (`$…$`) show as source text.
-- Code highlighting looks up a GtkSourceView language ID and explicit aliases, for example `javascript` to `js` and `csharp` to `c-sharp`.
-- An unknown language name shows as plain text. The client does not do fuzzy matching.
-- A selection cannot cross messages. A GTK selection range is limited to one widget. Code blocks and tables are separate widgets, so a drag selection breaks there.
-- The client expects DeepSeek JSON data and the `[DONE]` marker in SSE events. It ignores invalid JSON and does not process `event`, `id`, or `retry` fields. An event without its final blank line is discarded. This is not a general SSE client.
-- The client decodes only common named entities and numeric entities. A named entity outside the table stays as source text.
-- Draft autosave has a 750ms delay. A forced process kill loses input or streaming output not yet committed. SQLite transactions are not a separate backup.
+- Table cells support inline code and styles, but not multi-line code blocks or embedded images (which render as `[alt text]`).
+- LaTeX math expressions (`$…$`) are displayed as raw source text.
+- Text selection is bound to a single GTK text widget and cannot span across code blocks, tables, or multiple messages.
+- Code highlighting matches `GtkSourceView` language IDs and a fixed alias map (such as `javascript` → `js`, `csharp` → `c-sharp`); unknown languages render as plain text.
+- The SSE parser is tailored to DeepSeek's JSON stream and `[DONE]` sentinel rather than arbitrary SSE streams.
+- HTML entity decoding covers numeric entities and a fixed table of common named entities.
+- Drag-and-drop image import is not implemented, and encoding large image histories runs on the UI thread.
+- Because draft autosave is debounced by 750 ms, an abnormal process termination (`SIGKILL` or crash) loses uncommitted edits or in-flight stream output.

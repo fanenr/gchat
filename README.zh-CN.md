@@ -2,12 +2,19 @@
 
 [English](README.md) | **简体中文**
 
-`gchat` 是 DeepSeek 桌面聊天客户端。客户端用 C 编写，界面基于 GTK4 与 libadwaita。
-客户端不使用 WebView，也不使用脚本层。
+`gchat` 是使用 C、GTK4 与 libadwaita 编写的 DeepSeek 原生桌面客户端。
+
+## 功能
+
+- **模型与推理**：支持 `deepseek-flash` 与 `deepseek-v4-pro`，提供四档推理级别（`none`、`low`、`high`、`max`）与可折叠的思考过程。
+- **联网与图片**：使用 `deepseek-flash` 时支持联网搜索并展示引用来源，支持选择或粘贴多张图片发送。
+- **原生 Markdown**：无需 WebView，直接将标题、列表、引用、表格、GtkSourceView 语法高亮代码块和 HTTPS 图片渲染为 GTK 控件。
+- **会话管理**：支持搜索、置顶、重命名、复制与删除会话；支持单条消息复制、编辑重发、重新生成或分叉为新会话；提供自动生成标题与独立会话草稿。
+- **外观与语言**：支持跟随系统、浅色与深色主题；正文与代码块可分别设置字体与字号；支持 English 与简体中文界面。
 
 ## 构建与运行
 
-客户端需要以下软件：
+依赖项：
 
 - Meson、Ninja 和 Blueprint Compiler
 - GLib 2.66 或更高
@@ -41,43 +48,35 @@
 
 ### Apple Silicon DMG
 
-在装有上述依赖和 Python 3.9 或更高版本的 Apple Silicon Mac 上运行：
+在装有上述依赖和 Python 3.9 或更高版本的 Apple Silicon Mac 上：
 
 ```sh
 brew install librsvg
 meson compile -C build macos-arm64
 ```
 
-将镜像中的 `gchat.app` 拖到「应用程序」。它与 `./build/gchat` 共用设置和会话。
-目标 Mac 不需要装 Homebrew。构建时会打印该镜像要求的最低 macOS 版本。
-
-输出文件为 `build/gchat-<版本>-arm64.dmg`。包内应用默认使用临时签名，下载后
-可能被 macOS 拦截。如需在同一路径生成公证版，使用 Developer ID Application
-证书和 `notarytool` 钥匙串配置：
+生成的 `build/gchat-<版本>-arm64.dmg` 已打包非系统动态库，目标 Mac 无需安装
+Homebrew。默认使用临时签名；如需使用 Developer ID Application 证书与
+`notarytool` 钥匙串配置签名并公证：
 
 ```sh
 GCHAT_CODESIGN_IDENTITY='Developer ID Application: Example (TEAMID)' \
 GCHAT_NOTARY_PROFILE='gchat' meson compile -C build macos-arm64
 ```
 
-公开发布时，按许可证要求同时提供对应源码。包内的
-`Contents/Resources/Licenses` 记录了依赖版本和许可证声明。
+打包的依赖版本与许可证声明位于应用包内的 `Contents/Resources/Licenses`。
 
 ### Linux Flatpak
 
-安装与系统架构匹配的 `.flatpak` 文件。安装后从应用菜单打开 **gchat**，
-或用应用 ID 启动。以 x86-64 为例：
+安装对应架构的独立 `.flatpak` 安装包：
 
 ```sh
 flatpak install --user ./gchat-x86_64.flatpak
 flatpak run io.github.fanenr.gchat
 ```
 
-应用通过文件分发，不在 Flathub 上架。包使用 Flathub 提供的 GNOME 运行时，
-首次安装时可能需要下载。Flatpak 版和原生版共用[配置和会话数据](docs/STORAGE.zh-CN.md)。
-切换版本前先退出正在运行的版本。旧 Flatpak 隔离目录中的数据不会自动迁移。
-
-在 Linux 上，从仓库根目录用 Flatpak 和 Flatpak Builder 构建安装包：
+安装包使用 Flathub 提供的 GNOME 运行时，并与原生构建共用[配置和会话数据](docs/STORAGE.zh-CN.md)。
+从源码构建 `.flatpak` 安装包：
 
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -95,30 +94,7 @@ flatpak build-bundle \
   io.github.fanenr.gchat stable
 ```
 
-只需分享 `build-flatpak/` 下的 `.flatpak` 文件，不用分享构建目录或 OSTree 仓库。
-公开发布时，按许可证要求提供对应源码。细节见 [Flatpak 打包](docs/DETAILS.zh-CN.md#flatpak-打包)。
-
-## 功能
-
-- 流式回复：用 libsoup3 异步读 SSE，支持多行事件数据，文字每帧最多刷新一次。向上滚动可阅读前文，回到底部后继续跟随。生成中可以停止，已收到的正文保留。
-- Markdown 渲染：md4c 解析，渲染成原生控件。支持标题、列表、引用、表格、代码块和表格外的 HTTPS 图片。加载远程图片时，图片服务器可以看到你的 IP 地址和请求时间。
-- 代码块：独立卡片，采用紧凑行距。语言栏有独立底色，包含语言标签和复制按钮。由 GtkSourceView 高亮。
-- 多会话：可以在侧栏搜索、置顶、复制、重命名和删除会话。Flash 新会话默认由 DeepSeek 生成标题，可在「设置 → 常规 → 会话 → 自动生成会话标题」关闭。
-- 删除确认：默认开启。可在「设置 → 常规 → 会话 → 删除会话前确认」关闭。
-- 设置：「常规」包含 API 密钥、会话选项和界面语言；「外观」包含主题和阅读字体；「其他」显示应用版本、会话数据位置和「源代码」链接。
-- 自适应布局：宽窗口下，消息区与输入区一起变宽。窗口最小尺寸请求为 640 × 480 逻辑像素。
-- 阅读：正文和代码块可以分别选择字体与字号。行高随字体缩放，标题层次分明，列表续行对齐正文，表格使用轻量无外框布局，单元格内容垂直居中。代码块和表格不折行，超宽时可横向滚动且不显示滚动条。偏离应用默认值时才显示重置按钮。调整即时生效并持久化，侧栏与输入框保持不变。
-- 消息操作：整条复制、编辑后重发、分叉新会话、重新生成、删除单条。
-- 图片输入：使用 `deepseek-flash` 选择或粘贴多张图片。在输入框内预览或逐张移除，支持图文或纯图片消息。
-- 联网：用 `deepseek-flash` 时，开启「联网」可让 DeepSeek 搜索网页、阅读链接。状态会保存，并在下次启动时恢复。回复下方会列出引用来源。
-- 模型与推理级别：`deepseek-flash` 与 `deepseek-v4-pro`，推理级别四档。
-- 草稿：每个会话独立保存。输入停顿 750ms 后自动写盘。
-- 界面语言：English 与简体中文。切换后重启客户端生效。
-- 数据可靠性：SQLite 事务、启动时数据库升级、单进程锁。
-
 ## 快捷键
-
-应用快捷键在 macOS 上使用 Cmd，在 Linux 上使用 Ctrl。Tab 导航使用主题的焦点环。鼠标点击主窗口会清除键盘焦点环，输入框的聚焦提示不变。
 
 | macOS | Linux | 功能 |
 | --- | --- | --- |
@@ -133,17 +109,15 @@ flatpak build-bundle \
 | `Shift+Enter` | `Shift+Enter` | 换行 |
 | `Esc` | `Esc` | 取消编辑，或清空搜索 |
 
-在 macOS 的消息输入框中，`Ctrl+F` 和 `Ctrl+B` 将光标向前、向后移动一个字符，`Ctrl+P` 和 `Ctrl+N` 将光标向上、向下移动一行。`Ctrl+A` 和 `Ctrl+E` 跳到当前显示行的行首和行尾。自动折行也算一行。
-
-`Ctrl+K` 剪切选区或光标到段尾的文字，`Ctrl+Y` 粘回。这两个键不改动系统剪贴板。
+macOS 消息输入框还支持 Emacs 风格光标移动（`Ctrl+F/B`、`Ctrl+P/N`、`Ctrl+A/E`）
+以及独立于系统剪贴板的剪切与粘回（`Ctrl+K`、`Ctrl+Y`）。
 
 ## 数据
 
-- 会话：`~/.local/share/gchat/session.db`。图片副本位于同目录的 `attachments/`。
-- 客户端不导入或删除旧的 `session.json` 和 `images/`。
-- 配置：`~/.config/gchat/config.json`。保存 API 密钥和应用设置。
+- 会话数据：`~/.local/share/gchat/session.db` 与同目录的 `attachments/`。
+- 配置文件：`~/.config/gchat/config.json`。
 - API 密钥优先读环境变量 `DEEPSEEK_API_KEY`。
-- 文件以 `0600` 权限写入。内容不加密。
+- 文件以 `0600` 权限写入，内容不加密。
 
 ## 测试
 
@@ -151,9 +125,9 @@ flatpak build-bundle \
 meson test -C build --print-errorlogs
 ```
 
-GTK 测试需要显示后端。无桌面环境时用 `xvfb-run -a meson test -C build`。
+无桌面环境时可运行 `xvfb-run -a meson test -C build`。
 
 ## 更多
 
-- [存储](docs/STORAGE.zh-CN.md)：数据路径、备份、数据库格式和升级。
-- [实现细节](docs/DETAILS.zh-CN.md)：功能行为、回归测试、代码结构和已知限制。
+- [存储](docs/STORAGE.zh-CN.md)：文件路径、备份、数据库结构与版本升级。
+- [实现细节](docs/DETAILS.zh-CN.md)：代码结构、核心机制与已知限制。
