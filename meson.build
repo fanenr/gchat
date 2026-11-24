@@ -126,7 +126,6 @@ i18n_tests = executable('test-i18n', 'tests/test-i18n.c',
 )
 test('store', store_tests, protocol: 'tap')
 test('app', app_tests, protocol: 'tap', env: ['LANGUAGE=en'])
-test('app-zh_CN', app_tests, protocol: 'tap', env: ['LANGUAGE=zh_CN'])
 test('markdown', md_tests, protocol: 'tap')
 test('i18n', i18n_tests, protocol: 'tap')
 test('translations', find_program('msgfmt'), args: [

@@ -205,28 +205,28 @@ lookup_language (const gchar *lang)
 typedef struct
 {
   GtkAdjustment *adjustment;
-  gboolean horizontal;
+  gboolean       horizontal;
 } HorizontalScroll;
 
 static void
 horizontal_scroll_begin (GtkEventControllerScroll *controller G_GNUC_UNUSED,
-                         HorizontalScroll *scroll)
+                         HorizontalScroll         *scroll)
 {
   scroll->horizontal = FALSE;
 }
 
 static void
 horizontal_scroll_end (GtkEventControllerScroll *controller G_GNUC_UNUSED,
-                       HorizontalScroll *scroll)
+                       HorizontalScroll         *scroll)
 {
   scroll->horizontal = FALSE;
 }
 
 static gboolean
 horizontal_scroll (GtkEventControllerScroll *controller G_GNUC_UNUSED,
-                   double delta_x,
-                   double delta_y,
-                   HorizontalScroll *scroll)
+                   double                    delta_x,
+                   double                    delta_y,
+                   HorizontalScroll         *scroll)
 {
   if (!scroll->horizontal && fabs (delta_x) > fabs (delta_y) * 1.2)
     scroll->horizontal = TRUE;
@@ -929,26 +929,6 @@ typedef struct
   int             col;
 } MdCtx;
 
-static void pop_scope (MdCtx *ctx);
-
-static void
-md_ctx_clear (MdCtx *ctx)
-{
-  while (ctx->scopes->len)
-    pop_scope (ctx);
-  g_ptr_array_unref (ctx->spans);
-  g_array_unref (ctx->scopes);
-  g_array_unref (ctx->ol_numbers);
-  g_string_free (ctx->cell, TRUE);
-  if (ctx->image_alt != NULL)
-    g_string_free (ctx->image_alt, TRUE);
-  g_free (ctx->image_src);
-  g_string_free (ctx->code, TRUE);
-  g_free (ctx->code_lang);
-}
-
-G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC (MdCtx, md_ctx_clear)
-
 static void
 on_link_clicked (GtkGestureClick *gesture G_GNUC_UNUSED,
                  int              n_press G_GNUC_UNUSED,
@@ -996,50 +976,6 @@ defer_resize (GtkWidget *widget)
 {
   g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, resize_widget_cb,
                    g_object_ref (widget), g_object_unref);
-}
-
-static GtkTextTag *get_tag (MdCtx       *ctx,
-                            const gchar *name);
-
-static void
-ensure_view (MdCtx *ctx)
-{
-  if (ctx->view != NULL)
-    return;
-
-  GtkWidget *view = g_object_new (md_text_view_get_type (), NULL);
-  gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
-  gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
-  gtk_text_view_set_left_margin (GTK_TEXT_VIEW (view), 0);
-  gtk_text_view_set_right_margin (GTK_TEXT_VIEW (view), 0);
-  gtk_text_view_set_top_margin (GTK_TEXT_VIEW (view), 0);
-  gtk_text_view_set_bottom_margin (GTK_TEXT_VIEW (view), 0);
-  gtk_widget_set_vexpand (view, FALSE);
-  gtk_widget_add_css_class (view, "msg-text");
-  g_signal_connect_object (
-      gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (view)), "changed",
-      G_CALLBACK (defer_resize), view, G_CONNECT_SWAPPED);
-
-  GtkGesture *click = gtk_gesture_click_new ();
-  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click),
-                                 GDK_BUTTON_PRIMARY);
-  gtk_gesture_single_set_exclusive (GTK_GESTURE_SINGLE (click), FALSE);
-  g_signal_connect (click, "released", G_CALLBACK (on_link_clicked), view);
-  gtk_widget_add_controller (view, GTK_EVENT_CONTROLLER (click));
-
-  gtk_box_append (GTK_BOX (ctx->box), view);
-  ctx->view = GTK_TEXT_VIEW (view);
-  ctx->buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
-  GtkTextIter start;
-  gtk_text_buffer_get_start_iter (ctx->buffer, &start);
-  for (guint i = 0; i < ctx->scopes->len; i++)
-    {
-      Scope *scope = &g_array_index (ctx->scopes, Scope, i);
-      get_tag (ctx, scope->name);
-      scope->mark =
-          gtk_text_buffer_create_mark (ctx->buffer, NULL, &start, TRUE);
-    }
 }
 
 static GtkTextTag *
@@ -1111,6 +1047,47 @@ get_tag (MdCtx       *ctx,
                     NULL);
     }
   return tag;
+}
+
+static void
+ensure_view (MdCtx *ctx)
+{
+  if (ctx->view != NULL)
+    return;
+
+  GtkWidget *view = g_object_new (md_text_view_get_type (), NULL);
+  gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD_CHAR);
+  gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
+  gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
+  gtk_text_view_set_left_margin (GTK_TEXT_VIEW (view), 0);
+  gtk_text_view_set_right_margin (GTK_TEXT_VIEW (view), 0);
+  gtk_text_view_set_top_margin (GTK_TEXT_VIEW (view), 0);
+  gtk_text_view_set_bottom_margin (GTK_TEXT_VIEW (view), 0);
+  gtk_widget_set_vexpand (view, FALSE);
+  gtk_widget_add_css_class (view, "msg-text");
+  g_signal_connect_object (
+      gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (view)), "changed",
+      G_CALLBACK (defer_resize), view, G_CONNECT_SWAPPED);
+
+  GtkGesture *click = gtk_gesture_click_new ();
+  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click),
+                                 GDK_BUTTON_PRIMARY);
+  gtk_gesture_single_set_exclusive (GTK_GESTURE_SINGLE (click), FALSE);
+  g_signal_connect (click, "released", G_CALLBACK (on_link_clicked), view);
+  gtk_widget_add_controller (view, GTK_EVENT_CONTROLLER (click));
+
+  gtk_box_append (GTK_BOX (ctx->box), view);
+  ctx->view = GTK_TEXT_VIEW (view);
+  ctx->buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+  GtkTextIter start;
+  gtk_text_buffer_get_start_iter (ctx->buffer, &start);
+  for (guint i = 0; i < ctx->scopes->len; i++)
+    {
+      Scope *scope = &g_array_index (ctx->scopes, Scope, i);
+      get_tag (ctx, scope->name);
+      scope->mark =
+          gtk_text_buffer_create_mark (ctx->buffer, NULL, &start, TRUE);
+    }
 }
 
 /* Inserts text and applies the open inline tags (plus one extra tag) to it.
@@ -1210,6 +1187,24 @@ pop_scope (MdCtx *ctx)
   g_free (scope->name);
   g_array_remove_index (ctx->scopes, ctx->scopes->len - 1);
 }
+
+static void
+md_ctx_clear (MdCtx *ctx)
+{
+  while (ctx->scopes->len)
+    pop_scope (ctx);
+  g_ptr_array_unref (ctx->spans);
+  g_array_unref (ctx->scopes);
+  g_array_unref (ctx->ol_numbers);
+  g_string_free (ctx->cell, TRUE);
+  if (ctx->image_alt != NULL)
+    g_string_free (ctx->image_alt, TRUE);
+  g_free (ctx->image_src);
+  g_string_free (ctx->code, TRUE);
+  g_free (ctx->code_lang);
+}
+
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC (MdCtx, md_ctx_clear)
 
 static void
 flush_view (MdCtx *ctx)
@@ -1812,8 +1807,8 @@ md_render (GtkBox      *box,
     .syntax = NULL,
   };
 
-  md_parse (text != NULL ? text : "",
-            (MD_SIZE) strlen (text != NULL ? text : ""), &parser, &ctx);
+  const gchar *input = text != NULL ? text : "";
+  md_parse (input, (MD_SIZE) strlen (input), &parser, &ctx);
   while (ctx.scopes->len)
     pop_scope (&ctx);
 

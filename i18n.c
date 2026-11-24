@@ -37,13 +37,10 @@ i18n_resolve (const gchar        *preference,
         {
           /* Traditional Chinese skips the generic zh fallback that GLib
              adds later. */
-          if (language_prefix (language, "zh_CN") ||
-              language_prefix (language, "zh-CN") ||
-              language_prefix (language, "zh_SG") ||
-              language_prefix (language, "zh-SG") ||
-              language_prefix (language, "zh_Hans") ||
-              language_prefix (language, "zh-Hans") || language[2] == '\0' ||
-              language[2] == '.' || language[2] == '@')
+          if ((language[2] != '_' && language[2] != '-') ||
+              language_prefix (language + 3, "CN") ||
+              language_prefix (language + 3, "SG") ||
+              language_prefix (language + 3, "Hans"))
             {
               return "zh_CN";
             }

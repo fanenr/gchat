@@ -62,11 +62,11 @@ The [Flatpak manifest](../packaging/flatpak/io.github.fanenr.gchat.yml) builds a
 
 ## Tests
 
-The regression suite in `tests/` runs against temporary directories and a local mock HTTP server without external network access:
+The regression suite in `tests/` runs against temporary directories without external network access:
 
-- `test-app.c`: SSE framing, streaming lifecycle, web search / auto-title flows, settings, and UI interactions.
+- `test-app.c`: SSE framing, streaming lifecycle, request payload generation, web search / auto-title flows, image validation, and conversation state transitions.
 - `test-store.c`: SQLite schema initialization, migrations, transactional saves, process locking, attachment garbage collection, and `config.json` handling.
-- `test-md.c`: Markdown widget rendering, code highlighting, table layout, and selection behavior.
+- `test-md.c`: Markdown widget rendering, code blocks, table markup, link filtering, and image helpers.
 - `test-i18n.c`: Locale resolution, fallback behavior, and catalog loading.
 
 ## Known limits

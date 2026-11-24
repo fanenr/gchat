@@ -733,56 +733,48 @@ write_config (const gchar *path,
   g_autofree gchar *data = json_generator_to_data (gen, &len);
 
   g_autofree gchar *dir = g_path_get_dirname (path);
+  if (g_mkdir_with_parents (dir, 0700) != 0)
+    {
+      g_warning ("cannot write %s: %s", path, g_strerror (errno));
+      return FALSE;
+    }
 
   /* Replace the target file only after the temporary file is written. */
   g_autofree gchar *tmp = g_strconcat (path, ".tmp", NULL);
   g_autoptr (GError) error = NULL;
   /* Use 0600 because config.json holds the API key. */
-  gboolean ok = g_mkdir_with_parents (dir, 0700) == 0;
-  if (!ok)
-    g_set_error (&error, G_FILE_ERROR, g_file_error_from_errno (errno), "%s",
-                 g_strerror (errno));
-  if (ok)
-    ok = g_file_set_contents_full (
-        tmp, data, (gssize) len, G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error);
-  if (ok && g_rename (tmp, path) != 0)
-    {
-      ok = FALSE;
-      g_set_error (&error, G_FILE_ERROR, g_file_error_from_errno (errno),
-                   "%s", g_strerror (errno));
-    }
-  if (!ok)
+  if (!g_file_set_contents_full (tmp, data, (gssize) len,
+                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error))
     {
       g_warning ("cannot write %s: %s", path, error->message);
       g_unlink (tmp);
+      return FALSE;
+    }
+  if (g_rename (tmp, path) != 0)
+    {
+      g_warning ("cannot write %s: %s", path, g_strerror (errno));
+      g_unlink (tmp);
+      return FALSE;
     }
 
-  return ok;
+  return TRUE;
 }
 
 gchar *
 config_get (const gchar *name)
 {
   g_autofree gchar *path = store_config_path ();
-  g_autofree gchar *value = NULL;
   g_autoptr (JsonParser) parser = json_parser_new ();
-  if (json_parser_load_from_file (parser, path, NULL))
-    {
-      JsonNode *root = json_parser_get_root (parser);
-      if (root != NULL && JSON_NODE_HOLDS_OBJECT (root))
-        {
-          JsonNode *member =
-              json_object_get_member (json_node_get_object (root), name);
-          if (member != NULL && JSON_NODE_HOLDS_VALUE (member) &&
-              json_node_get_value_type (member) == G_TYPE_STRING)
-            {
-              value = g_strdup (json_node_get_string (member));
-            }
-        }
-    }
-  if (value != NULL && !*value)
+  if (!json_parser_load_from_file (parser, path, NULL))
     return NULL;
-  return g_steal_pointer (&value);
+  JsonNode *root = json_parser_get_root (parser);
+  if (root == NULL || !JSON_NODE_HOLDS_OBJECT (root))
+    return NULL;
+  JsonObject *obj = json_node_get_object (root);
+  if (!string_member_valid (obj, name))
+    return NULL;
+  const gchar *value = json_object_get_string_member (obj, name);
+  return *value ? g_strdup (value) : NULL;
 }
 
 gboolean
@@ -796,35 +788,31 @@ config_set (const gchar *name,
      and other settings are not lost. */
   g_autoptr (JsonParser) parser = json_parser_new ();
   g_autoptr (GError) error = NULL;
-  gboolean loaded = json_parser_load_from_file (parser, path, &error);
-  JsonNode *node = loaded ? json_parser_get_root (parser) : NULL;
-  gboolean valid = node != NULL && JSON_NODE_HOLDS_OBJECT (node);
-  if (valid)
+  if (json_parser_load_from_file (parser, path, &error))
     {
-      JsonObject *old = json_node_get_object (node);
-      g_autoptr (GList) members = json_object_get_members (old);
-      for (GList *it = members; it != NULL; it = it->next)
+      JsonNode *node = json_parser_get_root (parser);
+      if (node != NULL && JSON_NODE_HOLDS_OBJECT (node))
         {
-          const gchar *key = it->data;
-          if (!string_member_valid (old, key))
-            {
-              valid = FALSE;
-              break;
-            }
+          JsonObject *old = json_node_get_object (node);
+          g_autoptr (GList) members = json_object_get_members (old);
+          GList *it = members;
+          while (it != NULL && string_member_valid (old, it->data))
+            it = it->next;
+          if (it == NULL)
+            root = json_object_ref (old);
         }
-      if (valid)
-        root = json_object_ref (old);
     }
-  gboolean missing = g_error_matches (error, G_FILE_ERROR, G_FILE_ERROR_NOENT);
-  if (!valid && !missing)
+  else if (g_error_matches (error, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+    {
+      root = json_object_new ();
+    }
+  if (root == NULL)
     {
       g_warning ("cannot write %s: %s", path,
                  error != NULL ? error->message
                                : "invalid configuration structure");
       return FALSE;
     }
-  if (missing)
-    root = json_object_new ();
 
   json_object_set_string_member (root, name, value != NULL ? value : "");
   return write_config (path, g_steal_pointer (&root));

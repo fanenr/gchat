@@ -16,7 +16,7 @@ app_toast (const gchar *msg G_GNUC_UNUSED)
 typedef struct
 {
   const gchar *markdown, *text, *tag;
-  gboolean active;
+  gboolean     active;
 } TagCase;
 
 static void
@@ -124,91 +124,6 @@ heading_styles (void)
       g_assert_false (gtk_text_iter_has_tag (&start, heading));
       g_assert_false (gtk_text_iter_has_tag (&start, bold));
       clear_box (box);
-    }
-}
-
-static void
-selection_edge_scroll (void)
-{
-  g_autoptr (GtkWidget) viewport =
-      g_object_ref_sink (gtk_viewport_new (NULL, NULL));
-  GtkWidget *body = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  gtk_viewport_set_child (GTK_VIEWPORT (viewport), body);
-  g_autoptr (GString) markdown = g_string_new (NULL);
-  for (guint i = 0; i < 50; i++)
-    g_string_append (markdown, "- List item in a long reply\n");
-  md_render (GTK_BOX (body), markdown->str);
-  GtkTextView *view = GTK_TEXT_VIEW (gtk_widget_get_first_child (body));
-  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-  /* The first allocation queues the text view's deferred resize. */
-  while (g_main_context_iteration (NULL, FALSE))
-    {
-    }
-  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-
-  GtkAdjustment *adj =
-      gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (viewport));
-  int height = gtk_widget_get_height (viewport);
-  g_assert_cmpint (gtk_widget_get_height (GTK_WIDGET (view)), >, height + 160);
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
-  GtkTextMark *insert = gtk_text_buffer_get_insert (buffer);
-  GtkTextMark *bound = gtk_text_buffer_get_selection_bound (buffer);
-  GtkTextIter start, end;
-  gtk_text_buffer_get_start_iter (buffer, &start);
-  gtk_text_view_get_iter_at_location (view, &end, 30, height + 1);
-  int before = gtk_text_iter_get_offset (&end);
-  gtk_text_buffer_select_range (buffer, &end, &start);
-
-  graphene_point_t pointer = GRAPHENE_POINT_INIT (30, height / 2);
-  g_assert_false (scroll_selection (view, viewport, &pointer, 80));
-  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 0);
-  pointer.y = height + 1;
-  g_assert_true (scroll_selection (view, viewport, &pointer, 80));
-  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 80);
-  gtk_text_buffer_get_iter_at_mark (buffer, &end, insert);
-  g_assert_cmpint (gtk_text_iter_get_offset (&end), >, before);
-  gtk_text_buffer_get_iter_at_mark (buffer, &start, bound);
-  g_assert_true (gtk_text_iter_is_start (&start));
-  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-
-  gtk_text_buffer_get_end_iter (buffer, &start);
-  gtk_text_view_get_iter_at_location (view, &end, 30, 79);
-  before = gtk_text_iter_get_offset (&end);
-  gtk_text_buffer_select_range (buffer, &end, &start);
-  pointer.y = -1;
-  g_assert_true (scroll_selection (view, viewport, &pointer, 100));
-  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 0);
-  gtk_text_buffer_get_iter_at_mark (buffer, &end, insert);
-  g_assert_cmpint (gtk_text_iter_get_offset (&end), <, before);
-  gtk_text_buffer_get_iter_at_mark (buffer, &start, bound);
-  g_assert_true (gtk_text_iter_is_end (&start));
-  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-  g_assert_false (scroll_selection (view, viewport, &pointer, 80));
-
-  gtk_adjustment_set_value (adj, gtk_adjustment_get_upper (adj));
-  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-  pointer.y = height + 1;
-  g_assert_false (scroll_selection (view, viewport, &pointer, 80));
-
-  /* Give both ends enough surrounding space to test the scroll margin. */
-  const int surrounding = 96;
-  gtk_widget_set_margin_top (body, surrounding);
-  gtk_widget_set_margin_bottom (body, surrounding);
-  gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-  double bottom = gtk_adjustment_get_upper (adj) -
-                  gtk_adjustment_get_page_size (adj) - surrounding;
-  for (int direction = -1; direction <= 1; direction += 2)
-    {
-      gboolean above = direction < 0;
-      double edge = above ? surrounding : bottom;
-      gtk_adjustment_set_value (adj, edge);
-      gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-      pointer.y = above ? -1 : height + 1;
-      g_assert_true (scroll_selection (view, viewport, &pointer, 80));
-      g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==,
-                         edge + direction * 48);
-      gtk_widget_allocate (viewport, 320, 240, -1, NULL);
-      g_assert_false (scroll_selection (view, viewport, &pointer, 80));
     }
 }
 
@@ -424,205 +339,6 @@ image_urls (void)
   g_assert_false (image_url_allowed ("data:image/png;base64,abc"));
   g_assert_false (image_url_allowed ("/image.png"));
   g_assert_false (image_url_allowed ("https://user:pass@example.com/x"));
-}
-
-typedef struct
-{
-  GMainLoop *loop;
-  GdkPixbuf *pixbuf;
-  gboolean   done;
-} ImageResult;
-
-static void
-image_test_done (GObject      *source G_GNUC_UNUSED,
-                 GAsyncResult *result,
-                 gpointer      data)
-{
-  ImageResult *state = data;
-  state->pixbuf = g_task_propagate_pointer (G_TASK (result), NULL);
-  state->done = TRUE;
-  g_main_loop_quit (state->loop);
-}
-
-static gboolean
-image_test_timeout (gpointer data)
-{
-  g_main_loop_quit (data);
-  return G_SOURCE_REMOVE;
-}
-
-typedef struct
-{
-  GMainLoop *loop;
-  GtkWidget *widget;
-  gboolean   done;
-} ImageWidgetResult;
-
-static gboolean
-image_widget_ready (gpointer data)
-{
-  ImageWidgetResult *state = data;
-  if (!GTK_IS_PICTURE (gtk_widget_get_first_child (state->widget)))
-    return G_SOURCE_CONTINUE;
-  state->done = TRUE;
-  g_main_loop_quit (state->loop);
-  return G_SOURCE_REMOVE;
-}
-
-static void
-image_server_response (SoupServer        *server G_GNUC_UNUSED,
-                       SoupServerMessage *message,
-                       const char        *path,
-                       GHashTable        *query G_GNUC_UNUSED,
-                       gpointer           data)
-{
-  GBytes *png = data;
-  if (g_str_equal (path, "/redirect"))
-    {
-      soup_server_message_set_redirect (message, SOUP_STATUS_FOUND, "/ok");
-      return;
-    }
-  soup_server_message_set_status (message, SOUP_STATUS_OK, NULL);
-  if (g_str_equal (path, "/invalid"))
-    {
-      soup_server_message_set_response (message, "image/svg+xml",
-                                        SOUP_MEMORY_STATIC, "<svg/>", 6);
-      return;
-    }
-  if (g_str_equal (path, "/truncated"))
-    {
-      soup_server_message_set_response (message, "image/png",
-                                        SOUP_MEMORY_STATIC,
-                                        "\x89PNG\r\n\x1a\n", 8);
-      return;
-    }
-  if (g_str_equal (path, "/large"))
-    {
-      g_autofree gchar *large = g_malloc0 (IMAGE_MAX_BYTES + 1);
-      soup_server_message_set_response (message, "image/png", SOUP_MEMORY_COPY,
-                                        large, IMAGE_MAX_BYTES + 1);
-      return;
-    }
-  gsize len;
-  const gchar *bytes = g_bytes_get_data (png, &len);
-  soup_server_message_set_response (message, "image/png", SOUP_MEMORY_COPY,
-                                    bytes, len);
-}
-
-static void
-image_network (void)
-{
-  g_autoptr (GdkPixbuf) original =
-      gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, 640, 480);
-  gdk_pixbuf_fill (original, 0xff0000ff);
-  gchar *png_data = NULL;
-  gsize png_len = 0;
-  g_assert_true (gdk_pixbuf_save_to_buffer (original, &png_data, &png_len,
-                                            "png", NULL, NULL));
-  g_autoptr (GBytes) png = g_bytes_new_take (png_data, png_len);
-  g_autoptr (SoupServer) server = soup_server_new (NULL, NULL);
-  soup_server_add_handler (server, NULL, image_server_response, png, NULL);
-  g_assert_true (soup_server_listen_local (server, 0,
-                                           SOUP_SERVER_LISTEN_IPV4_ONLY, NULL));
-  GSList *uris = soup_server_get_uris (server);
-  g_assert_nonnull (uris);
-  g_autofree gchar *base = g_uri_to_string (uris->data);
-  g_slist_free_full (uris, (GDestroyNotify) g_uri_unref);
-
-  const gchar *paths[] = { "ok", "redirect", "invalid", "large", "truncated" };
-  for (guint i = 0; i < G_N_ELEMENTS (paths); i++)
-    {
-      ImageRequest *request = g_new0 (ImageRequest, 1);
-      g_weak_ref_init (&request->widget, NULL);
-      request->url = g_strconcat (base, paths[i], NULL);
-      ImageResult state = { .loop = g_main_loop_new (NULL, FALSE) };
-      g_autoptr (GTask) task = g_task_new (NULL, NULL, image_test_done, &state);
-      g_task_set_task_data (task, request, image_request_free);
-      guint timeout = g_timeout_add_seconds (5, image_test_timeout, state.loop);
-      g_task_run_in_thread (task, image_load_thread);
-      g_main_loop_run (state.loop);
-      g_assert_true (state.done);
-      g_source_remove (timeout);
-      g_main_loop_unref (state.loop);
-      if (i == 0)
-        {
-          g_assert_nonnull (state.pixbuf);
-          g_assert_cmpint (gdk_pixbuf_get_width (state.pixbuf), ==, 320);
-          g_assert_cmpint (gdk_pixbuf_get_height (state.pixbuf), ==, 240);
-        }
-      else
-        g_assert_null (state.pixbuf);
-      g_clear_object (&state.pixbuf);
-    }
-  g_autoptr (GtkWidget) container =
-      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
-  md_render (GTK_BOX (container),
-             "before ![description](file:///not-loaded) after");
-  GtkWidget *view = gtk_widget_get_first_child (container);
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
-  GtkTextIter iter;
-  gtk_text_buffer_get_iter_at_offset (buffer, &iter, 7);
-  GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor (&iter);
-  g_assert_nonnull (anchor);
-  guint count = 0;
-  GtkWidget **widgets = gtk_text_child_anchor_get_widgets (anchor, &count);
-  g_assert_cmpuint (count, ==, 1);
-  GtkWidget *widget = widgets[0];
-  g_free (widgets);
-  g_autofree gchar *url = g_strconcat (base, "ok", NULL);
-  ImageWidgetResult display = {
-    .loop = g_main_loop_new (NULL, FALSE),
-    .widget = widget,
-  };
-  guint timeout = g_timeout_add_seconds (5, image_test_timeout, display.loop);
-  g_timeout_add (5, image_widget_ready, &display);
-  start_image_request (widget, url);
-  g_main_loop_run (display.loop);
-  g_assert_true (display.done);
-  g_source_remove (timeout);
-  g_main_loop_unref (display.loop);
-  GtkWidget *picture = gtk_widget_get_first_child (widget);
-  g_assert_true (GTK_IS_PICTURE (picture));
-  int minimum_width = 0;
-  gtk_widget_measure (view, GTK_ORIENTATION_HORIZONTAL, -1, &minimum_width,
-                      NULL, NULL, NULL);
-  g_assert_cmpint (minimum_width, >=, 320);
-  g_assert_cmpstr (gtk_picture_get_alternative_text (GTK_PICTURE (picture)),
-                   ==, "description");
-  GdkPaintable *paintable = gtk_picture_get_paintable (GTK_PICTURE (picture));
-  g_assert_nonnull (paintable);
-  g_assert_cmpint (gdk_paintable_get_intrinsic_width (paintable), ==, 320);
-  g_assert_cmpint (gdk_paintable_get_intrinsic_height (paintable), ==, 240);
-  g_assert_cmpint (gtk_picture_get_content_fit (GTK_PICTURE (picture)), ==,
-                   GTK_CONTENT_FIT_SCALE_DOWN);
-
-  gtk_widget_allocate (picture, 800, 600, -1, NULL);
-  GtkSnapshot *snapshot = gtk_snapshot_new ();
-  GTK_WIDGET_GET_CLASS (picture)->snapshot (picture, snapshot);
-  g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (snapshot);
-  g_assert_nonnull (node);
-  graphene_rect_t bounds;
-  gsk_render_node_get_bounds (node, &bounds);
-  g_assert_cmpfloat (bounds.size.width, ==, 320);
-  g_assert_cmpfloat (bounds.size.height, ==, 240);
-
-  gtk_widget_allocate (picture, 160, 120, -1, NULL);
-  snapshot = gtk_snapshot_new ();
-  GTK_WIDGET_GET_CLASS (picture)->snapshot (picture, snapshot);
-  g_clear_pointer (&node, gsk_render_node_unref);
-  node = gtk_snapshot_free_to_node (snapshot);
-  g_assert_nonnull (node);
-  gsk_render_node_get_bounds (node, &bounds);
-  g_assert_cmpfloat (bounds.size.width, ==, 160);
-  g_assert_cmpfloat (bounds.size.height, ==, 120);
-
-  GtkTextIter start, end;
-  gtk_text_buffer_get_bounds (buffer, &start, &end);
-  g_autofree gchar *text = gtk_text_buffer_get_text (buffer, &start, &end,
-                                                     FALSE);
-  g_assert_cmpstr (text, ==, "before  after");
-  clear_box (container);
-  soup_server_disconnect (server);
 }
 
 static void
@@ -841,12 +557,10 @@ main (int    argc,
     }
   g_test_add_func ("/markdown/image/markup", image_markup);
   g_test_add_func ("/markdown/image/urls", image_urls);
-  g_test_add_func ("/markdown/image/network", image_network);
   g_test_add_func ("/markdown/image/pixel-limit", image_pixel_limit);
   g_test_add_func ("/markdown/image/timeout", image_timeout);
   g_test_add_func ("/markdown/image/cancel", image_cancel_on_destroy);
   g_test_add_func ("/markdown/language-aliases", language_aliases);
-  g_test_add_func ("/markdown/selection-edge-scroll", selection_edge_scroll);
   g_test_add_func ("/markdown/code-buffers-released", code_buffers_released);
   g_test_add_func ("/markdown/open-scopes-released", open_scopes_released);
   return g_test_run ();

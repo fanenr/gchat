@@ -189,34 +189,10 @@ typedef struct
 
 static App *app;
 
-static void on_cancel_edit (GtkButton *button,
-                            gpointer   data);
-static void on_delete_chat (GtkButton *button,
-                            gpointer   data);
-static void on_delete_message (GtkButton *button,
-                               gpointer   data);
-static void on_edit_message (GtkButton *button,
-                             gpointer   data);
-static void on_fork_message (GtkButton *button,
-                             gpointer   data);
-static void on_regenerate_message (GtkButton *button,
-                                   gpointer   data);
-static void on_row_menu (GtkGestureClick *gesture,
-                         int              n_press,
-                         double           x,
-                         double           y,
-                         gpointer         data);
-static void regenerate (void);
-static void start_request (gchar   *body,
-                           gsize    len,
-                           gboolean request_title);
-static void refresh_input (void);
-static void refresh_images (void);
-static JsonArray **current_images (void);
-static void render_chat (void);
-static void update_send_state (void);
-static void fit_input_height (void);
-static void schedule_geometry_sync (void);
+static void     render_chat     (void);
+static void     rebuild_sidebar (void);
+static gboolean save_session    (void);
+static void     regenerate      (void);
 
 static guint focus_source;
 
@@ -229,16 +205,83 @@ grab_input_focus (gpointer data G_GNUC_UNUSED)
   return G_SOURCE_REMOVE;
 }
 
-/* Return a floating reference; view_out and title_out receive borrowed
-   children that must not be released separately. */
-static GtkWidget *thought_widget (const gchar *reasoning,
-                                  gdouble      seconds,
-                                  GtkWidget  **view_out,
-                                  GtkWidget  **title_out);
-static void refresh_choices (void);
-static gboolean save_session (void);
-static gboolean record_reply (void);
-static void rebuild_sidebar (void);
+static void
+clear_box_children (GtkBox *box)
+{
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child (GTK_WIDGET (box))) != NULL)
+    gtk_box_remove (box, child);
+}
+
+static GtkWidget *
+floating_builder_widget (GtkBuilder *builder,
+                         GtkWidget  *widget)
+{
+  g_object_ref (widget);
+  g_object_unref (builder);
+  g_object_force_floating (G_OBJECT (widget));
+  return widget;
+}
+
+/* Return the address of the active draft's owned image array. */
+static JsonArray **
+current_images (void)
+{
+  return app->chat->edit_from == G_MAXUINT ? &app->chat->draft_images
+                                           : &app->chat->edit_images;
+}
+
+static void
+clear_edit (Chat *chat)
+{
+  chat->edit_from = G_MAXUINT;
+  chat->dirty = TRUE;
+  g_free (chat->edit_text);
+  chat->edit_text = g_strdup ("");
+  g_clear_pointer (&chat->edit_images, json_array_unref);
+}
+
+static const Choice *
+find_choice (const Choice *table,
+             guint         n,
+             const gchar  *value)
+{
+  for (guint i = 0; i < n; i++)
+    if (g_strcmp0 (table[i].value, value) == 0)
+      return &table[i];
+  return NULL;
+}
+
+static gboolean
+web_tools_supported (void)
+{
+  return g_str_equal (app->model, "deepseek-flash");
+}
+
+static gboolean
+uses_command_shortcuts (void)
+{
+#ifdef GDK_WINDOWING_MACOS
+  return GDK_IS_MACOS_DISPLAY (gtk_widget_get_display (app->window));
+#else
+  return FALSE;
+#endif
+}
+
+/* Return an owned hint formatted with the platform shortcut modifier. */
+static gchar *
+format_shortcut_hint (const gchar *format)
+{
+  return g_strdup_printf (format, uses_command_shortcuts () ? "Cmd" : "Ctrl");
+}
+
+static void
+set_shortcut_tooltip (GtkWidget   *widget,
+                      const gchar *format)
+{
+  g_autofree gchar *hint = format_shortcut_hint (format);
+  gtk_widget_set_tooltip_text (widget, hint);
+}
 
 /* Return an owned path for a UUID, never a path from stored data. */
 static gchar *
@@ -323,24 +366,28 @@ decode_image (GBytes       *bytes,
 {
   gsize length;
   const guint8 *data = g_bytes_get_data (bytes, &length);
-  const gchar *expected = NULL;
+  const gchar *expected = NULL, *type = NULL;
   if (length >= 8 && memcmp (data, "\x89PNG\r\n\x1a\n", 8) == 0)
     {
       expected = "png";
+      type = "image/png";
     }
   else if (length >= 3 && memcmp (data, "\xff\xd8\xff", 3) == 0)
     {
       expected = "jpeg";
+      type = "image/jpeg";
     }
   else if (length >= 6 && (memcmp (data, "GIF87a", 6) == 0 ||
                            memcmp (data, "GIF89a", 6) == 0))
     {
       expected = "gif";
+      type = "image/gif";
     }
   else if (length >= 12 && memcmp (data, "RIFF", 4) == 0 &&
            memcmp (data + 8, "WEBP", 4) == 0)
     {
       expected = "webp";
+      type = "image/webp";
     }
   if (expected == NULL)
     {
@@ -372,17 +419,8 @@ decode_image (GBytes       *bytes,
   g_autofree gchar *name = format != NULL
                                ? gdk_pixbuf_format_get_name (format)
                                : NULL;
-  const gchar *type = NULL;
-  if (g_strcmp0 (name, "png") == 0)
-    type = "image/png";
-  else if (g_strcmp0 (name, "jpeg") == 0)
-    type = "image/jpeg";
-  else if (g_strcmp0 (name, "gif") == 0)
-    type = "image/gif";
-  else if (g_strcmp0 (name, "webp") == 0)
-    type = "image/webp";
   GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf (loader);
-  if (type == NULL || pixbuf == NULL || g_strcmp0 (name, expected) != 0)
+  if (pixbuf == NULL || g_strcmp0 (name, expected) != 0)
     {
       g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                            _ ("Unsupported image format."));
@@ -606,6 +644,175 @@ on_chat_focus_changed (GtkWindow  *window,
   gtk_viewport_scroll_to (GTK_VIEWPORT (viewport), focus, NULL);
 }
 
+/* The card grows with its content and scrolls internally at the limit. */
+static void
+fit_input_height (void)
+{
+  if (gtk_text_buffer_get_char_count (
+          gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input))) == 0)
+    {
+      gtk_widget_set_size_request (app->input_frame, -1, INPUT_MIN_HEIGHT);
+      return;
+    }
+
+  /* The text area has 14px margins on both sides; measure the real usable
+     width, or the line count is underestimated. */
+  int width = gtk_widget_get_width (app->input_frame) - 28;
+  if (width <= 0)
+    return;
+
+  int min = 0, natural = 0;
+  gtk_widget_measure (app->input, GTK_ORIENTATION_VERTICAL, width, &min,
+                      &natural, NULL, NULL);
+  /* The result of gtk_widget_measure already includes the margins of the text
+     view (14px top, 42px bottom), so add only 4px for rounding, not the margins
+     again. */
+  gtk_widget_set_size_request (
+      app->input_frame, -1,
+      CLAMP (natural + 4, INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT));
+}
+
+static void
+update_send_state (void)
+{
+  gboolean has_text = gtk_text_buffer_get_char_count (gtk_text_view_get_buffer (
+                          GTK_TEXT_VIEW (app->input))) > 0;
+  gboolean has_images = app->chat != NULL && *current_images () != NULL;
+  gtk_widget_set_sensitive (app->send, app->busy || has_text || has_images);
+  /* The buffer is empty during composition, and the placeholder would
+     collapse with the preedit text. */
+  if (app->placeholder != NULL)
+    gtk_widget_set_visible (app->placeholder, !has_text && !app->preedit);
+}
+
+/* After a multi-line paste, the text view layout updates only on the next
+   frame. Measuring at once returns the old height, so measure from an idle
+   callback. */
+static guint fit_source;
+
+/* With the EXTERNAL policy, GtkScrolledWindow sometimes does not update
+   page-size: the computed max is larger than the real one, so the view scrolls
+   past the end (blank space below, or a list that does not scroll further).
+   After a geometry change, correct it over several frames and pull the
+   page-size of both scrolled areas back to the real visible height. */
+static guint sync_frames_left, sync_tick;
+
+static void
+clamp_adjustment (GtkAdjustment *adj)
+{
+  gdouble max =
+      gtk_adjustment_get_upper (adj) - gtk_adjustment_get_page_size (adj);
+  if (max > 0 && gtk_adjustment_get_value (adj) > max)
+    gtk_adjustment_set_value (adj, max);
+}
+
+static void
+sync_one_scroller (GtkScrolledWindow *scroller,
+                   int                viewport)
+{
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroller);
+  if (viewport <= 0 ||
+      ABS (gtk_adjustment_get_page_size (adj) - viewport) < 0.5)
+    {
+      return;
+    }
+  gtk_adjustment_set_page_size (adj, viewport);
+  clamp_adjustment (adj);
+}
+
+/* Correct page-size and invalidate the whole message area subtree once: a
+   taller input box changes the message area height, but the measure caches of
+   the text views inside do not invalidate by themselves. The last message then
+   stays measured at its old size, which shows as missing content and a bottom
+   that cannot be reached, until the next input triggers a new layout. */
+static void
+sync_geometry_now (void)
+{
+  if (app->input_frame == NULL || app->scroller == NULL)
+    return;
+
+  input_stick.setting = TRUE;
+  sync_one_scroller (GTK_SCROLLED_WINDOW (app->input_frame),
+                     gtk_widget_get_height (app->input));
+  sync_one_scroller (GTK_SCROLLED_WINDOW (app->scroller),
+                     gtk_widget_get_height (app->scroller));
+  input_stick.setting = FALSE;
+
+  for (GtkWidget *msg = gtk_widget_get_first_child (app->messages); msg != NULL;
+       msg = gtk_widget_get_next_sibling (msg))
+    gtk_widget_queue_resize (msg);
+  gtk_widget_queue_resize (GTK_WIDGET (app->messages));
+  gtk_widget_queue_draw (app->scroller);
+}
+
+static gboolean
+geometry_sync_tick (GtkWidget     *widget G_GNUC_UNUSED,
+                    GdkFrameClock *clock G_GNUC_UNUSED,
+                    gpointer       data G_GNUC_UNUSED)
+{
+  sync_geometry_now ();
+
+  if (--sync_frames_left)
+    return G_SOURCE_CONTINUE;
+  sync_tick = 0;
+  return G_SOURCE_REMOVE;
+}
+
+static guint sync_retry_timer;
+
+static gboolean
+geometry_sync_retry_cb (gpointer data G_GNUC_UNUSED)
+{
+  sync_retry_timer = 0;
+  sync_geometry_now ();
+  return G_SOURCE_REMOVE;
+}
+
+static void
+schedule_geometry_sync (void)
+{
+  if (sync_retry_timer)
+    g_source_remove (sync_retry_timer);
+  sync_retry_timer = g_timeout_add (250, geometry_sync_retry_cb, NULL);
+
+  if (sync_frames_left)
+    return;
+  sync_frames_left = 3;
+  sync_tick =
+      gtk_widget_add_tick_callback (app->input, geometry_sync_tick, NULL, NULL);
+}
+
+static guint fit_retry_timer;
+
+static gboolean
+fit_input_height_retry (gpointer data G_GNUC_UNUSED)
+{
+  fit_retry_timer = 0;
+  fit_input_height ();
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+fit_input_height_idle (gpointer data G_GNUC_UNUSED)
+{
+  fit_source = 0;
+  fit_input_height ();
+  /* A paste inserts a whole block, so this frame may still measure the old
+     height; measure again after the layout settles. */
+  if (fit_retry_timer)
+    g_source_remove (fit_retry_timer);
+  fit_retry_timer = g_timeout_add (120, fit_input_height_retry, NULL);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+refresh_input (void)
+{
+  update_send_state ();
+  if (!fit_source)
+    fit_source = g_idle_add (fit_input_height_idle, NULL);
+}
+
 /* ---------- SSE ---------- */
 
 /* The member helpers return borrowed values of the requested JSON type. */
@@ -731,45 +938,6 @@ add_bubble_action (GtkWidget   *bubble,
 }
 
 static void
-draw_fork_icon (GtkDrawingArea *area,
-                cairo_t        *cr,
-                int             width,
-                int             height,
-                gpointer        data G_GNUC_UNUSED)
-{
-  GdkRGBA color;
-  gtk_widget_get_color (GTK_WIDGET (area), &color);
-  gdk_cairo_set_source_rgba (cr, &color);
-  cairo_scale (cr, width / 16.0, height / 16.0);
-  cairo_set_line_width (cr, 1.5);
-  cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
-  cairo_move_to (cr, 4, 5);
-  cairo_line_to (cr, 4, 11);
-  cairo_move_to (cr, 12, 5);
-  cairo_curve_to (cr, 12, 9, 4, 6, 4, 11);
-  cairo_stroke (cr);
-  cairo_arc (cr, 4, 3.5, 1.5, 0, 2 * G_PI);
-  cairo_new_sub_path (cr);
-  cairo_arc (cr, 4, 12.5, 1.5, 0, 2 * G_PI);
-  cairo_new_sub_path (cr);
-  cairo_arc (cr, 12, 3.5, 1.5, 0, 2 * G_PI);
-  cairo_fill (cr);
-}
-
-static void
-add_fork_action (GtkWidget *bubble)
-{
-  GtkWidget *button = add_bubble_action (bubble, "list-add-symbolic",
-                                         _ ("Fork conversation"),
-                                         G_CALLBACK (on_fork_message));
-  GtkWidget *icon = gtk_drawing_area_new ();
-  gtk_widget_set_size_request (icon, 14, 14);
-  gtk_drawing_area_set_draw_func (GTK_DRAWING_AREA (icon), draw_fork_icon,
-                                  NULL, NULL);
-  gtk_button_set_child (GTK_BUTTON (button), icon);
-}
-
-static void
 update_bubble_actions (GtkWidget *bubble)
 {
   GtkWidget *parent = gtk_widget_get_parent (bubble);
@@ -874,9 +1042,7 @@ bubble_new (const gchar *role)
 static void
 clear_messages (void)
 {
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child (app->messages)) != NULL)
-    gtk_box_remove (GTK_BOX (app->messages), child);
+  clear_box_children (GTK_BOX (app->messages));
 }
 
 static void
@@ -956,6 +1122,130 @@ image_widget (const gchar *id,
   return picture;
 }
 
+static void refresh_images (void);
+
+static void
+on_remove_image (GtkButton *button G_GNUC_UNUSED,
+                 gpointer   data)
+{
+  JsonArray **images = current_images ();
+  guint index = GPOINTER_TO_UINT (data);
+  if (*images == NULL || index >= json_array_get_length (*images))
+    return;
+  json_array_remove_element (*images, index);
+  if (json_array_get_length (*images) == 0)
+    g_clear_pointer (images, json_array_unref);
+  app->chat->dirty = TRUE;
+  refresh_images ();
+  save_session ();
+  gtk_widget_grab_focus (app->input);
+}
+
+static void
+refresh_images (void)
+{
+  if (app->image_bar == NULL)
+    return;
+  clear_box_children (GTK_BOX (app->image_preview));
+  JsonArray *images = *current_images ();
+  gtk_widget_set_visible (app->image_bar, images != NULL);
+  if (images != NULL)
+    {
+      for (guint i = 0; i < json_array_get_length (images); i++)
+        {
+          const gchar *id = json_array_get_string_element (images, i);
+          GtkWidget *tile = gtk_overlay_new ();
+          gtk_widget_set_overflow (tile, GTK_OVERFLOW_HIDDEN);
+          gtk_widget_add_css_class (tile, "attachment-tile");
+          gtk_overlay_set_child (GTK_OVERLAY (tile), image_widget (id, TRUE));
+          GtkWidget *remove = gtk_button_new_from_icon_name (
+              "window-close-symbolic");
+          g_autofree gchar *label = g_strdup_printf (_ ("Remove image %u"),
+                                                     i + 1);
+          gtk_widget_set_tooltip_text (remove, label);
+          gtk_accessible_update_property (GTK_ACCESSIBLE (remove),
+                                          GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                          label, -1);
+          gtk_widget_set_halign (remove, GTK_ALIGN_END);
+          gtk_widget_set_valign (remove, GTK_ALIGN_START);
+          gtk_widget_add_css_class (remove, "attachment-remove");
+          gtk_overlay_add_overlay (GTK_OVERLAY (tile), remove);
+          g_signal_connect (remove, "clicked", G_CALLBACK (on_remove_image),
+                            GUINT_TO_POINTER (i));
+          gtk_box_append (GTK_BOX (app->image_preview), tile);
+        }
+    }
+  update_send_state ();
+}
+
+static void
+on_thought_toggle (GtkButton *button,
+                   gpointer   content)
+{
+  gboolean open = !gtk_widget_get_visible (GTK_WIDGET (content));
+  gtk_widget_set_visible (GTK_WIDGET (content), open);
+  GtkWidget *chevron = g_object_get_data (G_OBJECT (button), "chevron");
+  if (chevron != NULL)
+    gtk_image_set_from_icon_name (
+        GTK_IMAGE (chevron), open ? "pan-down-symbolic" : "pan-end-symbolic");
+  gtk_widget_queue_resize (GTK_WIDGET (content));
+}
+
+static void
+set_thought_expanded (GtkWidget *root,
+                      gboolean   expanded)
+{
+  GtkWidget *toggle = gtk_widget_get_first_child (root);
+  GtkWidget *content = gtk_widget_get_last_child (root);
+
+  if (gtk_widget_get_visible (content) != expanded)
+    on_thought_toggle (GTK_BUTTON (toggle), content);
+}
+
+static gchar *
+thought_title (gdouble seconds)
+{
+  if (seconds <= 0)
+    return g_strdup (_ ("Thought"));
+  return seconds >= 10 ? g_strdup_printf (_ ("Thought (%.0f s)"), seconds)
+                       : g_strdup_printf (_ ("Thought (%.1f s)"), seconds);
+}
+
+/* Return a floating reference; view_out and title_out receive borrowed
+   children that must not be released separately. */
+static GtkWidget *
+thought_widget (const gchar *reasoning,
+                gdouble      seconds,
+                GtkWidget  **view_out,
+                GtkWidget  **title_out)
+{
+  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/thought.ui");
+  GtkWidget *root = GTK_WIDGET (gtk_builder_get_object (builder, "thought"));
+  GtkWidget *toggle = GTK_WIDGET (gtk_builder_get_object (builder, "toggle"));
+  GtkWidget *content = GTK_WIDGET (gtk_builder_get_object (builder, "content"));
+  GtkWidget *view = GTK_WIDGET (gtk_builder_get_object (builder, "text"));
+  GtkWidget *title_label =
+      GTK_WIDGET (gtk_builder_get_object (builder, "title"));
+  GtkWidget *chevron = GTK_WIDGET (gtk_builder_get_object (builder, "chevron"));
+
+  g_autofree gchar *title = thought_title (seconds);
+  gtk_label_set_text (GTK_LABEL (title_label), title);
+
+  /* GtkTextView avoids gaps in selection at fractional line heights. */
+  gtk_text_buffer_set_text (
+      gtk_text_view_get_buffer (GTK_TEXT_VIEW (view)), reasoning, -1);
+  g_object_set_data (G_OBJECT (toggle), "chevron", chevron);
+  g_signal_connect (toggle, "clicked", G_CALLBACK (on_thought_toggle), content);
+
+  if (view_out != NULL)
+    *view_out = view;
+  if (title_out != NULL)
+    *title_out = title_label;
+
+  return floating_builder_widget (g_steal_pointer (&builder), root);
+}
+
 static gboolean
 citation_url_allowed (const gchar *url)
 {
@@ -1015,6 +1305,193 @@ render_citations (GtkBox     *body,
   gtk_label_set_xalign (GTK_LABEL (label), 0);
   gtk_widget_add_css_class (label, "msg-text");
   gtk_box_append (body, label);
+}
+
+/* Message actions. The bubble holds the index from render time and reads it on
+   click; a re-render after a delete refreshes the index. */
+static guint
+bubble_index (GtkWidget *bubble)
+{
+  return GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (bubble), "index"));
+}
+
+static void
+on_delete_message (GtkButton *button G_GNUC_UNUSED,
+                   gpointer   data)
+{
+  guint index = bubble_index (data);
+  if (app->busy || index >= json_array_get_length (app->chat->messages))
+    return;
+  json_array_remove_element (app->chat->messages, index);
+  app->chat->dirty = TRUE;
+  if (app->chat->edit_from != G_MAXUINT)
+    {
+      if (index == app->chat->edit_from)
+        clear_edit (app->chat);
+      else if (index < app->chat->edit_from)
+        app->chat->edit_from--;
+    }
+  render_chat ();
+  save_session ();
+}
+
+/* Copy a draft independently of the message or session it came from. */
+static JsonArray *
+copy_images (JsonArray *images)
+{
+  if (images == NULL)
+    return NULL;
+  g_autoptr (JsonArray) copy = json_array_new ();
+  for (guint i = 0; i < json_array_get_length (images); i++)
+    json_array_add_string_element (copy,
+                                   json_array_get_string_element (images, i));
+  return g_steal_pointer (&copy);
+}
+
+static void
+on_edit_message (GtkButton *button G_GNUC_UNUSED,
+                 gpointer   data)
+{
+  guint index = bubble_index (data);
+  if (app->busy || index >= json_array_get_length (app->chat->messages))
+    return;
+  JsonObject *msg = json_array_get_object_element (app->chat->messages, index);
+  const gchar *content = json_object_get_string_member (msg, "content");
+
+  /* The normal draft and the edit draft are separate; truncate the history only
+     on send. */
+  app->chat->edit_from = index;
+  app->chat->dirty = TRUE;
+  g_free (app->chat->edit_text);
+  app->chat->edit_text = g_strdup (content);
+  g_clear_pointer (&app->chat->edit_images, json_array_unref);
+  app->chat->edit_images = copy_images (image_array_member (msg, "images"));
+  render_chat ();
+  save_session ();
+  gtk_widget_grab_focus (app->input);
+}
+
+static void
+copy_message (JsonArray  *target,
+              JsonObject *original)
+{
+  g_autoptr (JsonObject) copy = json_object_new ();
+  g_autoptr (GList) members = json_object_get_members (original);
+  for (GList *l = members; l != NULL; l = l->next)
+    json_object_set_member (copy, l->data,
+                            json_node_copy (json_object_get_member (
+                                original, l->data)));
+  json_array_add_object_element (target, g_steal_pointer (&copy));
+}
+
+static void
+copy_messages (JsonArray *target,
+               JsonArray *source,
+               guint      count)
+{
+  for (guint i = 0; i < count; i++)
+    copy_message (target, json_array_get_object_element (source, i));
+}
+
+/* Consume chat, add it to the session list, and switch the UI to it. */
+static void
+activate_new_chat (Chat *chat)
+{
+  gtk_editable_set_text (GTK_EDITABLE (app->search), "");
+  app->chat = chat;
+  g_ptr_array_add (app->chats, chat);
+  rebuild_sidebar ();
+  render_chat ();
+  save_session ();
+  gtk_widget_grab_focus (app->input);
+}
+
+static void
+on_fork_message (GtkButton *button G_GNUC_UNUSED,
+                 gpointer   data)
+{
+  guint index = bubble_index (data);
+  if (app->busy || index >= json_array_get_length (app->chat->messages))
+    return;
+
+  Chat *source = app->chat;
+  JsonObject *selected =
+      json_array_get_object_element (source->messages, index);
+  gboolean is_user = g_str_equal (
+      json_object_get_string_member (selected, "role"), "user");
+  g_autoptr (Chat) fork = chat_new_empty ();
+  g_free (fork->title);
+  fork->title = *source->title
+                    ? g_strdup_printf (_ ("%s (Fork)"), source->title)
+                    : g_strdup (_ ("Fork"));
+  if (is_user)
+    {
+      g_free (fork->draft);
+      fork->draft = g_strdup (json_object_get_string_member (selected,
+                                                             "content"));
+      fork->draft_images = copy_images (image_array_member (selected,
+                                                            "images"));
+    }
+  copy_messages (fork->messages, source->messages, index + !is_user);
+  activate_new_chat (g_steal_pointer (&fork));
+}
+
+static void
+draw_fork_icon (GtkDrawingArea *area,
+                cairo_t        *cr,
+                int             width,
+                int             height,
+                gpointer        data G_GNUC_UNUSED)
+{
+  GdkRGBA color;
+  gtk_widget_get_color (GTK_WIDGET (area), &color);
+  gdk_cairo_set_source_rgba (cr, &color);
+  cairo_scale (cr, width / 16.0, height / 16.0);
+  cairo_set_line_width (cr, 1.5);
+  cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
+  cairo_move_to (cr, 4, 5);
+  cairo_line_to (cr, 4, 11);
+  cairo_move_to (cr, 12, 5);
+  cairo_curve_to (cr, 12, 9, 4, 6, 4, 11);
+  cairo_stroke (cr);
+  cairo_arc (cr, 4, 3.5, 1.5, 0, 2 * G_PI);
+  cairo_new_sub_path (cr);
+  cairo_arc (cr, 4, 12.5, 1.5, 0, 2 * G_PI);
+  cairo_new_sub_path (cr);
+  cairo_arc (cr, 12, 3.5, 1.5, 0, 2 * G_PI);
+  cairo_fill (cr);
+}
+
+static void
+add_fork_action (GtkWidget *bubble)
+{
+  GtkWidget *button = add_bubble_action (bubble, "list-add-symbolic",
+                                         _ ("Fork conversation"),
+                                         G_CALLBACK (on_fork_message));
+  GtkWidget *icon = gtk_drawing_area_new ();
+  gtk_widget_set_size_request (icon, 14, 14);
+  gtk_drawing_area_set_draw_func (GTK_DRAWING_AREA (icon), draw_fork_icon,
+                                  NULL, NULL);
+  gtk_button_set_child (GTK_BUTTON (button), icon);
+}
+
+static void
+on_cancel_edit (GtkButton *button G_GNUC_UNUSED,
+                gpointer   data G_GNUC_UNUSED)
+{
+  if (app->busy || app->chat->edit_from == G_MAXUINT)
+    return;
+  clear_edit (app->chat);
+  render_chat ();
+  save_session ();
+  gtk_widget_grab_focus (app->input);
+}
+
+static void
+on_regenerate_message (GtkButton *button G_GNUC_UNUSED,
+                       gpointer   data G_GNUC_UNUSED)
+{
+  regenerate ();
 }
 
 static void
@@ -1095,16 +1572,6 @@ restore_input (void)
 }
 
 static void
-clear_edit (Chat *chat)
-{
-  chat->edit_from = G_MAXUINT;
-  chat->dirty = TRUE;
-  g_free (chat->edit_text);
-  chat->edit_text = g_strdup ("");
-  g_clear_pointer (&chat->edit_images, json_array_unref);
-}
-
-static void
 render_chat (void)
 {
   clear_messages ();
@@ -1124,50 +1591,6 @@ render_chat (void)
 }
 
 /* ---------- sidebar ---------- */
-
-static gboolean
-save_session (void)
-{
-  if (app->draft_save_source)
-    g_source_remove (app->draft_save_source);
-  app->draft_save_source = 0;
-  if (app->busy && app->reply_msg != NULL)
-    record_reply ();
-  g_autoptr (GError) error = NULL;
-  gboolean ok = store_save (app->db, app->chats, app->deleted_chat_ids,
-                            app->chat->id, app->model, app->effort, &error);
-  if (!ok)
-    {
-      g_warning ("cannot save conversations: %s", error->message);
-      app_toast (_ ("Failed to save conversation"));
-    }
-  return ok;
-}
-
-static gboolean
-uses_command_shortcuts (void)
-{
-#ifdef GDK_WINDOWING_MACOS
-  return GDK_IS_MACOS_DISPLAY (gtk_widget_get_display (app->window));
-#else
-  return FALSE;
-#endif
-}
-
-/* Return an owned hint formatted with the platform shortcut modifier. */
-static gchar *
-format_shortcut_hint (const gchar *format)
-{
-  return g_strdup_printf (format, uses_command_shortcuts () ? "Cmd" : "Ctrl");
-}
-
-static void
-set_shortcut_tooltip (GtkWidget   *widget,
-                      const gchar *format)
-{
-  g_autofree gchar *hint = format_shortcut_hint (format);
-  gtk_widget_set_tooltip_text (widget, hint);
-}
 
 static void
 set_busy (gboolean busy)
@@ -1299,253 +1722,6 @@ on_row_unmap (GtkWidget *row,
 }
 
 static void
-rebuild_sidebar (void)
-{
-  app->syncing = TRUE;
-  g_autofree gchar *query = g_strstrip (
-      g_strdup (gtk_editable_get_text (GTK_EDITABLE (app->search))));
-  g_autofree gchar *pattern = g_regex_escape_string (query, -1);
-  g_autoptr (GRegex) regex =
-      *query
-          ? g_regex_new (pattern, G_REGEX_CASELESS | G_REGEX_OPTIMIZE, 0, NULL)
-          : NULL;
-  GtkWidget *child = gtk_widget_get_first_child (app->sidebar_list);
-  while (child != NULL)
-    {
-      GtkWidget *next = gtk_widget_get_next_sibling (child);
-      if (GTK_IS_LIST_BOX_ROW (child))
-        {
-          GtkPopover *popover = g_object_get_data (G_OBJECT (child),
-                                                   "context-menu");
-          if (popover != NULL)
-            close_row_menu (popover, NULL);
-          gtk_list_box_remove (GTK_LIST_BOX (app->sidebar_list), child);
-        }
-      child = next;
-    }
-
-  /* Put pinned sessions first, then sort each group by creation time. */
-  g_autoptr (GArray) sorted = g_array_new (FALSE, FALSE, sizeof (Chat *));
-  for (guint i = 0; i < app->chats->len; i++)
-    {
-      Chat *chat = g_ptr_array_index (app->chats, i);
-      g_array_append_val (sorted, chat);
-    }
-  g_array_sort (sorted, cmp_chat_desc);
-
-  const gchar *group = NULL;
-  GtkListBoxRow *current_row = NULL;
-  for (guint i = 0; i < sorted->len; i++)
-    {
-      Chat *chat = g_array_index (sorted, Chat *, i);
-      g_autofree gchar *preview =
-          regex != NULL ? search_preview (chat, regex) : NULL;
-      if (regex != NULL && preview == NULL)
-        continue;
-
-      const gchar *label_text = chat->pinned ? _ ("Pinned")
-                                            : chat_group_label (chat->created);
-      if (group == NULL || !g_str_equal (group, label_text))
-        {
-          sidebar_add_group (label_text);
-          group = label_text;
-        }
-
-      GtkWidget *row = gtk_list_box_row_new ();
-      gtk_widget_add_css_class (row, "sidebar-row");
-
-      GtkWidget *overlay = gtk_overlay_new ();
-      GtkWidget *title =
-          gtk_label_new (chat->title[0] ? chat->title : _ ("New chat"));
-      gtk_label_set_xalign (GTK_LABEL (title), 0);
-      gtk_label_set_ellipsize (GTK_LABEL (title), PANGO_ELLIPSIZE_END);
-      g_object_set (title, "margin-start", 10, "margin-end", 26, NULL);
-
-      GtkWidget *del = icon_button ("user-trash-symbolic", 13, TRUE,
-                                    _ ("Delete conversation"));
-      gtk_widget_add_css_class (del, "row-del");
-      gtk_widget_set_halign (del, GTK_ALIGN_END);
-      gtk_widget_set_valign (del, GTK_ALIGN_CENTER);
-      gtk_widget_set_margin_end (del, 6);
-      g_signal_connect (del, "clicked", G_CALLBACK (on_delete_chat), chat);
-
-      GtkWidget *labels = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
-      gtk_widget_set_valign (labels, GTK_ALIGN_CENTER);
-      gtk_box_append (GTK_BOX (labels), title);
-      if (preview != NULL && *preview)
-        {
-          GtkWidget *snippet = gtk_label_new (preview);
-          gtk_label_set_xalign (GTK_LABEL (snippet), 0);
-          gtk_label_set_single_line_mode (GTK_LABEL (snippet), TRUE);
-          gtk_label_set_ellipsize (GTK_LABEL (snippet), PANGO_ELLIPSIZE_END);
-          gtk_widget_add_css_class (snippet, "caption");
-          gtk_widget_add_css_class (snippet, "dimmed");
-          g_object_set (snippet, "margin-start", 10, "margin-end", 26, NULL);
-          gtk_widget_set_tooltip_text (snippet, preview);
-          gtk_box_append (GTK_BOX (labels), snippet);
-        }
-      gtk_overlay_set_child (GTK_OVERLAY (overlay), labels);
-      gtk_overlay_add_overlay (GTK_OVERLAY (overlay), del);
-      gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (row), overlay);
-      g_object_set_data (G_OBJECT (row), "chat", chat);
-      g_signal_connect (row, "unmap", G_CALLBACK (on_row_unmap), NULL);
-      gtk_widget_set_tooltip_text (row,
-                                   _ ("Right-click for conversation menu"));
-      GtkGesture *secondary = gtk_gesture_click_new ();
-      gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (secondary),
-                                     GDK_BUTTON_SECONDARY);
-      g_signal_connect (secondary, "pressed", G_CALLBACK (on_row_menu), row);
-      gtk_widget_add_controller (row, GTK_EVENT_CONTROLLER (secondary));
-      gtk_list_box_append (GTK_LIST_BOX (app->sidebar_list), row);
-      if (chat == app->chat)
-        current_row = GTK_LIST_BOX_ROW (row);
-    }
-  if (current_row != NULL)
-    gtk_list_box_select_row (GTK_LIST_BOX (app->sidebar_list), current_row);
-  app->syncing = FALSE;
-}
-
-/* ---------- actions ---------- */
-
-/* Message actions. The bubble holds the index from render time and reads it on
-   click; a re-render after a delete refreshes the index. */
-static guint
-bubble_index (GtkWidget *bubble)
-{
-  return GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (bubble), "index"));
-}
-
-static void
-on_delete_message (GtkButton *button G_GNUC_UNUSED,
-                   gpointer   data)
-{
-  guint index = bubble_index (data);
-  if (app->busy || index >= json_array_get_length (app->chat->messages))
-    return;
-  json_array_remove_element (app->chat->messages, index);
-  app->chat->dirty = TRUE;
-  if (app->chat->edit_from != G_MAXUINT)
-    {
-      if (index == app->chat->edit_from)
-        clear_edit (app->chat);
-      else if (index < app->chat->edit_from)
-        app->chat->edit_from--;
-    }
-  render_chat ();
-  save_session ();
-}
-
-/* Copy a draft independently of the message or session it came from. */
-static JsonArray *
-copy_images (JsonArray *images)
-{
-  if (images == NULL)
-    return NULL;
-  g_autoptr (JsonArray) copy = json_array_new ();
-  for (guint i = 0; i < json_array_get_length (images); i++)
-    json_array_add_string_element (copy,
-                                   json_array_get_string_element (images, i));
-  return g_steal_pointer (&copy);
-}
-
-static void
-on_edit_message (GtkButton *button G_GNUC_UNUSED,
-                 gpointer   data)
-{
-  guint index = bubble_index (data);
-  if (app->busy || index >= json_array_get_length (app->chat->messages))
-    return;
-  JsonObject *msg = json_array_get_object_element (app->chat->messages, index);
-  const gchar *content = json_object_get_string_member (msg, "content");
-
-  /* The normal draft and the edit draft are separate; truncate the history only
-     on send. */
-  app->chat->edit_from = index;
-  app->chat->dirty = TRUE;
-  g_free (app->chat->edit_text);
-  app->chat->edit_text = g_strdup (content);
-  g_clear_pointer (&app->chat->edit_images, json_array_unref);
-  app->chat->edit_images = copy_images (image_array_member (msg, "images"));
-  render_chat ();
-  save_session ();
-  gtk_widget_grab_focus (app->input);
-}
-
-static void
-copy_message (JsonArray  *target,
-              JsonObject *original)
-{
-  g_autoptr (JsonObject) copy = json_object_new ();
-  g_autoptr (GList) members = json_object_get_members (original);
-  for (GList *l = members; l != NULL; l = l->next)
-    json_object_set_member (copy, l->data,
-                            json_node_copy (json_object_get_member (
-                                original, l->data)));
-  json_array_add_object_element (target, g_steal_pointer (&copy));
-}
-
-static void
-on_fork_message (GtkButton *button G_GNUC_UNUSED,
-                 gpointer   data)
-{
-  guint index = bubble_index (data);
-  if (app->busy || index >= json_array_get_length (app->chat->messages))
-    return;
-
-  Chat *source = app->chat;
-  JsonObject *selected =
-      json_array_get_object_element (source->messages, index);
-  gboolean is_user = g_str_equal (
-      json_object_get_string_member (selected, "role"), "user");
-  g_autoptr (Chat) fork = chat_new_empty ();
-  g_free (fork->title);
-  fork->title = *source->title
-                    ? g_strdup_printf (_ ("%s (Fork)"), source->title)
-                    : g_strdup (_ ("Fork"));
-  if (is_user)
-    {
-      g_free (fork->draft);
-      fork->draft = g_strdup (json_object_get_string_member (selected,
-                                                             "content"));
-      fork->draft_images = copy_images (image_array_member (selected,
-                                                            "images"));
-    }
-  for (guint i = 0; i < index + !is_user; i++)
-    {
-      JsonObject *original =
-          json_array_get_object_element (source->messages, i);
-      copy_message (fork->messages, original);
-    }
-
-  gtk_editable_set_text (GTK_EDITABLE (app->search), "");
-  app->chat = fork;
-  g_ptr_array_add (app->chats, g_steal_pointer (&fork));
-  rebuild_sidebar ();
-  render_chat ();
-  save_session ();
-  gtk_widget_grab_focus (app->input);
-}
-
-static void
-on_cancel_edit (GtkButton *button G_GNUC_UNUSED,
-                gpointer   data G_GNUC_UNUSED)
-{
-  if (app->busy || app->chat->edit_from == G_MAXUINT)
-    return;
-  clear_edit (app->chat);
-  render_chat ();
-  save_session ();
-  gtk_widget_grab_focus (app->input);
-}
-
-static void
-on_regenerate_message (GtkButton *button G_GNUC_UNUSED,
-                       gpointer   data G_GNUC_UNUSED)
-{
-  regenerate ();
-}
-
-static void
 on_new_chat (void)
 {
   if (app->busy || adw_application_window_get_visible_dialog (
@@ -1560,12 +1736,14 @@ on_new_chat (void)
       gtk_widget_grab_focus (app->input);
       return;
     }
-  app->chat = chat_new_empty ();
-  g_ptr_array_add (app->chats, app->chat);
-  rebuild_sidebar ();
-  render_chat ();
-  save_session ();
-  gtk_widget_grab_focus (app->input);
+  activate_new_chat (chat_new_empty ());
+}
+
+static void
+on_new_chat_clicked (GtkButton *button G_GNUC_UNUSED,
+                     gpointer   data G_GNUC_UNUSED)
+{
+  on_new_chat ();
 }
 
 static void
@@ -1659,19 +1837,9 @@ on_row_copy (GtkButton *button G_GNUC_UNUSED,
   copy->edit_from = source->edit_from;
   g_free (copy->edit_text);
   copy->edit_text = g_strdup (source->edit_text);
-  for (guint i = 0; i < json_array_get_length (source->messages); i++)
-    {
-      JsonObject *original =
-          json_array_get_object_element (source->messages, i);
-      copy_message (copy->messages, original);
-    }
-  gtk_editable_set_text (GTK_EDITABLE (app->search), "");
-  app->chat = copy;
-  g_ptr_array_add (app->chats, g_steal_pointer (&copy));
-  rebuild_sidebar ();
-  render_chat ();
-  save_session ();
-  gtk_widget_grab_focus (app->input);
+  copy_messages (copy->messages, source->messages,
+                 json_array_get_length (source->messages));
+  activate_new_chat (g_steal_pointer (&copy));
 }
 
 static void
@@ -1710,13 +1878,6 @@ on_row_menu (GtkGestureClick *gesture G_GNUC_UNUSED,
   gtk_popover_set_child (GTK_POPOVER (popover), box);
   g_signal_connect (popover, "closed", G_CALLBACK (close_row_menu), NULL);
   gtk_popover_popup (GTK_POPOVER (popover));
-}
-
-static void
-on_new_chat_clicked (GtkButton *button G_GNUC_UNUSED,
-                     gpointer   data G_GNUC_UNUSED)
-{
-  on_new_chat ();
 }
 
 static void
@@ -1785,6 +1946,120 @@ on_delete_chat (GtkButton *button G_GNUC_UNUSED,
   adw_dialog_present (ADW_DIALOG (dialog), app->window);
 }
 
+static GtkWidget *
+sidebar_chat_row (Chat        *chat,
+                  const gchar *preview)
+{
+  GtkWidget *row = gtk_list_box_row_new ();
+  gtk_widget_add_css_class (row, "sidebar-row");
+
+  GtkWidget *overlay = gtk_overlay_new ();
+  GtkWidget *title =
+      gtk_label_new (chat->title[0] ? chat->title : _ ("New chat"));
+  gtk_label_set_xalign (GTK_LABEL (title), 0);
+  gtk_label_set_ellipsize (GTK_LABEL (title), PANGO_ELLIPSIZE_END);
+  g_object_set (title, "margin-start", 10, "margin-end", 26, NULL);
+
+  GtkWidget *del = icon_button ("user-trash-symbolic", 13, TRUE,
+                                _ ("Delete conversation"));
+  gtk_widget_add_css_class (del, "row-del");
+  gtk_widget_set_halign (del, GTK_ALIGN_END);
+  gtk_widget_set_valign (del, GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_end (del, 6);
+  g_signal_connect (del, "clicked", G_CALLBACK (on_delete_chat), chat);
+
+  GtkWidget *labels = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
+  gtk_widget_set_valign (labels, GTK_ALIGN_CENTER);
+  gtk_box_append (GTK_BOX (labels), title);
+  if (preview != NULL && *preview)
+    {
+      GtkWidget *snippet = gtk_label_new (preview);
+      gtk_label_set_xalign (GTK_LABEL (snippet), 0);
+      gtk_label_set_single_line_mode (GTK_LABEL (snippet), TRUE);
+      gtk_label_set_ellipsize (GTK_LABEL (snippet), PANGO_ELLIPSIZE_END);
+      gtk_widget_add_css_class (snippet, "caption");
+      gtk_widget_add_css_class (snippet, "dimmed");
+      g_object_set (snippet, "margin-start", 10, "margin-end", 26, NULL);
+      gtk_widget_set_tooltip_text (snippet, preview);
+      gtk_box_append (GTK_BOX (labels), snippet);
+    }
+  gtk_overlay_set_child (GTK_OVERLAY (overlay), labels);
+  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), del);
+  gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (row), overlay);
+  g_object_set_data (G_OBJECT (row), "chat", chat);
+  g_signal_connect (row, "unmap", G_CALLBACK (on_row_unmap), NULL);
+  gtk_widget_set_tooltip_text (row, _ ("Right-click for conversation menu"));
+  GtkGesture *secondary = gtk_gesture_click_new ();
+  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (secondary),
+                                 GDK_BUTTON_SECONDARY);
+  g_signal_connect (secondary, "pressed", G_CALLBACK (on_row_menu), row);
+  gtk_widget_add_controller (row, GTK_EVENT_CONTROLLER (secondary));
+  return row;
+}
+
+static void
+rebuild_sidebar (void)
+{
+  app->syncing = TRUE;
+  g_autofree gchar *query = g_strstrip (
+      g_strdup (gtk_editable_get_text (GTK_EDITABLE (app->search))));
+  g_autofree gchar *pattern = g_regex_escape_string (query, -1);
+  g_autoptr (GRegex) regex =
+      *query
+          ? g_regex_new (pattern, G_REGEX_CASELESS | G_REGEX_OPTIMIZE, 0, NULL)
+          : NULL;
+  GtkWidget *child = gtk_widget_get_first_child (app->sidebar_list);
+  while (child != NULL)
+    {
+      GtkWidget *next = gtk_widget_get_next_sibling (child);
+      if (GTK_IS_LIST_BOX_ROW (child))
+        {
+          GtkPopover *popover = g_object_get_data (G_OBJECT (child),
+                                                   "context-menu");
+          if (popover != NULL)
+            close_row_menu (popover, NULL);
+          gtk_list_box_remove (GTK_LIST_BOX (app->sidebar_list), child);
+        }
+      child = next;
+    }
+
+  /* Put pinned sessions first, then sort each group by creation time. */
+  g_autoptr (GArray) sorted = g_array_new (FALSE, FALSE, sizeof (Chat *));
+  for (guint i = 0; i < app->chats->len; i++)
+    {
+      Chat *chat = g_ptr_array_index (app->chats, i);
+      g_array_append_val (sorted, chat);
+    }
+  g_array_sort (sorted, cmp_chat_desc);
+
+  const gchar *group = NULL;
+  GtkListBoxRow *current_row = NULL;
+  for (guint i = 0; i < sorted->len; i++)
+    {
+      Chat *chat = g_array_index (sorted, Chat *, i);
+      g_autofree gchar *preview =
+          regex != NULL ? search_preview (chat, regex) : NULL;
+      if (regex != NULL && preview == NULL)
+        continue;
+
+      const gchar *label_text = chat->pinned ? _ ("Pinned")
+                                            : chat_group_label (chat->created);
+      if (group == NULL || !g_str_equal (group, label_text))
+        {
+          sidebar_add_group (label_text);
+          group = label_text;
+        }
+
+      GtkWidget *row = sidebar_chat_row (chat, preview);
+      gtk_list_box_append (GTK_LIST_BOX (app->sidebar_list), row);
+      if (chat == app->chat)
+        current_row = GTK_LIST_BOX_ROW (row);
+    }
+  if (current_row != NULL)
+    gtk_list_box_select_row (GTK_LIST_BOX (app->sidebar_list), current_row);
+  app->syncing = FALSE;
+}
+
 static void
 on_row_selected (GtkListBox    *list G_GNUC_UNUSED,
                  GtkListBoxRow *row,
@@ -1806,23 +2081,6 @@ on_row_selected (GtkListBox    *list G_GNUC_UNUSED,
     }
 }
 
-static const Choice *
-find_choice (const Choice *table,
-             guint         n,
-             const gchar  *value)
-{
-  for (guint i = 0; i < n; i++)
-    if (g_strcmp0 (table[i].value, value) == 0)
-      return &table[i];
-  return NULL;
-}
-
-static gboolean
-web_tools_supported (void)
-{
-  return g_str_equal (app->model, "deepseek-flash");
-}
-
 static void
 on_web_toggled (GtkToggleButton *button,
                 gpointer         data G_GNUC_UNUSED)
@@ -1841,26 +2099,31 @@ on_web_toggled (GtkToggleButton *button,
     }
 }
 
+static void refresh_choices (void);
+
 static void
-on_model_choice (GtkButton *button G_GNUC_UNUSED,
-                 gpointer   value)
+select_choice (gchar       **target,
+               const gchar  *value)
 {
-  g_free (app->model);
-  app->model = g_strdup (value);
+  g_free (*target);
+  *target = g_strdup (value);
   gtk_popover_popdown (GTK_POPOVER (app->choice_popover));
   refresh_choices ();
   save_session ();
 }
 
 static void
+on_model_choice (GtkButton *button G_GNUC_UNUSED,
+                 gpointer   value)
+{
+  select_choice (&app->model, value);
+}
+
+static void
 on_effort_choice (GtkButton *button G_GNUC_UNUSED,
                   gpointer   value)
 {
-  g_free (app->effort);
-  app->effort = g_strdup (value);
-  gtk_popover_popdown (GTK_POPOVER (app->choice_popover));
-  refresh_choices ();
-  save_session ();
+  select_choice (&app->effort, value);
 }
 
 static GtkWidget *
@@ -2000,75 +2263,6 @@ prompt_api_key (void)
 /* ---------- streaming ---------- */
 
 static void
-on_thought_toggle (GtkButton *button,
-                   gpointer   content)
-{
-  gboolean open = !gtk_widget_get_visible (GTK_WIDGET (content));
-  gtk_widget_set_visible (GTK_WIDGET (content), open);
-  GtkWidget *chevron = g_object_get_data (G_OBJECT (button), "chevron");
-  if (chevron != NULL)
-    gtk_image_set_from_icon_name (
-        GTK_IMAGE (chevron), open ? "pan-down-symbolic" : "pan-end-symbolic");
-  gtk_widget_queue_resize (GTK_WIDGET (content));
-}
-
-static void
-set_thought_expanded (GtkWidget *root,
-                      gboolean   expanded)
-{
-  GtkWidget *toggle = gtk_widget_get_first_child (root);
-  GtkWidget *content = gtk_widget_get_last_child (root);
-
-  if (gtk_widget_get_visible (content) != expanded)
-    on_thought_toggle (GTK_BUTTON (toggle), content);
-}
-
-static gchar *
-thought_title (gdouble seconds)
-{
-  if (seconds <= 0)
-    return g_strdup (_ ("Thought"));
-  return seconds >= 10 ? g_strdup_printf (_ ("Thought (%.0f s)"), seconds)
-                       : g_strdup_printf (_ ("Thought (%.1f s)"), seconds);
-}
-
-static GtkWidget *
-thought_widget (const gchar *reasoning,
-                gdouble      seconds,
-                GtkWidget  **view_out,
-                GtkWidget  **title_out)
-{
-  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
-      "/cc/arthur63/gchat/thought.ui");
-  GtkWidget *root = GTK_WIDGET (gtk_builder_get_object (builder, "thought"));
-  GtkWidget *toggle = GTK_WIDGET (gtk_builder_get_object (builder, "toggle"));
-  GtkWidget *content = GTK_WIDGET (gtk_builder_get_object (builder, "content"));
-  GtkWidget *view = GTK_WIDGET (gtk_builder_get_object (builder, "text"));
-  GtkWidget *title_label =
-      GTK_WIDGET (gtk_builder_get_object (builder, "title"));
-  GtkWidget *chevron = GTK_WIDGET (gtk_builder_get_object (builder, "chevron"));
-
-  g_autofree gchar *title = thought_title (seconds);
-  gtk_label_set_text (GTK_LABEL (title_label), title);
-
-  /* GtkTextView avoids gaps in selection at fractional line heights. */
-  gtk_text_buffer_set_text (
-      gtk_text_view_get_buffer (GTK_TEXT_VIEW (view)), reasoning, -1);
-  g_object_set_data (G_OBJECT (toggle), "chevron", chevron);
-  g_signal_connect (toggle, "clicked", G_CALLBACK (on_thought_toggle), content);
-
-  if (view_out != NULL)
-    *view_out = view;
-  if (title_out != NULL)
-    *title_out = title_label;
-
-  g_object_ref (root);
-  g_clear_object (&builder);
-  g_object_force_floating (G_OBJECT (root));
-  return root;
-}
-
-static void
 set_thought_label (gdouble seconds)
 {
   if (app->reason_title == NULL)
@@ -2163,6 +2357,25 @@ record_reply (void)
                                                           : elapsed_seconds ());
     }
   return TRUE;
+}
+
+static gboolean
+save_session (void)
+{
+  if (app->draft_save_source)
+    g_source_remove (app->draft_save_source);
+  app->draft_save_source = 0;
+  if (app->busy && app->reply_msg != NULL)
+    record_reply ();
+  g_autoptr (GError) error = NULL;
+  gboolean ok = store_save (app->db, app->chats, app->deleted_chat_ids,
+                            app->chat->id, app->model, app->effort, &error);
+  if (!ok)
+    {
+      g_warning ("cannot save conversations: %s", error->message);
+      app_toast (_ ("Failed to save conversation"));
+    }
+  return ok;
 }
 
 static void
@@ -2757,6 +2970,61 @@ input_message (void)
   return NULL;
 }
 
+/* Start a request from the last user message in the session and add a
+   placeholder bubble for the reply. */
+/* Consume the request body; the request owns it until the stream ends. */
+static void
+start_request (gchar   *body,
+               gsize    len,
+               gboolean request_title)
+{
+  if (app->busy)
+    {
+      g_free (body);
+      return;
+    }
+
+  g_autoptr (JsonObject) assistant_msg = json_object_new ();
+  json_object_set_string_member (assistant_msg, "role", "assistant");
+  json_object_set_string_member (assistant_msg, "content", "");
+  JsonObject *reply_msg = assistant_msg;
+  json_array_add_object_element (app->chat->messages,
+                                 g_steal_pointer (&assistant_msg));
+  app->chat->dirty = TRUE;
+  guint turns = json_array_get_length (app->chat->messages) - 1;
+
+  clear_messages ();
+  render_history (turns);
+  gtk_stack_set_visible_child_name (GTK_STACK (app->stack), "chat");
+
+  app->reply_bubble = bubble_new ("assistant");
+  app->reply_body = g_object_get_data (G_OBJECT (app->reply_bubble), "body");
+  app->reply_msg = reply_msg;
+  app->reply_label = gtk_label_new ("…");
+  gtk_label_set_wrap (GTK_LABEL (app->reply_label), TRUE);
+  gtk_label_set_wrap_mode (GTK_LABEL (app->reply_label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_xalign (GTK_LABEL (app->reply_label), 0);
+  gtk_label_set_selectable (GTK_LABEL (app->reply_label), TRUE);
+  gtk_widget_add_css_class (app->reply_label, "msg-text");
+  gtk_box_append (GTK_BOX (app->reply_body), app->reply_label);
+
+  app->cancel = g_cancellable_new ();
+  app->request_title = request_title;
+  app->request_started = g_get_monotonic_time ();
+  app->thought_seconds = 0;
+  set_busy (TRUE);
+  scroll_bottom ();
+
+  g_autoptr (SoupMessage) request =
+      soup_message_new (SOUP_METHOD_POST, API_URL);
+  g_autofree gchar *auth = g_strdup_printf ("Bearer %s", app->api_key);
+  soup_message_headers_append (soup_message_get_request_headers (request),
+                               "Authorization", auth);
+  g_autoptr (GBytes) bytes = g_bytes_new_take (body, len);
+  soup_message_set_request_body_from_bytes (request, "application/json", bytes);
+  send_request (g_steal_pointer (&request));
+}
+
 static void
 send_message (void)
 {
@@ -2858,61 +3126,6 @@ regenerate (void)
   while (json_array_get_length (app->chat->messages) > keep)
     json_array_remove_element (app->chat->messages, keep);
   start_request (g_steal_pointer (&body), len, FALSE);
-}
-
-/* Start a request from the last user message in the session and add a
-   placeholder bubble for the reply. */
-/* Consume the request body; the request owns it until the stream ends. */
-static void
-start_request (gchar   *body,
-               gsize    len,
-               gboolean request_title)
-{
-  if (app->busy)
-    {
-      g_free (body);
-      return;
-    }
-
-  g_autoptr (JsonObject) assistant_msg = json_object_new ();
-  json_object_set_string_member (assistant_msg, "role", "assistant");
-  json_object_set_string_member (assistant_msg, "content", "");
-  JsonObject *reply_msg = assistant_msg;
-  json_array_add_object_element (app->chat->messages,
-                                 g_steal_pointer (&assistant_msg));
-  app->chat->dirty = TRUE;
-  guint turns = json_array_get_length (app->chat->messages) - 1;
-
-  clear_messages ();
-  render_history (turns);
-  gtk_stack_set_visible_child_name (GTK_STACK (app->stack), "chat");
-
-  app->reply_bubble = bubble_new ("assistant");
-  app->reply_body = g_object_get_data (G_OBJECT (app->reply_bubble), "body");
-  app->reply_msg = reply_msg;
-  app->reply_label = gtk_label_new ("…");
-  gtk_label_set_wrap (GTK_LABEL (app->reply_label), TRUE);
-  gtk_label_set_wrap_mode (GTK_LABEL (app->reply_label), PANGO_WRAP_WORD_CHAR);
-  gtk_label_set_xalign (GTK_LABEL (app->reply_label), 0);
-  gtk_label_set_selectable (GTK_LABEL (app->reply_label), TRUE);
-  gtk_widget_add_css_class (app->reply_label, "msg-text");
-  gtk_box_append (GTK_BOX (app->reply_body), app->reply_label);
-
-  app->cancel = g_cancellable_new ();
-  app->request_title = request_title;
-  app->request_started = g_get_monotonic_time ();
-  app->thought_seconds = 0;
-  set_busy (TRUE);
-  scroll_bottom ();
-
-  g_autoptr (SoupMessage) request =
-      soup_message_new (SOUP_METHOD_POST, API_URL);
-  g_autofree gchar *auth = g_strdup_printf ("Bearer %s", app->api_key);
-  soup_message_headers_append (soup_message_get_request_headers (request),
-                               "Authorization", auth);
-  g_autoptr (GBytes) bytes = g_bytes_new_take (body, len);
-  soup_message_set_request_body_from_bytes (request, "application/json", bytes);
-  send_request (g_steal_pointer (&request));
 }
 
 /* ---------- input ---------- */
@@ -3045,47 +3258,6 @@ on_input_key (GtkEventControllerKey *controller,
   return GDK_EVENT_PROPAGATE;
 }
 
-/* The card grows with its content and scrolls internally at the limit. */
-static void
-fit_input_height (void)
-{
-  if (gtk_text_buffer_get_char_count (
-          gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input))) == 0)
-    {
-      gtk_widget_set_size_request (app->input_frame, -1, INPUT_MIN_HEIGHT);
-      return;
-    }
-
-  /* The text area has 14px margins on both sides; measure the real usable
-     width, or the line count is underestimated. */
-  int width = gtk_widget_get_width (app->input_frame) - 28;
-  if (width <= 0)
-    return;
-
-  int min = 0, natural = 0;
-  gtk_widget_measure (app->input, GTK_ORIENTATION_VERTICAL, width, &min,
-                      &natural, NULL, NULL);
-  /* The result of gtk_widget_measure already includes the margins of the text
-     view (14px top, 42px bottom), so add only 4px for rounding, not the margins
-     again. */
-  gtk_widget_set_size_request (
-      app->input_frame, -1,
-      CLAMP (natural + 4, INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT));
-}
-
-static void
-update_send_state (void)
-{
-  gboolean has_text = gtk_text_buffer_get_char_count (gtk_text_view_get_buffer (
-                          GTK_TEXT_VIEW (app->input))) > 0;
-  gboolean has_images = app->chat != NULL && *current_images () != NULL;
-  gtk_widget_set_sensitive (app->send, app->busy || has_text || has_images);
-  /* The buffer is empty during composition, and the placeholder would
-     collapse with the preedit text. */
-  if (app->placeholder != NULL)
-    gtk_widget_set_visible (app->placeholder, !has_text && !app->preedit);
-}
-
 static void
 on_input_preedit (GtkTextView *view G_GNUC_UNUSED,
                   const gchar *preedit,
@@ -3095,103 +3267,6 @@ on_input_preedit (GtkTextView *view G_GNUC_UNUSED,
   if (app->preedit)
     app->append_kill = FALSE;
   update_send_state ();
-}
-
-/* After a multi-line paste, the text view layout updates only on the next
-   frame. Measuring at once returns the old height, so measure from an idle
-   callback. */
-static guint fit_source;
-
-/* With the EXTERNAL policy, GtkScrolledWindow sometimes does not update
-   page-size: the computed max is larger than the real one, so the view scrolls
-   past the end (blank space below, or a list that does not scroll further).
-   After a geometry change, correct it over several frames and pull the
-   page-size of both scrolled areas back to the real visible height. */
-static guint sync_frames_left, sync_tick;
-
-static void
-clamp_adjustment (GtkAdjustment *adj)
-{
-  gdouble max =
-      gtk_adjustment_get_upper (adj) - gtk_adjustment_get_page_size (adj);
-  if (max > 0 && gtk_adjustment_get_value (adj) > max)
-    gtk_adjustment_set_value (adj, max);
-}
-
-static void
-sync_one_scroller (GtkScrolledWindow *scroller,
-                   int                viewport)
-{
-  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroller);
-  if (viewport <= 0 ||
-      ABS (gtk_adjustment_get_page_size (adj) - viewport) < 0.5)
-    {
-      return;
-    }
-  gtk_adjustment_set_page_size (adj, viewport);
-  clamp_adjustment (adj);
-}
-
-/* Correct page-size and invalidate the whole message area subtree once: a
-   taller input box changes the message area height, but the measure caches of
-   the text views inside do not invalidate by themselves. The last message then
-   stays measured at its old size, which shows as missing content and a bottom
-   that cannot be reached, until the next input triggers a new layout. */
-static void
-sync_geometry_now (void)
-{
-  if (app->input_frame == NULL || app->scroller == NULL)
-    return;
-
-  input_stick.setting = TRUE;
-  sync_one_scroller (GTK_SCROLLED_WINDOW (app->input_frame),
-                     gtk_widget_get_height (app->input));
-  sync_one_scroller (GTK_SCROLLED_WINDOW (app->scroller),
-                     gtk_widget_get_height (app->scroller));
-  input_stick.setting = FALSE;
-
-  for (GtkWidget *msg = gtk_widget_get_first_child (app->messages); msg != NULL;
-       msg = gtk_widget_get_next_sibling (msg))
-    gtk_widget_queue_resize (msg);
-  gtk_widget_queue_resize (GTK_WIDGET (app->messages));
-  gtk_widget_queue_draw (app->scroller);
-}
-
-static gboolean
-geometry_sync_tick (GtkWidget     *widget G_GNUC_UNUSED,
-                    GdkFrameClock *clock G_GNUC_UNUSED,
-                    gpointer       data G_GNUC_UNUSED)
-{
-  sync_geometry_now ();
-
-  if (--sync_frames_left)
-    return G_SOURCE_CONTINUE;
-  sync_tick = 0;
-  return G_SOURCE_REMOVE;
-}
-
-static guint sync_retry_timer;
-
-static gboolean
-geometry_sync_retry_cb (gpointer data G_GNUC_UNUSED)
-{
-  sync_retry_timer = 0;
-  sync_geometry_now ();
-  return G_SOURCE_REMOVE;
-}
-
-static void
-schedule_geometry_sync (void)
-{
-  if (sync_retry_timer)
-    g_source_remove (sync_retry_timer);
-  sync_retry_timer = g_timeout_add (250, geometry_sync_retry_cb, NULL);
-
-  if (sync_frames_left)
-    return;
-  sync_frames_left = 3;
-  sync_tick =
-      gtk_widget_add_tick_callback (app->input, geometry_sync_tick, NULL, NULL);
 }
 
 static gboolean
@@ -3220,37 +3295,6 @@ static void
 on_input_value_changed (GtkAdjustment *adj G_GNUC_UNUSED)
 {
   stick_on_value_changed (&input_stick);
-}
-
-static guint fit_retry_timer;
-
-static gboolean
-fit_input_height_retry (gpointer data G_GNUC_UNUSED)
-{
-  fit_retry_timer = 0;
-  fit_input_height ();
-  return G_SOURCE_REMOVE;
-}
-
-static gboolean
-fit_input_height_idle (gpointer data G_GNUC_UNUSED)
-{
-  fit_source = 0;
-  fit_input_height ();
-  /* A paste inserts a whole block, so this frame may still measure the old
-     height; measure again after the layout settles. */
-  if (fit_retry_timer)
-    g_source_remove (fit_retry_timer);
-  fit_retry_timer = g_timeout_add (120, fit_input_height_retry, NULL);
-  return G_SOURCE_REMOVE;
-}
-
-static void
-refresh_input (void)
-{
-  update_send_state ();
-  if (!fit_source)
-    fit_source = g_idle_add (fit_input_height_idle, NULL);
 }
 
 static gboolean
@@ -3290,70 +3334,6 @@ on_frame_width (GObject    *frame G_GNUC_UNUSED,
 {
   fit_input_height ();
   schedule_geometry_sync ();
-}
-
-/* Return the address of the active draft's owned image array. */
-static JsonArray **
-current_images (void)
-{
-  return app->chat->edit_from == G_MAXUINT ? &app->chat->draft_images
-                                           : &app->chat->edit_images;
-}
-
-static void
-on_remove_image (GtkButton *button G_GNUC_UNUSED,
-                 gpointer   data)
-{
-  JsonArray **images = current_images ();
-  guint index = GPOINTER_TO_UINT (data);
-  if (*images == NULL || index >= json_array_get_length (*images))
-    return;
-  json_array_remove_element (*images, index);
-  if (json_array_get_length (*images) == 0)
-    g_clear_pointer (images, json_array_unref);
-  app->chat->dirty = TRUE;
-  refresh_images ();
-  save_session ();
-  gtk_widget_grab_focus (app->input);
-}
-
-static void
-refresh_images (void)
-{
-  if (app->image_bar == NULL)
-    return;
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child (app->image_preview)) != NULL)
-    gtk_box_remove (GTK_BOX (app->image_preview), child);
-  JsonArray *images = *current_images ();
-  gtk_widget_set_visible (app->image_bar, images != NULL);
-  if (images != NULL)
-    {
-      for (guint i = 0; i < json_array_get_length (images); i++)
-        {
-          const gchar *id = json_array_get_string_element (images, i);
-          GtkWidget *tile = gtk_overlay_new ();
-          gtk_widget_set_overflow (tile, GTK_OVERFLOW_HIDDEN);
-          gtk_widget_add_css_class (tile, "attachment-tile");
-          gtk_overlay_set_child (GTK_OVERLAY (tile), image_widget (id, TRUE));
-          GtkWidget *remove = gtk_button_new_from_icon_name (
-              "window-close-symbolic");
-          g_autofree gchar *label = g_strdup_printf (_ ("Remove image %u"),
-                                                     i + 1);
-          gtk_widget_set_tooltip_text (remove, label);
-          gtk_accessible_update_property (GTK_ACCESSIBLE (remove),
-                                          GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                          label, -1);
-          gtk_widget_set_halign (remove, GTK_ALIGN_END);
-          gtk_widget_set_valign (remove, GTK_ALIGN_START);
-          gtk_widget_add_css_class (remove, "attachment-remove");
-          gtk_overlay_add_overlay (GTK_OVERLAY (tile), remove);
-          g_signal_connect (remove, "clicked", G_CALLBACK (on_remove_image),
-                            GUINT_TO_POINTER (i));
-          gtk_box_append (GTK_BOX (app->image_preview), tile);
-        }
-    }
-  update_send_state ();
 }
 
 typedef struct
@@ -4086,6 +4066,30 @@ on_language_selected (GObject    *combo,
     }
 }
 
+static void
+setup_combo_preference (GtkBuilder   *builder,
+                        const gchar  *key,
+                        const Choice *choices,
+                        guint         count,
+                        GCallback     callback)
+{
+  AdwComboRow *row = ADW_COMBO_ROW (gtk_builder_get_object (builder, key));
+  g_autoptr (GtkStringList) model = gtk_string_list_new (NULL);
+  g_autofree gchar *saved = config_get (key);
+  guint selected = 0;
+  for (guint i = 0; i < count; i++)
+    {
+      gtk_string_list_append (model, _ (choices[i].label));
+      if (g_strcmp0 (saved, choices[i].value) == 0)
+        selected = i;
+    }
+  adw_combo_row_set_model (row, G_LIST_MODEL (model));
+  adw_combo_row_set_selected (row, selected);
+  g_object_set_data (G_OBJECT (row), "saved-choice",
+                     GUINT_TO_POINTER (selected));
+  g_signal_connect (row, "notify::selected", callback, NULL);
+}
+
 static gboolean
 load_enabled_preference (const gchar *key)
 {
@@ -4364,10 +4368,6 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
       gtk_builder_get_object (builder, "key_row"));
   AdwActionRow *key_source = ADW_ACTION_ROW (
       gtk_builder_get_object (builder, "key_source"));
-  AdwComboRow *theme = ADW_COMBO_ROW (
-      gtk_builder_get_object (builder, "theme"));
-  AdwComboRow *language = ADW_COMBO_ROW (
-      gtk_builder_get_object (builder, "language"));
   AdwActionRow *version = ADW_ACTION_ROW (
       gtk_builder_get_object (builder, "version"));
   AdwActionRow *session = ADW_ACTION_ROW (
@@ -4386,36 +4386,11 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
           : g_strdup_printf (_ ("Local configuration file: %s"), config_file);
   adw_action_row_set_subtitle (key_source, source);
 
-  g_autoptr (GtkStringList) theme_model = gtk_string_list_new (NULL);
-  for (guint i = 0; i < G_N_ELEMENTS (THEMES); i++)
-    gtk_string_list_append (theme_model, _ (THEMES[i].label));
-  adw_combo_row_set_model (theme, G_LIST_MODEL (theme_model));
-  g_autofree gchar *saved_theme = config_get ("theme");
-  guint theme_index = 0;
-  for (guint i = 0; i < G_N_ELEMENTS (THEMES); i++)
-    if (g_strcmp0 (saved_theme, THEMES[i].value) == 0)
-      theme_index = i;
-  adw_combo_row_set_selected (theme, theme_index);
-  g_object_set_data (G_OBJECT (theme), "saved-choice",
-                     GUINT_TO_POINTER (theme_index));
-  g_signal_connect (theme, "notify::selected", G_CALLBACK (on_theme_selected),
-                    NULL);
-
-  g_autoptr (GtkStringList) language_model = gtk_string_list_new (NULL);
-  for (guint i = 0; i < G_N_ELEMENTS (LANGUAGES); i++)
-    gtk_string_list_append (language_model, i == 0 ? _ (LANGUAGES[i].label)
-                                                   : LANGUAGES[i].label);
-  adw_combo_row_set_model (language, G_LIST_MODEL (language_model));
-  g_autofree gchar *saved_language = config_get ("language");
-  guint language_index = 0;
-  for (guint i = 0; i < G_N_ELEMENTS (LANGUAGES); i++)
-    if (g_strcmp0 (saved_language, LANGUAGES[i].value) == 0)
-      language_index = i;
-  adw_combo_row_set_selected (language, language_index);
-  g_object_set_data (G_OBJECT (language), "saved-choice",
-                     GUINT_TO_POINTER (language_index));
-  g_signal_connect (language, "notify::selected",
-                    G_CALLBACK (on_language_selected), NULL);
+  setup_combo_preference (builder, "theme", THEMES, G_N_ELEMENTS (THEMES),
+                          G_CALLBACK (on_theme_selected));
+  setup_combo_preference (builder, "language", LANGUAGES,
+                          G_N_ELEMENTS (LANGUAGES),
+                          G_CALLBACK (on_language_selected));
 
   setup_switch_preference (builder, "auto_title", &app->auto_title);
   setup_switch_preference (builder, "confirm_delete_chat",
@@ -4547,11 +4522,7 @@ build_sidebar (void)
   g_signal_connect (app->sidebar_list, "row-selected",
                     G_CALLBACK (on_row_selected), NULL);
 
-  /* Return a floating widget, as the other build functions do. */
-  g_object_ref (view);
-  g_clear_object (&builder);
-  g_object_force_floating (G_OBJECT (view));
-  return view;
+  return floating_builder_widget (g_steal_pointer (&builder), view);
 }
 
 static GtkWidget *
@@ -4657,11 +4628,7 @@ build_content (void)
   g_signal_connect (app->send, "clicked", G_CALLBACK (on_send_clicked), NULL);
   refresh_choices ();
 
-  /* Return a floating widget, as the other build functions do. */
-  g_object_ref (view);
-  g_clear_object (&builder);
-  g_object_force_floating (G_OBJECT (view));
-  return view;
+  return floating_builder_widget (g_steal_pointer (&builder), view);
 }
 
 static void

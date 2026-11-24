@@ -23,21 +23,21 @@ typedef struct
                            fields. */
 } Chat;
 
-Chat *     chat_new           (const gchar *id,
-                               const gchar *title);
-Chat *     chat_new_empty     (void);
-void       chat_free          (Chat *chat);
+Chat      *chat_new             (const gchar *id,
+                                 const gchar *title);
+Chat      *chat_new_empty       (void);
+void       chat_free            (Chat        *chat);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (Chat, chat_free)
 
 /* Return the borrowed array for a validated attachment field, or NULL. */
-JsonArray *image_array_member (JsonObject  *object,
-                               const gchar *name);
+JsonArray *image_array_member   (JsonObject  *object,
+                                 const gchar *name);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (sqlite3, sqlite3_close)
 
 /* Return an owned connection. Hold the process lock until it is closed. */
-sqlite3 *  store_open           (const gchar *path,
+sqlite3   *store_open           (const gchar *path,
                                  GError     **error);
 
 /* Return an owned array and owned output strings. An empty store has no
@@ -58,9 +58,9 @@ gboolean   store_save           (sqlite3     *db,
                                  GError     **error);
 
 /* Return newly allocated paths; the caller frees them. */
-gchar *    store_session_path   (void);
-gchar *    store_config_path    (void);
-gchar *    store_image_dir      (const gchar *path);
+gchar     *store_session_path   (void);
+gchar     *store_config_path    (void);
+gchar     *store_image_dir      (const gchar *path);
 
 /* Remove unreferenced images after a complete, successful load. */
 void       store_cleanup_images (const gchar *path,
@@ -68,13 +68,13 @@ void       store_cleanup_images (const gchar *path,
 
 /* Return the locked fd, or -1 on failure. Close it before the process exits;
    do not delete the .lock file. */
-gint       store_lock         (const gchar *path,
-                               GError     **error);
+gint       store_lock           (const gchar *path,
+                                 GError     **error);
 
 /* Return an owned string, or NULL when the value is missing or empty. */
-gchar *    config_get         (const gchar *name);
+gchar     *config_get           (const gchar *name);
 
 /* Merge string key/value pairs into config.json atomically without a backup;
    refuse to overwrite an invalid configuration. */
-gboolean   config_set         (const gchar *name,
-                               const gchar *value);
+gboolean   config_set           (const gchar *name,
+                                 const gchar *value);
