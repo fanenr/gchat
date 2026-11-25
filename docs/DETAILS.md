@@ -24,10 +24,22 @@ This document describes the codebase structure, core runtime mechanisms, packagi
 ### Requests and streaming
 
 - **SSE pipeline**: `main.c` streams responses asynchronously over `libsoup3`, joining multi-line `data:` fields and dispatching events on blank lines. Incoming text and reasoning deltas are coalesced and flushed to the UI at most once per GTK frame clock tick.
-- **History payload**: Sending a message transmits the conversation's user and assistant messages (plus any attached images) to DeepSeek. Local drafts and saved reasoning blocks (`reasoning_content`) are not sent back as message content.
+- **History payload**: Requests send the effective system prompt, any context summary, and the remaining user and assistant messages (including attached images) in order. Without a summary, requests send the full history up to the turn being sent. The client excludes unsent drafts and saved reasoning blocks (`reasoning_content`).
 - **User metadata**: The optional, default-off setting adds a `latest_reminder` before each newly sent user message with the local date and weekday, `App`, and the active interface language. Location is empty. The marker is stored with the message and replayed unchanged when the setting is enabled; disabling it suppresses all markers. Older messages without markers are not backfilled, including when regenerated.
 - **Web search and link reading**: Available on `deepseek-flash`. When enabled, DeepSeek can invoke server-side search and page-reading tools. The client displays tool progress during streaming, renders deduplicated HTTP/HTTPS source citations below the reply, and replays `server_tool_calls` in subsequent Flash turns so previously read user links remain in context.
 - **Automatic titles**: On the first turn of an untitled `deepseek-flash` session, the client sets a provisional title from the first line of user text and replaces it if the stream finishes with a server-generated title.
+
+### Context management
+
+- A conversation inherits the global system prompt unless it overrides or explicitly omits it. A nonempty effective prompt is sent as the first `system` message, including on regeneration.
+- Manual and automatic compression keep the configured number of recent user turns as they are (default 2). A pending new message in automatic compression does not count toward that number and is always sent as written. Changing the setting leaves existing summaries unchanged.
+- A separate non-streaming Flash request with thinking and web tools disabled summarizes the older messages, attached images and any prior summary. It does not use the conversation's system prompt, saved reasoning or web tool records.
+- The client stores the summary and the number of original messages it covers. Future requests replay that summary as historical context, not as a system prompt. The transcript and attachments remain intact. A fork inherits the summary only if it includes all covered messages.
+- The collapsed marker records where compression happened, independently of how much history the summary covers. A manual compression appends it and scrolls to the bottom. An automatic compression places it before the pending new message. Expand the marker to read the summary.
+- All messages before the marker are read-only, even when the summary does not cover them. The client hides their edit, delete, and regenerate actions and blocks retrying a turn before the marker. Copy and fork remain available.
+- Automatic compression is off by default. Before sending, it compares an input token estimate with the configured threshold. Streaming chat requests ask for usage via `stream_options.include_usage`. If DeepSeek returns `usage.prompt_tokens`, the client uses that session's latest measurement for the same model to calibrate the estimate in memory. The threshold is not an API context limit.
+- The context ring and its popover estimate the next request, including the effective system prompt, summary, active history and the current draft and images. In edit mode they use only the history before the edited message. Images are estimated at 1,024 tokens each. The ring uses the configured compression threshold even when automatic compression is off; its arc stops at 100% while the displayed percentage can exceed it. Orange starts at 80%, red at 100%. Calibration is unavailable in edit mode and after a model change until that model returns usage.
+- If compression fails or is cancelled, the previous summary, transcript and unsent draft remain unchanged. The client makes at most one compression attempt per send. The resulting chat request is still subject to request-size and model limits.
 
 ### Markdown and media
 

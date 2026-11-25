@@ -140,6 +140,14 @@ Adw.ToolbarView content {
         margin-start: 16;
         margin-end: 16;
 
+        Gtk.Label context_status {
+          label: _("Compressing context…");
+          xalign: 0;
+          margin-bottom: 4;
+          visible: false;
+          styles [ "dim-label" ]
+        }
+
         Gtk.Box edit_bar {
           orientation: horizontal;
           spacing: 8;
@@ -227,6 +235,85 @@ Adw.ToolbarView content {
               margin-end: 8;
               margin-bottom: 8;
 
+              Gtk.MenuButton context_menu {
+                tooltip-text: _("Conversation context");
+                direction: up;
+                has-frame: false;
+                valign: center;
+
+                styles [ "circular" ]
+
+                accessibility {
+                  label: _("Conversation context");
+                }
+
+                child: Gtk.DrawingArea context_ring {
+                  width-request: 16;
+                  height-request: 16;
+                  styles [ "context-ring" ]
+                };
+
+                popover: Gtk.Popover context_popover {
+                  child: Gtk.Box {
+                    orientation: vertical;
+                    spacing: 8;
+                    width-request: 260;
+                    margin-top: 6;
+                    margin-bottom: 6;
+                    margin-start: 6;
+                    margin-end: 6;
+
+                    Gtk.Box {
+                      spacing: 12;
+                      Gtk.Label {
+                        label: _("Context usage");
+                        xalign: 0;
+                        hexpand: true;
+                        styles [ "heading" ]
+                      }
+                      Gtk.Label context_percent {}
+                    }
+
+                    Gtk.ProgressBar context_progress {
+                      margin-bottom: 10;
+                    }
+
+                    Gtk.Label context_prompt_info {
+                      xalign: 0;
+                      wrap: true;
+                    }
+                    Gtk.Label context_summary_info {
+                      xalign: 0;
+                      wrap: true;
+                    }
+                    Gtk.Label context_messages_info {
+                      xalign: 0;
+                      wrap: true;
+                    }
+                    Gtk.Label context_auto_info {
+                      xalign: 0;
+                      wrap: true;
+                    }
+
+                    Gtk.Box {
+                      orientation: horizontal;
+                      homogeneous: true;
+                      spacing: 8;
+
+                      Gtk.Button system_prompt {
+                        label: _("System prompt");
+                        styles [ "flat" ]
+                      }
+
+                      Gtk.Button compress_context {
+                        label: _("Compress context");
+                        styles [ "flat" ]
+                      }
+                    }
+                  };
+                };
+              }
+
               Gtk.Button attach {
                 icon-name: "folder-pictures-symbolic";
                 tooltip-text: _("Attach images");
@@ -302,7 +389,7 @@ Adw.ToolbarView content {
         }
 
         Gtk.Label {
-          label: _("AI-generated content. Please verify important information.");
+          label: _("AI-generated content. Please verify important information");
           halign: center;
           margin-top: 6;
 

@@ -73,7 +73,7 @@
   background: transparent;
 }
 .source-code { line-height: 1.25; }
-.thought-toggle {
+.disclosure-toggle {
   background: none;
   box-shadow: none;
   border: none;
@@ -81,14 +81,24 @@
   min-height: 0;
   min-width: 0;
 }
-.thought-toggle:hover label { color: @window_fg_color; }
+.disclosure-toggle:hover label { color: @window_fg_color; }
+.context-summary-marker {
+  background: alpha(@window_fg_color, .035);
+  border: 1px solid alpha(@window_fg_color, .09);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+.context-summary-text, .context-summary-text text { background: transparent; }
+.context-ring { color: @accent_color; }
+.context-ring.warning { color: @warning_color; }
+.context-ring.danger { color: @error_color; }
 .msg-text, .chat-input { background: transparent; }
 .msg-text { line-height: 1.5; }
 .chat-input {
   font-family: "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: 14px;
 }
-.thought-toggle label { font-size: 13px; }
+.disclosure-toggle label { font-size: 13px; }
 overshoot, overshoot.top, overshoot.bottom, overshoot.left, overshoot.right,
 undershoot, undershoot.top, undershoot.bottom, undershoot.left,
 undershoot.right {

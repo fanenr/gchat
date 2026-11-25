@@ -13,6 +13,17 @@
 static gboolean have_display;
 static gchar *test_dir;
 
+static gchar *
+request_body (guint        turns,
+              JsonObject  *extra,
+              gboolean     request_title,
+              gsize       *len,
+              GError     **error)
+{
+  return chat_request_body (context_prefix (app->chat, turns), turns, extra,
+                            request_title, len, error);
+}
+
 static void
 add_message (const gchar *role,
              const gchar *content)
@@ -42,6 +53,7 @@ setup (void)
   app->confirm_delete_chat = load_enabled_preference ("confirm_delete_chat");
   app->web_enabled = load_disabled_preference ("web_enabled");
   app->latest_reminder = load_disabled_preference ("latest_reminder");
+  app->context_keep_turns = CONTEXT_DEFAULT_KEEP_TURNS;
   app->chats = g_ptr_array_new_with_free_func ((GDestroyNotify) chat_free);
   app->chat = chat_new ("42", "测试");
   g_ptr_array_add (app->chats, app->chat);
@@ -56,6 +68,7 @@ teardown (void)
     {
     }
   cancel_ui_updates ();
+  app->closing = TRUE;
   if (app->window != NULL)
     {
       gtk_window_destroy (GTK_WINDOW (app->window));
@@ -72,7 +85,9 @@ teardown (void)
   g_free (app->model);
   g_free (app->effort);
   g_free (app->api_key);
+  g_free (app->default_system_prompt);
   g_free (app->kill_text);
+  g_queue_clear_full (&app->pending_toasts, g_object_unref);
   g_free (app);
   app = NULL;
   chat_stick = (Stick){ 0 };
@@ -139,19 +154,25 @@ sse_parser (void)
     "{\"choices\":[null]}",
   };
   for (guint i = 0; i < G_N_ELEMENTS (invalid); i++)
-    g_assert_null (sse_parse_choice (invalid[i]));
+    {
+      g_autoptr (JsonObject) response = parse_response (invalid[i], -1);
+      g_assert_null (first_choice (response));
+    }
 
-  g_autoptr (JsonObject) choice = sse_parse_choice (
+  g_autoptr (JsonObject) response = parse_response (
       "{\"choices\":\n[{\"delta\":{\"reasoning_content\":\"think\","
-      "\"content\":\"hi\"}}]}");
+      "\"content\":\"hi\"}}]}",
+      -1);
+  JsonObject *choice = first_choice (response);
   g_assert_nonnull (choice);
   JsonObject *delta = member_object (choice, "delta");
   g_assert_cmpstr (member_string (delta, "content"), ==, "hi");
   g_assert_cmpstr (member_string (delta, "reasoning_content"), ==, "think");
   g_assert_null (member_string (delta, "role"));
 
-  g_clear_pointer (&choice, json_object_unref);
-  choice = sse_parse_choice ("{\"choices\":[{\"delta\":42}]}");
+  g_clear_pointer (&response, json_object_unref);
+  response = parse_response ("{\"choices\":[{\"delta\":42}]}", -1);
+  choice = first_choice (response);
   g_assert_nonnull (choice);
   g_assert_null (member_object (choice, "delta"));
 }
@@ -600,6 +621,510 @@ payload_filters_reasoning (void)
 }
 
 static void
+context_payload (void)
+{
+  setup ();
+  add_message ("user", "question two");
+  add_message ("assistant", "answer two");
+  app->default_system_prompt = g_strdup ("Use plain English.\nBe concise.");
+  set_summary (app->chat, g_strdup ("Saved facts"), 2, 4);
+  g_autoptr (JsonObject) extra = new_user_message ("next question");
+  gsize len;
+  g_autofree gchar *body = request_body (4, extra, FALSE, &len, NULL);
+  g_assert_nonnull (body);
+  g_autoptr (JsonObject) root = parse_response (body, len);
+  JsonArray *messages = member_array (root, "messages");
+  g_assert_cmpuint (json_array_get_length (messages), ==, 5);
+  JsonObject *first = json_array_get_object_element (messages, 0);
+  g_assert_cmpstr (member_string (first, "role"), ==, "system");
+  g_assert_cmpstr (member_string (first, "content"), ==,
+                   app->default_system_prompt);
+  JsonObject *summary = json_array_get_object_element (messages, 1);
+  g_assert_cmpstr (member_string (summary, "role"), ==, "user");
+  g_assert_true (g_str_has_suffix (member_string (summary, "content"),
+                                   "Saved facts"));
+  g_assert_cmpstr (member_string (json_array_get_object_element (messages, 2),
+                                  "content"),
+                   ==, "question two");
+  g_assert_cmpstr (member_string (json_array_get_object_element (messages, 4),
+                                  "content"),
+                   ==, "next question");
+  g_assert_null (strstr (body, "question one"));
+  g_assert_true (json_object_get_boolean_member (
+      member_object (root, "stream_options"), "include_usage"));
+
+  app->chat->system_prompt = g_strdup ("Override");
+  g_clear_pointer (&body, g_free);
+  body = request_body (4, extra, FALSE, &len, NULL);
+  g_assert_nonnull (strstr (body, "Override"));
+  g_assert_null (strstr (body, "Use plain English."));
+
+  g_free (app->chat->system_prompt);
+  app->chat->system_prompt = g_strdup ("");
+  g_clear_pointer (&body, g_free);
+  body = request_body (1, extra, FALSE, &len, NULL);
+  g_assert_null (strstr (body, "\"system\""));
+  g_assert_null (strstr (body, "Saved facts"));
+  g_assert_nonnull (strstr (body, "question one"));
+
+  g_autoptr (Chat) fork = chat_new_empty ();
+  copy_messages (fork->messages, app->chat->messages, 1);
+  copy_context (fork, app->chat);
+  g_assert_null (fork->summary);
+  g_assert_cmpstr (fork->system_prompt, ==, "");
+
+  g_autoptr (Chat) covered_fork = chat_new_empty ();
+  copy_messages (covered_fork->messages, app->chat->messages, 2);
+  copy_context (covered_fork, app->chat);
+  g_assert_cmpstr (covered_fork->summary, ==, "Saved facts");
+  g_assert_cmpuint (covered_fork->summary_position, ==, 2);
+
+  app->chat->edit_from = 0;
+  g_assert_false (commit_message (extra));
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 4);
+  g_assert_cmpuint (app->chat->edit_from, ==, 0);
+  g_assert_nonnull (app->chat->summary);
+  teardown ();
+}
+
+static void
+compression_rules (void)
+{
+  setup ();
+  add_message ("user", "question two");
+  add_message ("assistant", "answer two");
+  add_message ("user", "question three");
+  add_message ("assistant", "answer three");
+  g_autoptr (JsonObject) extra = new_user_message ("next question");
+  ContextPrefix prefix = context_prefix (app->chat, 6);
+  gint64 estimate = estimate_prompt (prefix, 6, extra);
+  app->context_threshold = 2000;
+  g_assert_cmpuint (manual_compression_boundary (), ==, 2);
+  g_assert_cmpuint (automatic_compression_boundary (prefix, 6, 2000), ==, 0);
+  app->auto_compact = TRUE;
+  g_assert_cmpuint (automatic_compression_boundary (prefix, 6, estimate),
+                    ==, 0);
+  g_assert_cmpuint (automatic_compression_boundary (prefix, 6, 2000), ==, 2);
+
+  app->request_token_estimate = estimate - 5;
+  process_sse_event ("{\"choices\":[],\"usage\":{\"prompt_tokens\":1.5}}");
+  g_assert_cmpint (app->chat->prompt_tokens, ==, 0);
+  process_sse_event ("{\"choices\":[],\"usage\":{\"prompt_tokens\":1995}}");
+  g_assert_cmpint (app->chat->prompt_tokens, ==, 1995);
+  g_assert_cmpuint (automatic_compression_boundary (prefix, 6, estimate),
+                    ==, 2);
+  g_free (app->model);
+  app->model = g_strdup ("deepseek-v4-pro");
+  g_assert_cmpuint (automatic_compression_boundary (prefix, 6, estimate),
+                    ==, 0);
+  g_assert_cmpuint (compression_boundary (prefix, 4), ==, 0);
+
+  Compression compression = { .turns = 6, .until = 2 };
+  apply_compression (&compression, g_strdup ("Remember the first turn."));
+  g_assert_cmpuint (manual_compression_boundary (), ==, 0);
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 6);
+  g_assert_cmpuint (app->chat->summary_until, ==, 2);
+  g_assert_cmpstr (app->chat->summary, ==, "Remember the first turn.");
+  g_assert_null (app->chat->usage_model);
+  g_assert_false (app->chat->dirty);
+
+  add_message ("user", "question four");
+  g_assert_cmpuint (manual_compression_boundary (), ==, 4);
+  prefix = context_prefix (app->chat, 7);
+  gsize len;
+  g_autofree gchar *body = summary_request_body (prefix, 4, &len, NULL);
+  g_assert_nonnull (body);
+  g_assert_nonnull (strstr (body, "Remember the first turn."));
+  g_assert_nonnull (strstr (body, "question two"));
+  g_assert_null (strstr (body, "question one"));
+  g_assert_null (strstr (body, "question three"));
+
+  g_free (app->chat->draft);
+  app->chat->draft = g_strdup ("not sent");
+  g_autofree gchar *id = g_uuid_string_random ();
+  g_autoptr (JsonArray) images = json_array_new ();
+  json_array_add_string_element (images, id);
+  json_object_set_array_member (extra, "images", g_steal_pointer (&images));
+  Compression blocked = { .extra = extra, .turns = 7, .until = 4 };
+  apply_compression (&blocked, g_strdup ("Do not install this summary."));
+  g_assert_cmpstr (app->chat->summary, ==, "Remember the first turn.");
+  g_assert_cmpuint (app->chat->summary_until, ==, 2);
+  g_assert_cmpstr (app->chat->draft, ==, "not sent");
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 7);
+  teardown ();
+}
+
+static void
+compression_retention (void)
+{
+  setup ();
+  add_message ("user", "question two");
+  add_message ("assistant", "answer two");
+  add_message ("user", "question three");
+  add_message ("assistant", "answer three");
+  ContextPrefix prefix = context_prefix (app->chat, 6);
+  app->auto_compact = TRUE;
+  app->context_threshold = 1024;
+  static const struct
+  {
+    guint keep;
+    guint boundary;
+  } cases[] = { { 0, 6 }, { 1, 4 }, { 2, 2 }, { 3, 0 }, { 100, 0 } };
+  for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
+    {
+      app->context_keep_turns = cases[i].keep;
+      g_assert_cmpuint (manual_compression_boundary (), ==, cases[i].boundary);
+      g_assert_cmpuint (automatic_compression_boundary (prefix, 6, 1024),
+                        ==, cases[i].boundary);
+    }
+
+  set_summary (app->chat, g_strdup ("Existing summary"), 2, 6);
+  g_assert_cmpuint (manual_compression_boundary (), ==, 0);
+  g_assert_cmpuint (app->chat->summary_until, ==, 2);
+  app->context_keep_turns = 0;
+  g_assert_cmpuint (manual_compression_boundary (), ==, 6);
+  set_summary (app->chat, g_strdup ("All earlier history"), 6, 6);
+  g_assert_cmpuint (manual_compression_boundary (), ==, 0);
+  teardown ();
+}
+
+static void
+summary_response (void)
+{
+  static const gchar *invalid[] = {
+    "",
+    "<html>error</html>",
+    "{\"choices\":[]}",
+    "{\"choices\":[{\"finish_reason\":\"length\","
+    "\"message\":{\"content\":\"a\"}}]}",
+    "{\"choices\":[{\"finish_reason\":\"stop\","
+    "\"message\":{\"content\":\" \\n\"}}]}",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS (invalid); i++)
+    {
+      g_autoptr (GBytes) bytes = g_bytes_new_static (invalid[i],
+                                                     strlen (invalid[i]));
+      g_assert_null (parse_summary (bytes));
+    }
+  static const gchar valid[] =
+      "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{"
+      "\"content\":\" \\n摘要 \\t\"}}]}";
+  g_autoptr (GBytes) bytes = g_bytes_new_static (valid, sizeof valid - 1);
+  g_autofree gchar *parsed = parse_summary (bytes);
+  g_assert_cmpstr (parsed, ==, "摘要");
+}
+
+static void
+context_ui (void)
+{
+  if (!setup_ui ())
+    return;
+  GtkWidget *toolbar = gtk_widget_get_parent (app->context_menu);
+  g_assert_true (gtk_widget_get_parent (toolbar) ==
+                 gtk_widget_get_parent (app->input_frame));
+  g_assert_true (gtk_widget_get_first_child (toolbar) == app->context_menu);
+  g_assert_true (gtk_widget_get_next_sibling (app->context_menu) ==
+                 app->attach);
+
+  GtkMenuButton *menu = GTK_MENU_BUTTON (app->context_menu);
+  g_assert_cmpint (gtk_menu_button_get_direction (menu), ==, GTK_ARROW_UP);
+  g_assert_true (gtk_menu_button_get_child (menu) == app->context_ring);
+  g_assert_true (GTK_IS_DRAWING_AREA (app->context_ring));
+  g_autofree gchar *small = format_token_count (999);
+  g_autofree gchar *thousands = format_token_count (11000);
+  g_autofree gchar *rounded = format_token_count (6058);
+  g_assert_cmpstr (small, ==, "999");
+  g_assert_cmpstr (thousands, ==, "11K");
+  g_assert_cmpstr (rounded, ==, "6K");
+  GtkPopover *popover = gtk_menu_button_get_popover (menu);
+  GtkWidget *entries = gtk_popover_get_child (popover);
+  GtkWidget *prompt_button = gtk_widget_get_prev_sibling (app->compress_button);
+  g_assert_true (GTK_IS_BUTTON (prompt_button));
+  GtkWidget *actions = gtk_widget_get_parent (app->compress_button);
+  g_assert_true (gtk_widget_get_parent (actions) == entries);
+  g_assert_cmpint (gtk_orientable_get_orientation (GTK_ORIENTABLE (actions)),
+                   ==, GTK_ORIENTATION_HORIZONTAL);
+  g_assert_cmpstr (gtk_button_get_label (GTK_BUTTON (prompt_button)), ==,
+                   "System prompt");
+  g_assert_cmpstr (gtk_button_get_label (GTK_BUTTON (app->compress_button)),
+                   ==, "Compress context");
+  for (GtkWidget *child = gtk_widget_get_first_child (entries); child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    g_assert_false (GTK_IS_SEPARATOR (child));
+  g_assert_null (gtk_widget_get_next_sibling (app->compress_button));
+
+  on_context_popover_show (NULL, NULL);
+  g_assert_false (gtk_widget_get_sensitive (app->compress_button));
+  ContextUsage initial = context_usage ();
+  g_assert_cmpuint (initial.messages, ==, 2);
+  g_assert_cmpuint (initial.turns, ==, 1);
+  g_assert_cmpint (calibrated_prompt (initial.estimate), ==, initial.estimate);
+  GtkTextBuffer *input = gtk_text_view_get_buffer (GTK_TEXT_VIEW (app->input));
+  gtk_text_buffer_set_text (input, " \n  ", -1);
+  g_assert_cmpint (context_usage ().estimate, ==, initial.estimate);
+  gtk_text_buffer_set_text (input, "A longer draft in the input", -1);
+  ContextUsage draft = context_usage ();
+  g_assert_cmpint (draft.estimate, >, initial.estimate);
+  g_assert_cmpfloat (app->context_fraction, ==,
+                     (gdouble) draft.estimate / CONTEXT_DEFAULT_THRESHOLD);
+  app->chat->draft_images = json_array_new ();
+  json_array_add_string_element (app->chat->draft_images, "test-image");
+  refresh_context ();
+  ContextUsage with_image = context_usage ();
+  g_assert_cmpint (with_image.estimate, ==, draft.estimate + 1024);
+  g_assert_cmpfloat (app->context_fraction, ==,
+                     (gdouble) with_image.estimate /
+                         CONTEXT_DEFAULT_THRESHOLD);
+  g_clear_pointer (&app->chat->draft_images, json_array_unref);
+
+  app->chat->usage_model = g_strdup (app->model);
+  app->chat->prompt_tokens = 500;
+  app->chat->estimated_tokens = draft.estimate;
+  ContextUsage calibrated = context_usage ();
+  g_assert_cmpint (calibrated.estimate, ==, 500);
+  app->chat->edit_from = 1;
+  g_assert_cmpint (calibrated_prompt (100), ==, 100);
+  g_assert_cmpuint (context_usage ().messages, ==, 1);
+  app->chat->edit_from = G_MAXUINT;
+  g_free (app->model);
+  app->model = g_strdup ("deepseek-v4-pro");
+  g_assert_cmpint (calibrated_prompt (100), ==, 100);
+  g_free (app->model);
+  app->model = g_strdup ("deepseek-flash");
+  app->context_threshold = 625;
+  refresh_context ();
+  g_assert_true (gtk_widget_has_css_class (app->context_ring, "warning"));
+  app->context_threshold = 400;
+  refresh_context ();
+  g_assert_true (gtk_widget_has_css_class (app->context_ring, "danger"));
+  cairo_surface_t *surface = cairo_recording_surface_create (
+      CAIRO_CONTENT_COLOR_ALPHA, NULL);
+  cairo_t *cr = cairo_create (surface);
+  draw_context_ring (GTK_DRAWING_AREA (app->context_ring), cr, 40, 40, NULL);
+  gdouble x, y, width, height;
+  cairo_recording_surface_ink_extents (surface, &x, &y, &width, &height);
+  g_assert_cmpfloat (width, <=, 18);
+  g_assert_cmpfloat (height, <=, 18);
+  cairo_destroy (cr);
+  cairo_surface_destroy (surface);
+  g_assert_cmpfloat (gtk_progress_bar_get_fraction (
+                         GTK_PROGRESS_BAR (app->context_progress)),
+                     ==, 1);
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_percent)), ==,
+                   "500/400 (125%)");
+  app->chat->prompt_tokens = 11000;
+  app->context_threshold = 123000;
+  refresh_context ();
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_percent)), ==,
+                   "11K/123K (9%)");
+  set_summary (app->chat, g_strdup ("Earlier facts"), 2, 2);
+  refresh_context ();
+  ContextUsage summarized = context_usage ();
+  g_assert_cmpint (calibrated_prompt (100), ==, 100);
+  g_assert_cmpuint (summarized.summarized, ==, 2);
+  g_assert_cmpuint (summarized.messages, ==, 0);
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_summary_info)),
+                   ==, "Summary: 2 messages compressed");
+  app->auto_compact = TRUE;
+  refresh_context ();
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_auto_info)),
+                   ==, "Automatic compression: on · keep 2 turns");
+  g_assert_true (gtk_widget_get_last_child (entries) == actions);
+  on_prompt_clicked (NULL, NULL);
+  AdwAlertDialog *editor = ADW_ALERT_DIALOG (
+      adw_application_window_get_visible_dialog (
+          ADW_APPLICATION_WINDOW (app->window)));
+  g_assert_nonnull (editor);
+  g_assert_cmpstr (adw_alert_dialog_get_body (editor), ==,
+                   "Applies to future replies in this chat");
+  GtkDropDown *mode = g_object_get_data (G_OBJECT (editor), "prompt-mode");
+  GtkTextBuffer *buffer = g_object_get_data (G_OBJECT (editor),
+                                             "prompt-buffer");
+  g_assert_cmpuint (gtk_drop_down_get_selected (mode), ==, PROMPT_INHERIT);
+  gtk_drop_down_set_selected (mode, PROMPT_CUSTOM);
+  g_assert_false (adw_alert_dialog_get_response_enabled (editor, "save"));
+  gtk_text_buffer_set_text (buffer, "第一行\n第二行", -1);
+  g_assert_true (adw_alert_dialog_get_response_enabled (editor, "save"));
+  g_signal_emit_by_name (editor, "response::save", "save");
+  g_assert_cmpstr (app->chat->system_prompt, ==, "第一行\n第二行");
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_prompt_info)),
+                   ==, "System prompt: Custom prompt");
+  adw_dialog_close (ADW_DIALOG (editor));
+  on_prompt_clicked (NULL, GINT_TO_POINTER (TRUE));
+  editor = ADW_ALERT_DIALOG (adw_application_window_get_visible_dialog (
+      ADW_APPLICATION_WINDOW (app->window)));
+  g_assert_nonnull (editor);
+  g_assert_cmpstr (adw_alert_dialog_get_body (editor), ==,
+                   "Leave blank to omit the default prompt");
+  adw_dialog_close (ADW_DIALOG (editor));
+
+  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/settings.ui");
+  const gchar *rows[] = { "default_prompt_row", "auto_compact",
+                          "context_threshold", "context_keep_turns",
+                          "language" };
+  for (guint i = 0; i < G_N_ELEMENTS (rows); i++)
+    {
+      AdwActionRow *setting = ADW_ACTION_ROW (
+          gtk_builder_get_object (builder, rows[i]));
+      g_assert_cmpstr (adw_action_row_get_subtitle (setting), ==, "");
+    }
+  GtkButton *edit = GTK_BUTTON (
+      gtk_builder_get_object (builder, "default_system_prompt"));
+  g_assert_cmpstr (gtk_button_get_label (edit), ==, "Edit");
+  setup_uint_preference (builder, "context_keep_turns",
+                         &app->context_keep_turns);
+  AdwSpinRow *row = ADW_SPIN_ROW (
+      gtk_builder_get_object (builder, "context_keep_turns"));
+  g_assert_cmpfloat (adw_spin_row_get_value (row), ==, 2);
+  adw_spin_row_set_value (row, 0);
+  g_assert_cmpuint (app->context_keep_turns, ==, 0);
+  g_assert_cmpuint (load_context_keep_turns (), ==, 0);
+  g_assert_true (config_set ("context_keep_turns", NULL));
+  g_clear_object (&builder);
+  teardown ();
+}
+
+static guint
+visible_bubble_actions (GtkWidget *bubble)
+{
+  GtkWidget *actions = g_object_get_data (G_OBJECT (bubble), "actions");
+  guint count = 0;
+  for (GtkWidget *button = gtk_widget_get_first_child (actions);
+       button != NULL; button = gtk_widget_get_next_sibling (button))
+    {
+      if (gtk_widget_get_visible (button))
+        count++;
+    }
+  return count;
+}
+
+static void
+context_marker (void)
+{
+  if (!setup_ui ())
+    return;
+  add_message ("user", "question two");
+  add_message ("assistant", "answer two");
+  add_message ("user", "question three");
+  add_message ("assistant", "answer three");
+  render_chat ();
+
+  GtkWidget *first = gtk_widget_get_first_child (app->messages);
+  GtkWidget *before = gtk_widget_get_next_sibling (first);
+  GtkWidget *after = gtk_widget_get_next_sibling (before);
+  GtkWidget *last = last_message_bubble (app->messages);
+  g_assert_null (app->summary_marker);
+  g_assert_cmpuint (visible_bubble_actions (first), ==, 4);
+  g_assert_cmpuint (visible_bubble_actions (last), ==, 4);
+  Compression compression = { .turns = 6, .until = 2 };
+  gtk_widget_allocate (app->scroller, 600, 180, -1, NULL);
+  g_assert_cmpfloat (stick_bottom (&chat_stick), >, 0);
+  gtk_adjustment_set_value (chat_stick.adj, 0);
+  chat_stick.follow = FALSE;
+  apply_compression (&compression, g_strdup ("Saved facts.\nMore details."));
+
+  GtkWidget *marker = app->summary_marker;
+  g_assert_true (GTK_IS_BOX (marker));
+  g_assert_cmpuint (app->chat->summary_until, ==, 2);
+  g_assert_cmpuint (app->chat->summary_position, ==, 6);
+  g_assert_cmpuint (visible_bubble_actions (first), ==, 2);
+  g_assert_cmpuint (visible_bubble_actions (last), ==, 2);
+  g_assert_true (gtk_widget_get_next_sibling (before) == after);
+  g_assert_true (gtk_widget_get_next_sibling (last) == marker);
+  g_assert_null (gtk_widget_get_next_sibling (marker));
+  g_assert_true (chat_stick.follow);
+  gtk_widget_allocate (app->scroller, 600, 180, -1, NULL);
+  while (g_main_context_iteration (NULL, FALSE))
+    {
+    }
+  GtkWidget *viewport = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (app->scroller));
+  GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+  gdouble offset = gtk_adjustment_get_value (chat_stick.adj);
+  g_assert_cmpfloat (offset, ==, stick_bottom (&chat_stick));
+  graphene_rect_t bounds;
+  g_assert_true (gtk_widget_compute_bounds (marker, content, &bounds));
+  g_assert_cmpfloat (bounds.origin.y - offset, >=, 0);
+  g_assert_cmpfloat (bounds.origin.y - offset, <,
+                     gtk_widget_get_height (viewport));
+  g_assert_cmpuint (bubble_index (after), ==, 2);
+  GtkListBox *nav = GTK_LIST_BOX (app->message_nav_list);
+  GtkListBoxRow *row = gtk_list_box_get_row_at_index (nav, 1);
+  g_assert_true (g_object_get_data (G_OBJECT (row), "bubble") == after);
+  g_assert_null (gtk_list_box_get_row_at_index (nav, 3));
+
+  on_edit_message (NULL, first);
+  g_assert_cmpuint (app->chat->edit_from, ==, G_MAXUINT);
+  regenerate ();
+  app->chat->edit_from = 0;
+  send_message ();
+  g_assert_cmpuint (app->chat->edit_from, ==, 0);
+  app->chat->edit_from = G_MAXUINT;
+  g_assert_null (adw_application_window_get_visible_dialog (
+      ADW_APPLICATION_WINDOW (app->window)));
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 6);
+
+  GtkWidget *toggle = gtk_widget_get_first_child (marker);
+  g_assert_true (GTK_IS_BUTTON (toggle));
+  g_assert_null (gtk_widget_get_tooltip_text (toggle));
+  GtkWidget *header = gtk_button_get_child (GTK_BUTTON (toggle));
+  GtkWidget *title = gtk_widget_get_first_child (header);
+  g_assert_true (GTK_IS_LABEL (title));
+  GtkWidget *chevron = gtk_widget_get_next_sibling (title);
+  g_assert_true (GTK_IS_IMAGE (chevron));
+  g_assert_null (gtk_widget_get_next_sibling (chevron));
+  g_assert_cmpstr (gtk_image_get_icon_name (GTK_IMAGE (chevron)), ==,
+                   "pan-end-symbolic");
+  GtkWidget *text_view = gtk_widget_get_next_sibling (toggle);
+  g_assert_false (gtk_widget_get_visible (text_view));
+  g_signal_emit_by_name (toggle, "clicked");
+  g_assert_true (gtk_widget_get_visible (text_view));
+  g_assert_cmpstr (gtk_image_get_icon_name (GTK_IMAGE (chevron)), ==,
+                   "pan-down-symbolic");
+  GtkTextView *view = GTK_TEXT_VIEW (text_view);
+  g_assert_null (gtk_widget_get_next_sibling (text_view));
+  g_assert_false (gtk_text_view_get_editable (view));
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds (buffer, &start, &end);
+  g_autofree gchar *text = gtk_text_buffer_get_text (buffer, &start, &end,
+                                                     FALSE);
+  g_assert_cmpstr (text, ==, "Saved facts.\nMore details.");
+  refresh_message_fonts ();
+  g_signal_emit_by_name (toggle, "clicked");
+  g_assert_false (gtk_widget_get_visible (text_view));
+  g_assert_cmpstr (gtk_image_get_icon_name (GTK_IMAGE (chevron)), ==,
+                   "pan-end-symbolic");
+
+  add_message ("user", "question four");
+  render_chat ();
+  marker = app->summary_marker;
+  GtkWidget *anchor = gtk_widget_get_prev_sibling (marker);
+  g_assert_cmpuint (bubble_index (anchor), ==, 5);
+  g_assert_cmpuint (bubble_index (gtk_widget_get_next_sibling (marker)), ==, 6);
+
+  on_delete_message (NULL, anchor);
+  g_assert_cmpuint (app->chat->summary_until, ==, 2);
+  g_assert_cmpuint (app->chat->summary_position, ==, 6);
+  g_assert_true (app->summary_marker == marker);
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 7);
+
+  on_delete_message (NULL, gtk_widget_get_next_sibling (marker));
+  g_assert_cmpuint (json_array_get_length (app->chat->messages), ==, 6);
+  g_assert_cmpuint (app->chat->summary_position, ==, 6);
+  g_assert_true (app->summary_marker ==
+                 gtk_widget_get_last_child (app->messages));
+
+  Chat *source = app->chat;
+  on_fork_message (NULL, last_message_bubble (app->messages));
+  g_assert_true (app->chat != source);
+  g_assert_cmpuint (app->chat->summary_position, ==, 6);
+  g_assert_cmpuint (source->summary_position, ==, 6);
+  teardown ();
+}
+
+static void
 latest_reminder_payload (void)
 {
   g_autoptr (GDateTime) date = g_date_time_new_utc (2026, 11, 9, 12, 0, 0);
@@ -763,10 +1288,30 @@ image_payload (void)
   g_assert_null (unsupported);
   g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
   g_clear_error (&error);
+
+  ContextPrefix prefix = { 0 };
+  g_autofree gchar *compaction = summary_request_body (prefix, 2, &len, &error);
+  g_assert_no_error (error);
+  g_autoptr (JsonObject) summary = parse_response (compaction, len);
+  g_assert_cmpstr (member_string (summary, "model"), ==, "deepseek-flash");
+  messages = member_array (summary, "messages");
+  parts = member_array (json_array_get_object_element (messages, 1),
+                        "content");
+  g_assert_cmpuint (json_array_get_length (parts), ==, 4);
+  g_assert_cmpstr (member_string (json_array_get_object_element (parts, 1),
+                                  "type"),
+                   ==, "image_url");
+  set_summary (app->chat, g_strdup ("Red and green squares"), 2, 2);
+  g_autofree gchar *summarized = request_body (2, NULL, FALSE, &len, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (strstr (summarized, "Red and green squares"));
+  g_assert_null (strstr (summarized, "data:image"));
+  g_assert_nonnull (image_array_member (msg, "images"));
+
   g_free (app->model);
   app->model = g_strdup ("deepseek-flash");
   g_assert_cmpint (g_unlink (path), ==, 0);
-  g_autofree gchar *missing = request_body (2, NULL, FALSE, &len, &error);
+  g_autofree gchar *missing = request_body (1, NULL, FALSE, &len, &error);
   g_assert_null (missing);
   g_assert_nonnull (error);
   g_assert_cmpint (g_unlink (second_path), ==, 0);
@@ -927,45 +1472,53 @@ edit_and_fork (void)
   add_message ("user", "question two");
   add_message ("assistant", "answer two");
   Chat *source = app->chat;
+  source->system_prompt = g_strdup ("Keep responses short.");
+  set_summary (source, g_strdup ("Earlier conversation"), 2, 2);
   g_free (source->draft);
   source->draft = g_strdup ("original draft");
   render_chat ();
 
-  GtkWidget *first = gtk_widget_get_first_child (app->messages);
-  GtkWidget *third =
-      gtk_widget_get_next_sibling (gtk_widget_get_next_sibling (first));
-  on_edit_message (NULL, third);
+  GtkListBox *nav = GTK_LIST_BOX (app->message_nav_list);
+  GtkListBoxRow *row = gtk_list_box_get_row_at_index (nav, 1);
+  GtkWidget *next = g_object_get_data (G_OBJECT (row), "bubble");
+  on_edit_message (NULL, next);
   g_assert_cmpuint (source->edit_from, ==, 2);
   g_assert_cmpstr (source->edit_text, ==, "question two");
   g_assert_cmpstr (source->draft, ==, "original draft");
+  g_assert_nonnull (app->summary_marker);
+  g_assert_true (gtk_widget_get_last_child (app->messages) ==
+                 app->summary_marker);
+  GtkWidget *last = last_message_bubble (app->messages);
+  g_assert_cmpuint (bubble_index (last), ==, 1);
 
   regenerate ();
   g_assert_cmpuint (json_array_get_length (source->messages), ==, 4);
   g_assert_cmpuint (source->edit_from, ==, 2);
 
-  first = gtk_widget_get_first_child (app->messages);
+  GtkWidget *first = gtk_widget_get_first_child (app->messages);
   on_delete_message (NULL, first);
-  g_assert_cmpuint (source->edit_from, ==, 1);
-  g_assert_cmpuint (json_array_get_length (source->messages), ==, 3);
+  g_assert_cmpuint (source->edit_from, ==, 2);
+  g_assert_cmpuint (json_array_get_length (source->messages), ==, 4);
+  g_assert_nonnull (source->summary);
+  g_assert_nonnull (app->summary_marker);
 
   g_autoptr (JsonObject) edited = new_user_message ("edited question two");
-  commit_message (edited);
-  g_assert_cmpuint (json_array_get_length (source->messages), ==, 2);
+  g_assert_true (commit_message (edited));
+  g_assert_cmpuint (json_array_get_length (source->messages), ==, 3);
   g_assert_cmpstr (
       json_object_get_string_member (
-          json_array_get_object_element (source->messages, 1), "content"),
+          json_array_get_object_element (source->messages, 2), "content"),
       ==, "edited question two");
   g_assert_cmpuint (source->edit_from, ==, G_MAXUINT);
 
   render_chat ();
-  GtkWidget *second =
-      gtk_widget_get_next_sibling (gtk_widget_get_first_child (app->messages));
-  on_fork_message (NULL, second);
+  on_fork_message (NULL, last_message_bubble (app->messages));
   Chat *fork = app->chat;
   g_assert_true (fork != source);
   g_assert_cmpuint (app->chats->len, ==, 2);
-  g_assert_cmpuint (json_array_get_length (fork->messages), ==, 1);
+  g_assert_cmpuint (json_array_get_length (fork->messages), ==, 2);
   g_assert_cmpstr (fork->draft, ==, "edited question two");
+  g_assert_cmpstr (fork->system_prompt, ==, "Keep responses short.");
 
   delete_chat (fork->id);
   g_assert_cmpuint (app->chats->len, ==, 1);
@@ -1082,33 +1635,23 @@ message_navigation_jump (void)
       add_message ("user", "Later question");
       add_message ("assistant", "Later answer");
     }
+  set_summary (app->chat, g_strdup ("Earlier conversation"), 2, 2);
   render_chat ();
-  gtk_window_present (GTK_WINDOW (app->window));
-
-  gint64 deadline = g_get_monotonic_time () + 3 * G_TIME_SPAN_SECOND;
-  while (g_get_monotonic_time () < deadline)
+  /* Allocate the viewport without waiting for a native compositor frame. */
+  gtk_widget_allocate (app->scroller, 600, 450, -1, NULL);
+  while (g_main_context_iteration (NULL, FALSE))
     {
-      while (g_main_context_iteration (NULL, FALSE))
-        {
-        }
-      if (stick_bottom (&chat_stick) > 0 &&
-          gtk_adjustment_get_value (chat_stick.adj) == stick_bottom (&chat_stick))
-        break;
-      g_usleep (1000);
     }
   g_assert_cmpfloat (stick_bottom (&chat_stick), >, 0);
   g_assert_cmpfloat (gtk_adjustment_get_value (chat_stick.adj), ==,
                      stick_bottom (&chat_stick));
 
-  GtkMenuButton *menu = GTK_MENU_BUTTON (app->message_nav);
-  gtk_menu_button_popup (menu);
-  g_assert_true (gtk_widget_get_visible (GTK_WIDGET (
-      gtk_menu_button_get_popover (menu))));
   gtk_editable_set_text (GTK_EDITABLE (app->message_nav_search), "jump target");
   g_signal_emit_by_name (app->message_nav_search, "activate");
   g_assert_false (chat_stick.follow);
-  GtkWidget *bubble = gtk_widget_get_first_child (app->messages);
-  bubble = gtk_widget_get_next_sibling (gtk_widget_get_next_sibling (bubble));
+  GtkWidget *marker = app->summary_marker;
+  g_assert_true (GTK_IS_BOX (marker));
+  GtkWidget *bubble = gtk_widget_get_next_sibling (marker);
   GtkWidget *viewport = gtk_scrolled_window_get_child (
       GTK_SCROLLED_WINDOW (app->scroller));
   GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
@@ -1125,6 +1668,219 @@ message_navigation_jump (void)
   g_assert_true (chat_stick.follow);
   g_assert_cmpfloat (gtk_adjustment_get_value (chat_stick.adj), ==,
                      stick_bottom (&chat_stick));
+
+  teardown ();
+}
+
+static gboolean
+widget_contains_label (GtkWidget   *widget,
+                       const gchar *text)
+{
+  if (GTK_IS_LABEL (widget) &&
+      g_strcmp0 (gtk_label_get_text (GTK_LABEL (widget)), text) == 0)
+    return TRUE;
+  for (GtkWidget *child = gtk_widget_get_first_child (widget); child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    if (widget_contains_label (child, text))
+      return TRUE;
+  return FALSE;
+}
+
+static void
+deferred_window_toasts (void)
+{
+  if (!setup_ui ())
+    return;
+  AdwDialog *settings = adw_preferences_dialog_new ();
+  adw_dialog_present (settings, app->window);
+  AdwDialog *alert = adw_alert_dialog_new ("Alert", "Details");
+  adw_dialog_present (alert, app->window);
+
+  app_toast ("Background notice");
+  app_toast_retry ("Background failure");
+  g_assert_cmpuint (g_queue_get_length (&app->pending_toasts), ==, 2);
+  g_assert_false (widget_contains_label (app->toasts, "Background notice"));
+  AdwToast *retry = g_queue_peek_nth (&app->pending_toasts, 1);
+  g_assert_cmpstr (adw_toast_get_button_label (retry), ==, "Retry");
+  g_assert_cmpstr (adw_toast_get_action_name (retry), ==, "win.retry");
+  g_assert_cmpstr (g_variant_get_string (
+                       adw_toast_get_action_target_value (retry), NULL),
+                   ==, app->chat->id);
+  adw_dialog_close (alert);
+  g_assert_cmpuint (g_queue_get_length (&app->pending_toasts), ==, 2);
+  adw_dialog_close (settings);
+  g_assert_true (g_queue_is_empty (&app->pending_toasts));
+  g_assert_true (widget_contains_label (app->toasts, "Background notice"));
+  teardown ();
+}
+
+static void
+discard_deferred_toasts_on_close (void)
+{
+  if (!setup_ui ())
+    return;
+  AdwDialog *dialog = adw_preferences_dialog_new ();
+  adw_dialog_present (dialog, app->window);
+  app_toast_retry ("Background failure");
+  g_assert_cmpuint (g_queue_get_length (&app->pending_toasts), ==, 1);
+  g_assert_false (on_close (NULL, NULL));
+  g_assert_true (app->closing);
+  g_assert_true (g_queue_is_empty (&app->pending_toasts));
+  teardown ();
+}
+
+static void
+settings_feedback (gconstpointer data)
+{
+  if (!setup_ui ())
+    return;
+  guint kind = GPOINTER_TO_UINT (data);
+  g_assert_true (config_set ("language", NULL));
+  g_autofree gchar *path = store_config_path ();
+  g_autofree gchar *contents = NULL;
+  g_assert_true (g_file_get_contents (path, &contents, NULL, NULL));
+  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/settings.ui");
+  AdwDialog *dialog = ADW_DIALOG (
+      gtk_builder_get_object (builder, "settings_dialog"));
+  AdwSwitchRow *toggle = ADW_SWITCH_ROW (
+      gtk_builder_get_object (builder, "auto_compact"));
+  AdwSpinRow *spin = ADW_SPIN_ROW (
+      gtk_builder_get_object (builder, "context_keep_turns"));
+  AdwEntryRow *key = ADW_ENTRY_ROW (gtk_builder_get_object (builder,
+                                                            "key_row"));
+  GtkFontDialogButton *font = GTK_FONT_DIALOG_BUTTON (
+      gtk_builder_get_object (builder, "message_font"));
+  AdwSpinRow *font_size_row = ADW_SPIN_ROW (
+      gtk_builder_get_object (builder, "message_font_size"));
+  setup_switch_preference (builder, "auto_compact", &app->auto_compact);
+  setup_uint_preference (builder, "context_keep_turns",
+                         &app->context_keep_turns);
+  setup_font_settings (builder, &FONT_SETTINGS[0]);
+  adw_dialog_present (dialog, app->window);
+  if (kind != 5 && kind != 8)
+    g_assert_true (g_file_set_contents (path, "invalid json", -1, NULL));
+  const gchar *message = "Failed to save setting";
+  if (kind != 5 && kind != 8)
+    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*cannot write*");
+  if (kind == 0)
+    adw_switch_row_set_active (toggle, TRUE);
+  else if (kind == 1)
+    adw_spin_row_set_value (spin, 3);
+  else if (kind == 2)
+    {
+      message = "Failed to save API key";
+      gtk_editable_set_text (GTK_EDITABLE (key), "test-key");
+      on_settings_key_apply (key, NULL);
+    }
+  else if (kind == 3)
+    {
+      message = "Failed to save font";
+      on_font_reset (NULL, font);
+    }
+  else if (kind == 4)
+    {
+      GtkButton *edit = GTK_BUTTON (
+          gtk_builder_get_object (builder, "default_system_prompt"));
+      on_prompt_clicked (edit, GINT_TO_POINTER (TRUE));
+      AdwAlertDialog *alert = ADW_ALERT_DIALOG (
+          adw_application_window_get_visible_dialog (
+              ADW_APPLICATION_WINDOW (app->window)));
+      g_assert_true (ADW_IS_ALERT_DIALOG (alert));
+      on_prompt_response (alert, "save", GINT_TO_POINTER (TRUE));
+      adw_dialog_close (ADW_DIALOG (alert));
+    }
+  else if (kind == 5)
+    {
+      message = "API key saved";
+      gtk_editable_set_text (GTK_EDITABLE (key), "test-key");
+      on_settings_key_apply (key, NULL);
+    }
+  else if (kind == 6)
+    {
+      message = "Failed to save font size";
+      adw_spin_row_set_value (font_size_row, 17);
+    }
+  else if (kind == 7)
+    {
+      message = "Failed to save font";
+      g_autoptr (PangoFontDescription) desc =
+          pango_font_description_from_string ("gchat test font");
+      gtk_font_dialog_button_set_font_desc (font, desc);
+    }
+  else
+    {
+      message = "API key cannot be empty";
+      on_settings_key_apply (key, NULL);
+    }
+  if (kind != 5 && kind != 8)
+    g_test_assert_expected_messages ();
+  g_assert_true (widget_contains_label (GTK_WIDGET (dialog), message));
+  g_assert_false (widget_contains_label (app->toasts, message));
+  g_assert_true (g_queue_is_empty (&app->pending_toasts));
+  if (kind == 0)
+    g_assert_false (adw_switch_row_get_active (toggle));
+  if (kind == 1)
+    g_assert_cmpfloat (adw_spin_row_get_value (spin), ==, 2);
+  adw_dialog_close (dialog);
+  g_assert_true (g_file_set_contents (path, contents, -1, NULL));
+  g_clear_object (&builder);
+  teardown ();
+}
+
+static void
+settings_language_toast (void)
+{
+  if (!setup_ui ())
+    return;
+  g_assert_true (config_set ("language", NULL));
+  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
+      "/cc/arthur63/gchat/settings.ui");
+  AdwDialog *dialog = ADW_DIALOG (
+      gtk_builder_get_object (builder, "settings_dialog"));
+  AdwComboRow *row = ADW_COMBO_ROW (
+      gtk_builder_get_object (builder, "language"));
+  setup_combo_preference (builder, "language", LANGUAGES,
+                          G_N_ELEMENTS (LANGUAGES),
+                          G_CALLBACK (on_language_selected));
+  adw_dialog_present (dialog, app->window);
+  g_assert_true (gtk_widget_get_ancestor (GTK_WIDGET (row),
+                                          ADW_TYPE_PREFERENCES_DIALOG) ==
+                 GTK_WIDGET (dialog));
+  adw_combo_row_set_selected (row, 1);
+  g_autofree gchar *saved = config_get ("language");
+  g_assert_cmpstr (saved, ==, "en");
+
+  const gchar *message = "Restart the app to apply language changes";
+  g_assert_true (widget_contains_label (GTK_WIDGET (dialog), message));
+  g_assert_false (widget_contains_label (app->toasts, message));
+
+  adw_dialog_close (dialog);
+  g_clear_object (&builder);
+
+  builder = gtk_builder_new_from_resource ("/cc/arthur63/gchat/settings.ui");
+  dialog = ADW_DIALOG (gtk_builder_get_object (builder, "settings_dialog"));
+  row = ADW_COMBO_ROW (gtk_builder_get_object (builder, "language"));
+  setup_combo_preference (builder, "language", LANGUAGES,
+                          G_N_ELEMENTS (LANGUAGES),
+                          G_CALLBACK (on_language_selected));
+  adw_dialog_present (dialog, app->window);
+  g_autofree gchar *path = store_config_path ();
+  g_autofree gchar *contents = NULL;
+  g_assert_true (g_file_get_contents (path, &contents, NULL, NULL));
+  g_assert_true (g_file_set_contents (path, "invalid json", -1, NULL));
+  g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*cannot write*");
+  adw_combo_row_set_selected (row, 2);
+  g_test_assert_expected_messages ();
+  g_assert_cmpuint (adw_combo_row_get_selected (row), ==, 1);
+  g_assert_true (widget_contains_label (GTK_WIDGET (dialog),
+                                        "Failed to save language"));
+  g_assert_false (widget_contains_label (app->toasts,
+                                         "Failed to save language"));
+  adw_dialog_close (dialog);
+  g_assert_true (g_file_set_contents (path, contents, -1, NULL));
+  g_assert_true (config_set ("language", NULL));
+  g_clear_object (&builder);
   teardown ();
 }
 
@@ -1144,6 +1900,24 @@ config_and_font_helpers (void)
   teardown ();
   if (previous_env != NULL)
     g_setenv ("DEEPSEEK_API_KEY", previous_env, TRUE);
+
+  g_assert_true (config_set ("context_threshold", NULL));
+  g_assert_cmpuint (load_context_threshold (), ==, 64000);
+  g_assert_true (config_set ("context_threshold", "32000"));
+  g_assert_cmpuint (load_context_threshold (), ==, 32000);
+  g_assert_true (config_set ("context_threshold", "1000001"));
+  g_assert_cmpuint (load_context_threshold (), ==, 64000);
+  g_assert_true (config_set ("context_threshold", NULL));
+
+  g_assert_true (config_set ("context_keep_turns", NULL));
+  g_assert_cmpuint (load_context_keep_turns (), ==, 2);
+  g_assert_true (config_set ("context_keep_turns", "100"));
+  g_assert_cmpuint (load_context_keep_turns (), ==, 100);
+  g_assert_true (config_set ("context_keep_turns", "101"));
+  g_assert_cmpuint (load_context_keep_turns (), ==, 2);
+  g_assert_true (config_set ("context_keep_turns", "-1"));
+  g_assert_cmpuint (load_context_keep_turns (), ==, 2);
+  g_assert_true (config_set ("context_keep_turns", NULL));
 
   g_assert_false (font_family_valid (NULL));
   g_assert_false (font_family_valid (""));
@@ -1230,6 +2004,12 @@ main (int    argc,
   g_test_add_func ("/app/web/toggle", web_toggle);
   g_test_add_func ("/app/title-generation", title_generation);
   g_test_add_func ("/app/payload-filters-reasoning", payload_filters_reasoning);
+  g_test_add_func ("/app/context/payload", context_payload);
+  g_test_add_func ("/app/context/compression-rules", compression_rules);
+  g_test_add_func ("/app/context/retention", compression_retention);
+  g_test_add_func ("/app/context/summary-response", summary_response);
+  g_test_add_func ("/app/context/ui", context_ui);
+  g_test_add_func ("/app/context/marker", context_marker);
   g_test_add_func ("/app/latest-reminder", latest_reminder_payload);
   g_test_add_func ("/app/latest-reminder-setting", latest_reminder_setting);
   g_test_add_func ("/app/image-payload", image_payload);
@@ -1240,6 +2020,28 @@ main (int    argc,
   g_test_add_func ("/app/history-search", history_search);
   g_test_add_func ("/app/message-navigation/rows", message_navigation_rows);
   g_test_add_func ("/app/message-navigation/jump", message_navigation_jump);
+  g_test_add_func ("/app/settings/language-toast", settings_language_toast);
+  g_test_add_func ("/app/settings/deferred-toasts", deferred_window_toasts);
+  g_test_add_func ("/app/settings/discard-deferred-on-close",
+                   discard_deferred_toasts_on_close);
+  g_test_add_data_func ("/app/settings/switch-failure", GINT_TO_POINTER (0),
+                        settings_feedback);
+  g_test_add_data_func ("/app/settings/number-failure", GINT_TO_POINTER (1),
+                        settings_feedback);
+  g_test_add_data_func ("/app/settings/key-failure", GINT_TO_POINTER (2),
+                        settings_feedback);
+  g_test_add_data_func ("/app/settings/font-failure", GINT_TO_POINTER (3),
+                        settings_feedback);
+  g_test_add_data_func ("/app/settings/prompt-failure", GINT_TO_POINTER (4),
+                        settings_feedback);
+  g_test_add_data_func ("/app/settings/key-success", GINT_TO_POINTER (5),
+                        settings_feedback);
+  g_test_add_data_func ("/app/settings/font-size-failure", GINT_TO_POINTER (6),
+                        settings_feedback);
+  g_test_add_data_func ("/app/settings/font-change-failure",
+                        GINT_TO_POINTER (7), settings_feedback);
+  g_test_add_data_func ("/app/settings/empty-key", GINT_TO_POINTER (8),
+                        settings_feedback);
   g_test_add_func ("/app/config-and-font-helpers", config_and_font_helpers);
   g_test_add_func ("/app/corrupt-startup", corrupt_startup);
   g_test_add_func ("/app/locked-startup", locked_startup);

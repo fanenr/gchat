@@ -43,9 +43,50 @@ Adw.PreferencesDialog settings_dialog {
     }
 
     Adw.PreferencesGroup {
+      title: _("Context");
+
+      Adw.ActionRow default_prompt_row {
+        title: _("Default system prompt");
+        activatable-widget: default_system_prompt;
+
+        [suffix]
+        Gtk.Button default_system_prompt {
+          label: _("Edit");
+          valign: center;
+        }
+      }
+
+      Adw.SwitchRow auto_compact {
+        title: _("Automatically compress context");
+      }
+
+      Adw.SpinRow context_threshold {
+        title: _("Compression threshold");
+        numeric: true;
+        adjustment: Gtk.Adjustment {
+          lower: 1024;
+          upper: 1000000;
+          step-increment: 1000;
+          page-increment: 10000;
+        };
+      }
+
+      Adw.SpinRow context_keep_turns {
+        title: _("Recent turns to keep");
+        numeric: true;
+        snap-to-ticks: true;
+        adjustment: Gtk.Adjustment {
+          lower: 0;
+          upper: 100;
+          step-increment: 1;
+          page-increment: 5;
+        };
+      }
+    }
+
+    Adw.PreferencesGroup {
       Adw.ComboRow language {
         title: _("Language");
-        subtitle: _("Restart the app to apply language changes.");
       }
     }
   }

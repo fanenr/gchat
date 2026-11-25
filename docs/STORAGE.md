@@ -8,7 +8,7 @@
 
 | File | Default location | Contents |
 | --- | --- | --- |
-| `session.db` | `~/.local/share/gchat/` | Conversations, messages, drafts, active session, model, and reasoning level |
+| `session.db` | `~/.local/share/gchat/` | Conversations, messages, drafts, per-conversation prompts and summaries, active session, model, and reasoning level |
 | `attachments/` | `~/.local/share/gchat/attachments/` | Image files named by UUID |
 | `session.db.lock` | `~/.local/share/gchat/session.db.lock` | Single-instance process lock |
 | `config.json` | `~/.config/gchat/` | API key and app preferences |
@@ -29,10 +29,14 @@
 | `web_enabled` | `"true"` or `"false"` (default `"false"`) |
 | `auto_title` | `"true"` (default) or `"false"` |
 | `confirm_delete_chat` | `"true"` (default) or `"false"` |
+| `default_system_prompt` | Multiline text; empty or absent means no default system prompt |
+| `auto_compact` | `"true"` or `"false"` (default `"false"`) |
+| `context_threshold` | Estimated input token threshold, `1024`–`1000000` (default `64000`) |
+| `context_keep_turns` | Recent turns to keep verbatim during compression, `0`–`100` (default `2`) |
 | `message_font`, `code_font` | Font family name; empty or absent uses the default family |
 | `message_font_size`, `code_font_size` | Decimal size in logical pixels (`6`–`72`; defaults to `14` for prose and `13` for code) |
 
-## Database schema (version 1)
+## Database schema (version 2)
 
 The schema in [`store.c`](../store.c) defines two SQLite `STRICT` tables.
 
@@ -45,6 +49,9 @@ The schema in [`store.c`](../store.c) defines two SQLite `STRICT` tables.
 | `draft`, `draft_images` | Normal draft text and an optional ordered JSON array of image UUIDs |
 | `edit_from`, `edit_text`, `edit_images` | Zero-based user-message index, edit draft text, and an optional ordered JSON array of image UUIDs |
 | `messages` | Ordered JSON array of message objects |
+| `system_prompt` | `NULL` to inherit, `""` to omit, or nonempty text to override |
+| `summary`, `summary_until` | Optional summary and the number of original messages it replaces in requests (`NULL` and `0` without a summary) |
+| `summary_position` | Number of messages before the visible summary marker; `NULL` without a summary |
 
 - When not editing a message, `edit_from` and `edit_images` are `NULL` and `edit_text` is `""`. When a draft has no images, `draft_images` is `NULL`.
 - Each element in `messages` has a required `role` (`"user"` or `"assistant"`) and string `content`.
@@ -65,7 +72,7 @@ Holds a single row (`id = 1`) with `current_id` (foreign key to `chats.id`, or `
 
 ## Schema migrations
 
-`PRAGMA user_version` tracks the database schema version (currently `1`). Version `0` is accepted only on an empty database; databases with a `user_version` newer than the client supports are rejected without downgrade.
+`PRAGMA user_version` tracks the database schema version (currently `2`). Version `0` is accepted only on an empty database; databases with a `user_version` newer than the client supports are rejected without downgrade. The migration from version `1` preserves conversations and starts them with no summary and an inherited system prompt.
 
 To evolve the format:
 

@@ -47,6 +47,9 @@ chat_free (Chat *chat)
   g_free (chat->title);
   g_free (chat->draft);
   g_free (chat->edit_text);
+  g_free (chat->system_prompt);
+  g_free (chat->summary);
+  g_free (chat->usage_model);
   g_clear_pointer (&chat->draft_images, json_array_unref);
   g_clear_pointer (&chat->edit_images, json_array_unref);
   json_array_unref (chat->messages);
@@ -219,11 +222,28 @@ create_v1 (sqlite3 *db,
 }
 
 static gboolean
+upgrade_v2 (sqlite3 *db,
+            GError **error)
+{
+  return db_exec (db,
+                  "ALTER TABLE chats ADD COLUMN system_prompt TEXT;"
+                  "ALTER TABLE chats ADD COLUMN summary TEXT;"
+                  "ALTER TABLE chats ADD COLUMN summary_until INTEGER NOT NULL"
+                  " DEFAULT 0 CHECK (summary_until >= 0);"
+                  "ALTER TABLE chats ADD COLUMN summary_position INTEGER"
+                  " CHECK (summary_position > 0);",
+                  error);
+}
+
+static gboolean
 upgrade_schema (sqlite3 *db,
                 GError **error)
 {
   /* The slot number is the version the step expects on entry. */
-  static gboolean (*const upgrades[]) (sqlite3 *, GError **) = { create_v1 };
+  static gboolean (*const upgrades[]) (sqlite3 *, GError **) = {
+    create_v1,
+    upgrade_v2,
+  };
   const gint latest = G_N_ELEMENTS (upgrades);
   gint version;
   if (!db_read_int (db, "PRAGMA user_version", &version, error))
@@ -421,6 +441,26 @@ read_chat (sqlite3_stmt *stmt)
   g_autoptr (JsonArray) messages = column_array (stmt, 9);
   if (messages == NULL || !messages_valid (messages))
     return NULL;
+  const gchar *prompt = column_text (stmt, 10);
+  const gchar *summary = column_text (stmt, 11);
+  gint64 summary_until = sqlite3_column_int64 (stmt, 12);
+  guint message_count = json_array_get_length (messages);
+  if ((prompt == NULL && sqlite3_column_type (stmt, 10) != SQLITE_NULL) ||
+      (summary == NULL && sqlite3_column_type (stmt, 11) != SQLITE_NULL) ||
+      sqlite3_column_type (stmt, 12) != SQLITE_INTEGER ||
+      summary_until < 0 || summary_until > message_count ||
+      (summary == NULL ? summary_until != 0 : !*summary || summary_until == 0))
+    {
+      return NULL;
+    }
+  gint position_type = sqlite3_column_type (stmt, 13);
+  gint64 position = sqlite3_column_int64 (stmt, 13);
+  gint expected_type = summary == NULL ? SQLITE_NULL : SQLITE_INTEGER;
+  if (position_type != expected_type ||
+      position < summary_until || position > message_count)
+    {
+      return NULL;
+    }
   g_autoptr (Chat) chat = chat_new (id, title);
   if (!read_images (stmt, 5, &chat->draft_images) ||
       !read_images (stmt, 8, &chat->edit_images))
@@ -441,6 +481,10 @@ read_chat (sqlite3_stmt *stmt)
 
   chat->created = created;
   chat->pinned = pinned != 0;
+  chat->system_prompt = g_strdup (prompt);
+  chat->summary = g_strdup (summary);
+  chat->summary_until = (guint) summary_until;
+  chat->summary_position = (guint) position;
   g_free (chat->draft);
   chat->draft = g_strdup (draft);
   g_free (chat->edit_text);
@@ -471,7 +515,8 @@ store_load (sqlite3  *db,
   *effort = NULL;
   g_autoptr (sqlite3_stmt) rows = db_prepare (
       db, "SELECT id, title, created, pinned, draft, draft_images,"
-          " edit_from, edit_text, edit_images, messages FROM chats"
+          " edit_from, edit_text, edit_images, messages, system_prompt,"
+          " summary, summary_until, summary_position FROM chats"
           " ORDER BY rowid",
       error);
   if (rows == NULL)
@@ -581,7 +626,14 @@ write_chat (sqlite3_stmt *stmt,
                 : sqlite3_bind_int64 (stmt, 7, chat->edit_from)) != SQLITE_OK ||
       (rc = bind_text (stmt, 8, chat->edit_text)) != SQLITE_OK ||
       (rc = bind_text (stmt, 9, edit_images)) != SQLITE_OK ||
-      (rc = bind_text (stmt, 10, messages)) != SQLITE_OK)
+      (rc = bind_text (stmt, 10, messages)) != SQLITE_OK ||
+      (rc = bind_text (stmt, 11, chat->system_prompt)) != SQLITE_OK ||
+      (rc = bind_text (stmt, 12, chat->summary)) != SQLITE_OK ||
+      (rc = sqlite3_bind_int64 (stmt, 13, chat->summary_until)) != SQLITE_OK ||
+      (rc = chat->summary == NULL
+                ? sqlite3_bind_null (stmt, 14)
+                : sqlite3_bind_int64 (stmt, 14, chat->summary_position)) !=
+          SQLITE_OK)
     return db_error (sqlite3_db_handle (stmt), rc, error);
   return write_row (stmt, error);
 }
@@ -604,13 +656,18 @@ write_changes (sqlite3     *db,
       if (upsert == NULL)
         upsert = db_prepare (
             db, "INSERT INTO chats (id, title, created, pinned, draft,"
-                " draft_images, edit_from, edit_text, edit_images, messages)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " draft_images, edit_from, edit_text, edit_images, messages,"
+                " system_prompt, summary, summary_until, summary_position)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(id) DO UPDATE SET title=excluded.title,"
                 " created=excluded.created, pinned=excluded.pinned,"
                 " draft=excluded.draft, draft_images=excluded.draft_images,"
                 " edit_from=excluded.edit_from, edit_text=excluded.edit_text,"
-                " edit_images=excluded.edit_images, messages=excluded.messages",
+                " edit_images=excluded.edit_images, messages=excluded.messages,"
+                " system_prompt=excluded.system_prompt,"
+                " summary=excluded.summary,"
+                " summary_until=excluded.summary_until,"
+                " summary_position=excluded.summary_position",
             error);
       if (upsert == NULL || !write_chat (upsert, chat, error))
         return FALSE;

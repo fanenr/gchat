@@ -139,7 +139,7 @@ roundtrip (Fixture      *f,
            gconstpointer data G_GNUC_UNUSED)
 {
   g_autoptr (sqlite3) db = open_db (f);
-  g_assert_cmpint (scalar_int (db, "PRAGMA user_version"), ==, 1);
+  g_assert_cmpint (scalar_int (db, "PRAGMA user_version"), ==, 2);
   g_autoptr (GPtrArray) empty = load (db, NULL);
   g_assert_cmpuint (empty->len, ==, 0);
   struct stat st;
@@ -157,6 +157,13 @@ roundtrip (Fixture      *f,
   JsonObject *reply = add_message (chat, "assistant", "答案");
   json_object_set_string_member (reply, "reasoning", "已收到的推理");
   json_object_set_double_member (reply, "duration", 1.5);
+  add_message (chat, "user", "再问一个问题");
+  chat->system_prompt = g_strdup ("自定义\n提示词");
+  chat->summary = g_strdup ("Earlier context");
+  chat->summary_until = 2;
+  chat->summary_position = 3;
+  chat->usage_model = g_strdup ("deepseek-flash");
+  chat->prompt_tokens = 5000;
   save (f, db, chat->id);
   g_assert_false (chat->dirty);
   g_clear_pointer (&db, sqlite3_close);
@@ -169,10 +176,16 @@ roundtrip (Fixture      *f,
   g_assert_cmpstr (saved->draft, ==, chat->draft);
   g_assert_cmpstr (saved->edit_text, ==, "编辑草稿");
   g_assert_cmpuint (saved->edit_from, ==, 0);
+  g_assert_cmpstr (saved->system_prompt, ==, chat->system_prompt);
+  g_assert_cmpstr (saved->summary, ==, chat->summary);
+  g_assert_cmpuint (saved->summary_until, ==, 2);
+  g_assert_cmpuint (saved->summary_position, ==, 3);
+  g_assert_null (saved->usage_model);
+  g_assert_cmpint (saved->prompt_tokens, ==, 0);
   g_assert_cmpint (saved->created, ==, chat->created);
   g_assert_true (saved->pinned);
   g_assert_false (saved->dirty);
-  g_assert_cmpuint (json_array_get_length (saved->messages), ==, 2);
+  g_assert_cmpuint (json_array_get_length (saved->messages), ==, 3);
   JsonObject *first = json_array_get_object_element (saved->messages, 0);
   g_assert_cmpstr (json_object_get_string_member (first, "content"), ==,
                    "问题");
@@ -255,7 +268,54 @@ upgrade_rollback (Fixture      *f,
   g_assert_cmpint (scalar_int (reader, "SELECT count(*) FROM sqlite_schema"),
                    ==, 0);
   g_autoptr (sqlite3) opened = open_db (f);
-  g_assert_cmpint (scalar_int (opened, "PRAGMA user_version"), ==, 1);
+  g_assert_cmpint (scalar_int (opened, "PRAGMA user_version"), ==, 2);
+}
+
+static void
+upgrade_v1 (Fixture      *f,
+            gconstpointer data G_GNUC_UNUSED)
+{
+  g_autoptr (sqlite3) db = open_raw (f);
+  exec_sql (db,
+            "CREATE TABLE chats ("
+            " id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL,"
+            " created INTEGER NOT NULL, pinned INTEGER NOT NULL,"
+            " draft TEXT NOT NULL, draft_images TEXT, edit_from INTEGER,"
+            " edit_text TEXT NOT NULL, edit_images TEXT, messages TEXT NOT NULL"
+            ") STRICT;"
+            "CREATE TABLE session_state ("
+            " id INTEGER PRIMARY KEY, current_id TEXT REFERENCES chats(id),"
+            " model TEXT NOT NULL, effort TEXT NOT NULL"
+            ") STRICT;"
+            "INSERT INTO chats VALUES ("
+            " '42', 'title', 20, 1, 'draft', NULL, NULL, '', NULL,"
+            " '[{\"role\":\"user\",\"content\":\"original question\"}]');"
+            "INSERT INTO session_state VALUES (1, '42', 'deepseek-flash',"
+            " 'high');"
+            "PRAGMA user_version = 1;");
+  g_clear_pointer (&db, sqlite3_close);
+  db = open_db (f);
+  g_assert_cmpint (scalar_int (db, "PRAGMA user_version"), ==, 2);
+  g_ptr_array_unref (f->chats);
+  f->chats = load (db, "42");
+  g_assert_cmpuint (f->chats->len, ==, 1);
+  Chat *chat = g_ptr_array_index (f->chats, 0);
+  g_assert_cmpstr (chat->draft, ==, "draft");
+  g_assert_true (chat->pinned);
+  g_assert_null (chat->system_prompt);
+  g_assert_null (chat->summary);
+  g_assert_cmpuint (chat->summary_until, ==, 0);
+  g_assert_cmpuint (chat->summary_position, ==, 0);
+  JsonObject *question = json_array_get_object_element (chat->messages, 0);
+  g_assert_cmpstr (json_object_get_string_member (question, "content"), ==,
+                   "original question");
+
+  chat->system_prompt = g_strdup ("");
+  chat->dirty = TRUE;
+  save (f, db, chat->id);
+  g_autoptr (GPtrArray) restored = load (db, "42");
+  const Chat *saved = g_ptr_array_index (restored, 0);
+  g_assert_cmpstr (saved->system_prompt, ==, "");
 }
 
 static void
@@ -267,13 +327,13 @@ unsupported_schema (Fixture      *f,
   exec_sql (raw, "CREATE TABLE contents (value INTEGER);"
                  " INSERT INTO contents VALUES (98)");
   if (newer)
-    exec_sql (raw, "PRAGMA user_version = 99");
+    exec_sql (raw, "PRAGMA user_version = 3");
   g_autoptr (GError) error = NULL;
   g_autoptr (sqlite3) db = store_open (f->path, &error);
   g_assert_null (db);
   gint code = newer ? G_IO_ERROR_NOT_SUPPORTED : G_IO_ERROR_INVALID_DATA;
   g_assert_error (error, G_IO_ERROR, code);
-  g_assert_cmpint (scalar_int (raw, "PRAGMA user_version"), ==, newer ? 99 : 0);
+  g_assert_cmpint (scalar_int (raw, "PRAGMA user_version"), ==, newer ? 3 : 0);
   g_assert_cmpint (scalar_int (raw, "SELECT value FROM contents"), ==, 98);
   g_assert_cmpint (scalar_int (raw, "SELECT count(*) FROM sqlite_schema"),
                    ==, 1);
@@ -512,6 +572,7 @@ main (int    argc,
               teardown);
   g_test_add ("/store/upgrade-rollback", Fixture, NULL, setup, upgrade_rollback,
               teardown);
+  g_test_add ("/store/upgrade-v1", Fixture, NULL, setup, upgrade_v1, teardown);
   g_test_add ("/store/images", Fixture, NULL, setup, image_storage,
               teardown);
   g_test_add ("/store/lock", Fixture, NULL, setup, session_lock,
@@ -527,6 +588,15 @@ main (int    argc,
     "UPDATE chats SET draft_images = '[\"../outside\"]'",
     "UPDATE chats SET edit_from = 1",
     "UPDATE chats SET edit_images = '[1]'",
+    "UPDATE chats SET summary_until = 1",
+    "UPDATE chats SET summary = 'unbound'",
+    "UPDATE chats SET summary = 'out of bounds', summary_until = 99",
+    "UPDATE chats SET summary_position = 1",
+    "UPDATE chats SET summary = 'missing position', summary_until = 1",
+    "UPDATE chats SET summary = 'valid', summary_until = 1,"
+    " summary_position = 99",
+    "UPDATE chats SET summary = 'valid', summary_until = 2,"
+    " summary_position = 1",
     "UPDATE session_state SET current_id = NULL",
   };
   for (guint i = 0; i < G_N_ELEMENTS (invalid); i++)

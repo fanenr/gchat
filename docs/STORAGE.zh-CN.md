@@ -8,7 +8,7 @@
 
 | 文件 | 默认位置 | 内容 |
 | --- | --- | --- |
-| `session.db` | `~/.local/share/gchat/` | 会话、消息、草稿、当前会话、模型和推理级别 |
+| `session.db` | `~/.local/share/gchat/` | 会话、消息、草稿、会话提示词和摘要、当前会话、模型和推理级别 |
 | `attachments/` | `~/.local/share/gchat/attachments/` | 以 UUID 命名的图片文件 |
 | `session.db.lock` | `~/.local/share/gchat/session.db.lock` | 单实例进程锁 |
 | `config.json` | `~/.config/gchat/` | API 密钥与应用设置 |
@@ -29,10 +29,14 @@
 | `web_enabled` | `"true"` 或 `"false"`（默认 `"false"`） |
 | `auto_title` | `"true"`（默认）或 `"false"` |
 | `confirm_delete_chat` | `"true"`（默认）或 `"false"` |
+| `default_system_prompt` | 多行文本，为空或缺失时不发送默认系统提示词 |
+| `auto_compact` | `"true"` 或 `"false"`（默认 `"false"`） |
+| `context_threshold` | 输入 token 估算阈值，`1024`–`1000000`（默认 `64000`） |
+| `context_keep_turns` | 压缩时保留原文的最近轮数，`0`–`100`（默认 `2`） |
 | `message_font`、`code_font` | 字体族名称；为空或缺失时使用默认字体 |
 | `message_font_size`、`code_font_size` | 逻辑像素十进制字号（`6`–`72`，正文默认 `14`，代码默认 `13`） |
 
-## 数据库结构（版本 1）
+## 数据库结构（版本 2）
 
 [`store.c`](../store.c) 定义了两张 SQLite `STRICT` 表。
 
@@ -45,6 +49,9 @@
 | `draft`、`draft_images` | 普通草稿正文、可选的有序图片 UUID JSON 数组 |
 | `edit_from`、`edit_text`、`edit_images` | 从 0 开始的用户消息索引、编辑草稿正文、可选的有序图片 UUID JSON 数组 |
 | `messages` | 有序的消息对象 JSON 数组 |
+| `system_prompt` | `NULL` 表示继承，`""` 表示不发送，非空文本表示自定义 |
+| `summary`、`summary_until` | 可选的摘要和它在请求中替换的原始消息数；无摘要时为 `NULL` 和 `0` |
+| `summary_position` | 可见摘要标记之前的消息数；无摘要时为 `NULL` |
 
 - 未处于消息编辑状态时，`edit_from` 与 `edit_images` 为 `NULL`，`edit_text` 为 `""`；普通草稿无图片时，`draft_images` 为 `NULL`。
 - `messages` 中的每条记录必须包含 `role`（`"user"` 或 `"assistant"`）与文本 `content`。
@@ -65,7 +72,7 @@
 
 ## 格式升级
 
-`PRAGMA user_version` 记录数据库结构版本（当前为 `1`）。仅空数据库接受版本 `0`；高于当前客户端支持版本的数据库会被直接拒绝，不会降级读取。
+`PRAGMA user_version` 记录数据库结构版本（当前为 `2`）。仅空数据库接受版本 `0`；高于当前客户端支持版本的数据库会被直接拒绝，不会降级读取。版本 `1` 升级后保留会话，新字段默认为无摘要、继承系统提示词。
 
 升级数据库格式的步骤：
 

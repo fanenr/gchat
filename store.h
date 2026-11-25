@@ -21,6 +21,16 @@ typedef struct
   gint64     created;   /* Store Unix milliseconds for sidebar grouping. */
   JsonArray *messages;  /* Store message objects with role and content
                            fields. */
+
+  gchar     *system_prompt; /* Use NULL to inherit or "" to omit. */
+  gchar     *summary;
+  guint      summary_until; /* Count original messages covered by summary. */
+  guint      summary_position; /* Count messages before the marker. */
+
+  /* Keep the last measured and estimated input counts in memory only. */
+  gchar     *usage_model;
+  gint64     prompt_tokens;
+  gint64     estimated_tokens;
 } Chat;
 
 Chat      *chat_new             (const gchar *id,

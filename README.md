@@ -9,10 +9,23 @@
 - **Models and reasoning**: Supports `deepseek-flash` and `deepseek-v4-pro` with four reasoning levels (`none`, `low`, `high`, `max`) and collapsible thought blocks.
 - **Web search and images**: Optional web search with source citations and multi-image input (file picker or clipboard paste) on `deepseek-flash`.
 - **Native Markdown**: Renders headings, lists, blockquotes, tables, syntax-highlighted code blocks, and HTTPS images directly as GTK widgets without a WebView.
-- **Conversations**: Search, pin, rename, duplicate, and delete sessions; copy, edit and resend, regenerate, or fork any message into a new session; automatic titles and per-session drafts.
+- **Conversations**: Search, pin, rename, duplicate, and delete sessions; copy, edit and resend, regenerate, or fork messages into a new session; automatic titles and per-session drafts.
+- **Context management**: Set a default or per-conversation system prompt, and summarize older context manually or automatically without deleting the original messages.
 - **User metadata**: Optionally share the local date, weekday, app platform, and interface language with DeepSeek. Off by default; location is never shared by this feature.
 - **Message navigation**: Open the numbered list in the chat header to search your messages, jump to an earlier question, or return to the latest message.
 - **Appearance and language**: System, light, or dark theme; independent fonts and sizes for message prose and code blocks; English and Simplified Chinese interface.
+
+Settings feedback appears in the Settings dialog. After changing the interface language, restart the app to apply the change. Chat notifications received while a dialog is open appear after it closes, with retry actions preserved.
+
+## Context management
+
+- **Settings → Context** sets the default system prompt and the automatic compression threshold. Automatic compression is off by default. When enabled, it checks the estimated input size before sending. The default threshold is 64,000 tokens.
+- **Recent turns to keep** applies to both manual and automatic compression. It defaults to 2. Choose 0 to summarize all earlier turns. Changing the setting does not change an existing summary.
+- Open **Conversation context** at the lower left of the message input, next to the attachment button. Choose **System prompt** to inherit, override, or omit the default. Choose **Compress context** to summarize the history before the turns you keep.
+- Its ring shows estimated input usage against the compression threshold, including the current draft and attachments. It turns orange at 80% and red at 100%. Open it for the estimated token count and context details. The threshold is not the model's context limit, even when automatic compression is off.
+- **Context compressed** appears where compression happened. Manual compression scrolls to the marker at the end of the chat. Automatic compression places it just before the new message. Click the marker to read or collapse the summary.
+- Messages before the marker are read-only, including turns kept verbatim in the request. You can still copy or fork them.
+- Compression makes an extra, billable DeepSeek-Flash request containing the older messages and attached images. Later chat requests use the summary instead of that portion of history. The original messages and images remain in the chat.
 
 ## Build and run
 
@@ -106,7 +119,7 @@ flatpak build-bundle \
 | `Cmd+L` | `Ctrl+L` | Focus the input box |
 | `Cmd+F` | `Ctrl+F` | Focus search |
 | `Cmd+,` | `Ctrl+,` | Open settings |
-| `Cmd+.` | `Ctrl+.` | Stop generation |
+| `Cmd+.` | `Ctrl+.` | Stop generation or compression |
 | `Cmd+W` | `Ctrl+W` | Close the window |
 | `Cmd+Q` | `Ctrl+Q` | Quit the app |
 | `Enter` | `Enter` | Send the message |
