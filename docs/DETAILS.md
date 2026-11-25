@@ -32,6 +32,7 @@ This document describes the codebase structure, core runtime mechanisms, packagi
 ### Markdown and media
 
 - **Native widget tree**: `md.c` parses CommonMark and GFM extensions via `md4c` into native GTK widgets (`GtkTextView` for prose, `GtkGrid` for tables, and `GtkSourceView` inside custom cards for syntax-highlighted code blocks).
+- **Reading layout**: Prose uses generous line spacing and restrained heading sizes. Lists use compact item spacing, quotes retain the normal text color, and table edges align with surrounding text.
 - **Remote images**: HTTPS images outside tables are fetched asynchronously without API credentials. Requests do not follow redirects, time out after 20 seconds, and enforce limits of 8 MiB and 16 megapixels (displayed within 320 × 240 logical pixels). Only `http`, `https`, and `mailto` links are opened externally.
 - **Image input**: `deepseek-flash` supports attaching PNG, JPEG, GIF, and WebP images via the file picker or clipboard paste. Each image is capped at 8 MiB, 8192 pixels per side (4096 pixels when a request carries 15 or more images), and 16 megapixels; a single request supports up to 600 images and a 48 MiB body including Base64 history. Accepted files are copied to `attachments/` by UUID and unreferenced files are cleaned up after a successful database load at startup.
 

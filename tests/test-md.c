@@ -87,7 +87,7 @@ text_tags (gconstpointer data)
 static void
 heading_styles (void)
 {
-  static const double scales[] = { 1.5, 1.375, 1.25, 1, 1, 1 };
+  static const double scales[] = { 1.3, 1.2, 1.1, 1, 1, 1 };
   g_autoptr (GtkWidget) box =
       g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   for (guint i = 0; i < G_N_ELEMENTS (scales); i++)
@@ -106,8 +106,7 @@ heading_styles (void)
       int weight;
       g_object_get (heading, "scale", &scale, "weight", &weight, NULL);
       g_assert_cmpfloat (scale, ==, scales[i]);
-      g_assert_cmpint (weight, ==,
-                       i < 3 ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_SEMIBOLD);
+      g_assert_cmpint (weight, ==, PANGO_WEIGHT_SEMIBOLD);
       GtkTextTag *bold = gtk_text_tag_table_lookup (table, "bold");
       GtkTextTag *code = gtk_text_tag_table_lookup (table, "code");
       g_object_get (bold, "weight", &weight, NULL);
@@ -125,6 +124,28 @@ heading_styles (void)
       g_assert_false (gtk_text_iter_has_tag (&start, bold));
       clear_box (box);
     }
+}
+
+static void
+quote_style (void)
+{
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  md_render (GTK_BOX (box), "> quoted text\n\noutside");
+  GtkWidget *view = gtk_widget_get_first_child (box);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+  GtkTextTag *quote = gtk_text_tag_table_lookup (
+      gtk_text_buffer_get_tag_table (buffer), "quote1");
+  g_assert_nonnull (quote);
+  gboolean foreground_set;
+  g_object_get (quote, "foreground-set", &foreground_set, NULL);
+  g_assert_false (foreground_set);
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds (buffer, &start, &end);
+  g_autofree gchar *text =
+      gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  g_assert_cmpstr (text, ==, "│ quoted text\noutside");
+  clear_box (box);
 }
 
 static void
@@ -215,11 +236,39 @@ table_cells (gconstpointer data)
   g_assert_true (GTK_IS_LABEL (body));
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (header)), ==, test->header);
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (body)), ==, test->body);
+  g_assert_cmpint (gtk_widget_get_margin_start (header), ==, 0);
+  g_assert_cmpint (gtk_widget_get_margin_end (header), ==, 0);
+  g_assert_cmpint (gtk_widget_get_margin_start (body), ==, 0);
+  g_assert_cmpint (gtk_widget_get_margin_end (body), ==, 0);
   g_assert_nonnull (strstr (gtk_label_get_label (GTK_LABEL (header)),
                             "weight=\"medium\""));
   if (test->body_markup != NULL)
     g_assert_cmpstr (gtk_label_get_label (GTK_LABEL (body)), ==,
                      test->body_markup);
+  clear_box (box);
+}
+
+static void
+table_outer_margins (void)
+{
+  g_autoptr (GtkWidget) box =
+      g_object_ref_sink (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  md_render (GTK_BOX (box), "| one | two | three |\n| --- | --- | --- |\n");
+  GtkWidget *area = gtk_widget_get_first_child (box);
+  GtkWidget *scroller = gtk_widget_get_first_child (area);
+  GtkWidget *viewport =
+      gtk_scrolled_window_get_child (GTK_SCROLLED_WINDOW (scroller));
+  GtkWidget *card = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+  GtkGrid *grid = GTK_GRID (gtk_widget_get_first_child (card));
+  GtkWidget *first = gtk_grid_get_child_at (grid, 0, 0);
+  GtkWidget *middle = gtk_grid_get_child_at (grid, 1, 0);
+  GtkWidget *last = gtk_grid_get_child_at (grid, 2, 0);
+  g_assert_cmpint (gtk_widget_get_margin_start (first), ==, 0);
+  g_assert_cmpint (gtk_widget_get_margin_end (first), ==, 12);
+  g_assert_cmpint (gtk_widget_get_margin_start (middle), ==, 12);
+  g_assert_cmpint (gtk_widget_get_margin_end (middle), ==, 12);
+  g_assert_cmpint (gtk_widget_get_margin_start (last), ==, 12);
+  g_assert_cmpint (gtk_widget_get_margin_end (last), ==, 0);
   clear_box (box);
 }
 
@@ -433,14 +482,16 @@ main (int    argc,
     { "`code` plain", "code", "code", TRUE },
     { "**outer *inner* tail** plain", "tail", "bold", TRUE },
     { "**outer *inner* tail** plain", "tail", "italic", FALSE },
-    { "first\n\nsecond", "\n", "gap16", TRUE },
-    { "first\n\n## title", "\n", "gap24", TRUE },
-    { "first\n\n#### title", "\n", "gap16", TRUE },
+    { "first\n\nsecond", "\n", "gap10", TRUE },
+    { "first\n\n## title", "\n", "gap18", TRUE },
+    { "first\n\n#### title", "\n", "gap10", TRUE },
     { "# Title\n\n## Subtitle", "\n", "gap8", TRUE },
-    { "- first\n- second", "\n", "gap6", TRUE },
+    { "# Title\n\nparagraph", "\n", "gap10", TRUE },
+    { "- item\n\n## title", "\n", "gap18", TRUE },
+    { "- first\n- second", "\n", "gap4", TRUE },
     { "- first\n\n  continuation", "\n", "gap8", TRUE },
     { "#### title\n\n- item", "\n", "gap8", TRUE },
-    { "paragraph\n\n- item", "\n", "gap16", TRUE },
+    { "paragraph\n\n- item", "\n", "gap10", TRUE },
     { "- outer\n  - inner", "\n", "gap4", TRUE },
   };
   for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
@@ -450,6 +501,8 @@ main (int    argc,
       g_test_add_data_func (name, &cases[i], text_tags);
     }
   g_test_add_func ("/markdown/heading-styles", heading_styles);
+  g_test_add_func ("/markdown/quote-style", quote_style);
+  g_test_add_func ("/markdown/table/outer-margins", table_outer_margins);
   static const TextCase lists[] = {
     { "1. **问答与解释**\n   解释概念，分析问题。\n\n2. **写作与润色**\n   "
       "写文章，修改表达。\n",

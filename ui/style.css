@@ -83,7 +83,7 @@
 }
 .thought-toggle:hover label { color: @window_fg_color; }
 .msg-text, .chat-input { background: transparent; }
-.msg-text { line-height: 1.3; }
+.msg-text { line-height: 1.5; }
 .chat-input {
   font-family: "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: 14px;

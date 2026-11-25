@@ -584,8 +584,8 @@ cell_label (const gchar *markup,
   gtk_widget_add_css_class (label, "msg-text");
   gtk_widget_set_hexpand (label, TRUE);
   gtk_widget_set_halign (label, GTK_ALIGN_FILL);
-  g_object_set (label, "margin-start", 16, "margin-end", 16, "margin-top", 10,
-                "margin-bottom", 10, NULL);
+  g_object_set (label, "margin-start", 12, "margin-end", 12, "margin-top", 7,
+                "margin-bottom", 7, NULL);
   return label;
 }
 
@@ -1013,12 +1013,11 @@ get_tag (MdCtx       *ctx,
   else if (g_str_has_prefix (name, "h"))
     {
       int level = atoi (name + 1);
-      double scale = level == 1   ? 1.5
-                     : level == 2 ? 1.375
-                     : level == 3 ? 1.25
+      double scale = level == 1   ? 1.3
+                     : level == 2 ? 1.2
+                     : level == 3 ? 1.1
                                   : 1;
-      g_object_set (tag, "scale", scale, "weight",
-                    level <= 3 ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_SEMIBOLD,
+      g_object_set (tag, "scale", scale, "weight", PANGO_WEIGHT_SEMIBOLD,
                     NULL);
     }
   else if (g_str_has_prefix (name, "gap"))
@@ -1043,8 +1042,7 @@ get_tag (MdCtx       *ctx,
   else if (g_str_has_prefix (name, "quote"))
     {
       int depth = atoi (name + 5);
-      g_object_set (tag, "left-margin", 10 * depth, "foreground-rgba", &grey,
-                    NULL);
+      g_object_set (tag, "left-margin", 10 * depth, NULL);
     }
   return tag;
 }
@@ -1272,7 +1270,7 @@ on_enter_block (MD_BLOCKTYPE type,
       {
         break_line (ctx, ctx->list_depth > 0             ? "gap4"
                          : ctx->last_block == MD_BLOCK_H ? "gap8"
-                                                         : "gap16");
+                                                         : "gap10");
         /* -1 means an unordered list; 0 is a valid ordered list start. */
         gint64 start = -1;
         if (type == MD_BLOCK_OL && detail != NULL)
@@ -1306,7 +1304,7 @@ on_enter_block (MD_BLOCKTYPE type,
             g_strlcpy (marker, "•", sizeof marker);
           }
 
-        break_line (ctx, "gap6");
+        break_line (ctx, "gap4");
         g_autofree gchar *prefix = g_strdup_printf ("%s ", marker);
         int width = marker_width (GTK_WIDGET (ctx->view), prefix);
         int margin = 0;
@@ -1338,11 +1336,11 @@ on_enter_block (MD_BLOCKTYPE type,
       /* The first paragraph of a list item follows the number; later
          paragraphs keep their own line. */
       if (ctx->list_depth == 0 || ctx->last_block != MD_BLOCK_LI)
-        break_line (ctx, ctx->list_depth > 0 ? "gap8" : "gap16");
+        break_line (ctx, ctx->list_depth > 0 ? "gap8" : "gap10");
       if (ctx->quote_depth > 0)
         {
           for (int i = 0; i < ctx->quote_depth; i++)
-            insert_text (ctx, "| ", 2, get_tag (ctx, "dim"));
+            insert_text (ctx, "│ ", strlen ("│ "), get_tag (ctx, "dim"));
           g_autofree gchar *tag_name =
               g_strdup_printf ("quote%d", ctx->quote_depth);
           push_scope (ctx, tag_name);
@@ -1355,8 +1353,8 @@ on_enter_block (MD_BLOCKTYPE type,
         unsigned level =
             detail != NULL ? ((MD_BLOCK_H_DETAIL *) detail)->level : 2;
         break_line (ctx, ctx->last_block == MD_BLOCK_H ? "gap8"
-                         : level <= 3                  ? "gap24"
-                                                       : "gap16");
+                         : level <= 3                  ? "gap18"
+                                                       : "gap10");
         g_autofree gchar *tag_name = g_strdup_printf ("h%u", level);
         push_scope (ctx, tag_name);
       }
@@ -1496,10 +1494,15 @@ on_leave_block (MD_BLOCKTYPE type,
 
     case MD_BLOCK_TH:
     case MD_BLOCK_TD:
-      gtk_grid_attach (
-          ctx->grid,
-          cell_label (ctx->cell->str, ctx->cell_align, ctx->cell_header),
-          ctx->col, ctx->row_slot, 1, 1);
+      {
+        GtkWidget *label =
+            cell_label (ctx->cell->str, ctx->cell_align, ctx->cell_header);
+        if (ctx->col == 0)
+          gtk_widget_set_margin_start (label, 0);
+        if (ctx->col == (int) ctx->col_count - 1)
+          gtk_widget_set_margin_end (label, 0);
+        gtk_grid_attach (ctx->grid, label, ctx->col, ctx->row_slot, 1, 1);
+      }
       ctx->col++;
       g_string_truncate (ctx->cell, 0);
       ctx->in_cell = FALSE;
