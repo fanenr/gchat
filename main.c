@@ -1906,7 +1906,10 @@ refresh_summary_marker (void)
   GtkWidget *toggle = gtk_button_new ();
   gtk_widget_set_halign (toggle, GTK_ALIGN_START);
   gtk_widget_add_css_class (toggle, "disclosure-toggle");
-  const gchar *label = _ ("Context compressed");
+  g_autofree gchar *label = g_strdup_printf (
+      ngettext ("Context compressed · %u message",
+                "Context compressed · %u messages", chat->summary_until),
+      chat->summary_until);
   gtk_accessible_update_property (GTK_ACCESSIBLE (toggle),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   GtkWidget *header = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
@@ -3498,7 +3501,7 @@ estimate_prompt (ContextPrefix  prefix,
                  JsonObject    *extra)
 {
   const gchar *prompt = system_prompt (app->chat);
-  gint64 count = 3;
+  gint64 count = 0;
   if (prompt != NULL && *prompt)
     count += 4 + estimate_text (prompt);
   if (prefix.summary != NULL)
@@ -3532,7 +3535,7 @@ estimate_prompt (ContextPrefix  prefix,
           count += estimate_text (text);
         }
     }
-  return count;
+  return count > 0 ? count + 3 : 0;
 }
 
 /* Return the prefix to summarize, retaining the newest user turns verbatim. */
@@ -3782,6 +3785,18 @@ format_token_count (guint64 count)
   return g_strdup_printf ("%" G_GUINT64_FORMAT "K", thousands);
 }
 
+static guint
+manual_compression_boundary (void)
+{
+  Chat *chat = app->chat;
+  if (app->busy || chat->edit_from != G_MAXUINT)
+    return 0;
+  guint turns = json_array_get_length (chat->messages);
+  ContextPrefix prefix = context_prefix (chat, turns);
+  guint until = compression_boundary (prefix, turns);
+  return until > prefix.until ? until : 0;
+}
+
 static void
 refresh_context (void)
 {
@@ -3791,12 +3806,17 @@ refresh_context (void)
   guint threshold = app->context_threshold > 0 ? app->context_threshold
                                                : CONTEXT_DEFAULT_THRESHOLD;
   app->context_fraction = (gdouble) usage.estimate / threshold;
-  gtk_widget_remove_css_class (app->context_ring, "warning");
-  gtk_widget_remove_css_class (app->context_ring, "danger");
-  if (app->context_fraction >= 1)
-    gtk_widget_add_css_class (app->context_ring, "danger");
-  else if (app->context_fraction >= 0.8)
-    gtk_widget_add_css_class (app->context_ring, "warning");
+  const gchar *state = app->context_fraction >= 1     ? "danger"
+                       : app->context_fraction >= 0.8 ? "warning"
+                                                      : NULL;
+  GtkWidget *indicators[] = { app->context_ring, app->context_progress };
+  for (guint i = 0; i < G_N_ELEMENTS (indicators); i++)
+    {
+      gtk_widget_remove_css_class (indicators[i], "warning");
+      gtk_widget_remove_css_class (indicators[i], "danger");
+      if (state != NULL)
+        gtk_widget_add_css_class (indicators[i], state);
+    }
   gtk_widget_queue_draw (app->context_ring);
   gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR (app->context_progress),
                                  MIN (app->context_fraction, 1));
@@ -3825,24 +3845,48 @@ refresh_context (void)
   const gchar *mode = prompt == NULL ? _ ("Inherit default")
                        : *prompt     ? _ ("Custom prompt")
                                      : _ ("No system prompt");
-  g_autofree gchar *prompt_info = g_strdup_printf (_ ("System prompt: %s"),
-                                                   mode);
-  gtk_label_set_text (GTK_LABEL (app->context_prompt_info), prompt_info);
-  g_autofree gchar *summary_info = usage.summarized > 0
-      ? g_strdup_printf (ngettext ("Summary: %u message compressed",
-                                   "Summary: %u messages compressed",
-                                   usage.summarized), usage.summarized)
-      : g_strdup (_ ("Summary: none"));
+  gtk_label_set_text (GTK_LABEL (app->context_prompt_info), mode);
+  g_autofree gchar *summary_info =
+      usage.summarized > 0
+          ? g_strdup_printf (ngettext ("%u message compressed",
+                                       "%u messages compressed",
+                                       usage.summarized),
+                             usage.summarized)
+          : g_strdup (_ ("None"));
   gtk_label_set_text (GTK_LABEL (app->context_summary_info), summary_info);
   g_autofree gchar *message_info = g_strdup_printf (
-      _ ("Active history: %u messages · %u user turns"),
-      usage.messages, usage.turns);
+      _ ("%u messages · %u user turns"), usage.messages, usage.turns);
   gtk_label_set_text (GTK_LABEL (app->context_messages_info), message_info);
-  g_autofree gchar *auto_info = app->auto_compact
-      ? g_strdup_printf (_ ("Automatic compression: on · keep %u turns"),
-                         app->context_keep_turns)
-      : g_strdup (_ ("Automatic compression: off"));
+  g_autofree gchar *auto_info =
+      app->auto_compact
+          ? g_strdup_printf (_ ("On · keep %u turns"), app->context_keep_turns)
+          : g_strdup (_ ("Off"));
   gtk_label_set_text (GTK_LABEL (app->context_auto_info), auto_info);
+
+  gboolean can_compress = manual_compression_boundary () > 0;
+  gtk_widget_set_sensitive (app->compress_button, can_compress);
+  g_autofree gchar *compress_tip = NULL;
+  if (!can_compress)
+    {
+      if (app->chat->edit_from != G_MAXUINT)
+        {
+          compress_tip = g_strdup (
+              _ ("Finish or cancel editing before compressing"));
+        }
+      else if (usage.messages == 0 || app->context_keep_turns == 0)
+        {
+          compress_tip = g_strdup (_ ("No earlier messages to compress"));
+        }
+      else
+        {
+          compress_tip = g_strdup_printf (
+              ngettext ("Needs more than %u active turn to compress",
+                        "Needs more than %u active turns to compress",
+                        app->context_keep_turns),
+              app->context_keep_turns);
+        }
+    }
+  gtk_widget_set_tooltip_text (app->compress_button, compress_tip);
 }
 
 /* Truncate the history when the edit draft is sent; a normal draft is
@@ -4229,23 +4273,41 @@ regenerate (void)
   start_request (g_steal_pointer (&body), len, FALSE, estimate);
 }
 
+static gboolean
+text_has_nonspace (const gchar *text)
+{
+  if (text == NULL)
+    return FALSE;
+  while (g_ascii_isspace (*text))
+    text++;
+  return *text != '\0';
+}
+
 /* Return a floating scroller and the borrowed text view it contains. */
 static GtkWidget *
 prompt_scroller (const gchar *text,
                  GtkWidget  **view)
 {
   GtkWidget *scroller = gtk_scrolled_window_new ();
+  gtk_widget_add_css_class (scroller, "prompt-scroll");
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroller),
                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_min_content_width (GTK_SCROLLED_WINDOW (scroller),
+                                             340);
   gtk_scrolled_window_set_min_content_height (GTK_SCROLLED_WINDOW (scroller),
                                               160);
+  gtk_scrolled_window_set_max_content_height (GTK_SCROLLED_WINDOW (scroller),
+                                              260);
+  gtk_scrolled_window_set_propagate_natural_height (
+      GTK_SCROLLED_WINDOW (scroller), TRUE);
   gtk_scrolled_window_set_has_frame (GTK_SCROLLED_WINDOW (scroller), TRUE);
   *view = gtk_text_view_new ();
+  gtk_widget_add_css_class (*view, "prompt-editor");
   gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (*view), GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_left_margin (GTK_TEXT_VIEW (*view), 8);
-  gtk_text_view_set_right_margin (GTK_TEXT_VIEW (*view), 8);
-  gtk_text_view_set_top_margin (GTK_TEXT_VIEW (*view), 8);
-  gtk_text_view_set_bottom_margin (GTK_TEXT_VIEW (*view), 8);
+  gtk_text_view_set_left_margin (GTK_TEXT_VIEW (*view), 10);
+  gtk_text_view_set_right_margin (GTK_TEXT_VIEW (*view), 10);
+  gtk_text_view_set_top_margin (GTK_TEXT_VIEW (*view), 10);
+  gtk_text_view_set_bottom_margin (GTK_TEXT_VIEW (*view), 10);
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (*view));
   gtk_text_buffer_set_text (buffer, text != NULL ? text : "", -1);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroller), *view);
@@ -4259,25 +4321,96 @@ typedef enum
   PROMPT_OMIT,
 } PromptMode;
 
-static void
-update_prompt_editor (AdwAlertDialog *dialog)
+static PromptMode
+selected_prompt_mode (AdwAlertDialog *dialog)
 {
-  GtkDropDown *mode = g_object_get_data (G_OBJECT (dialog), "prompt-mode");
-  GtkWidget *scroll = g_object_get_data (G_OBJECT (dialog), "prompt-scroll");
-  GtkTextBuffer *buffer = g_object_get_data (G_OBJECT (dialog),
-                                             "prompt-buffer");
-  gboolean custom = gtk_drop_down_get_selected (mode) == PROMPT_CUSTOM;
-  gtk_widget_set_visible (scroll, custom);
-  adw_alert_dialog_set_response_enabled (
-      dialog, "save", !custom || gtk_text_buffer_get_char_count (buffer) > 0);
+  GtkWidget *mode = g_object_get_data (G_OBJECT (dialog), "prompt-mode");
+  if (mode == NULL)
+    return PROMPT_CUSTOM;
+  guint index = 0;
+  for (GtkWidget *child = gtk_widget_get_first_child (mode); child != NULL;
+       child = gtk_widget_get_next_sibling (child), index++)
+    {
+      if (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (child)))
+        return (PromptMode) index;
+    }
+  return PROMPT_INHERIT;
 }
 
 static void
-on_prompt_mode_changed (GtkDropDown    *mode G_GNUC_UNUSED,
-                        GParamSpec     *pspec G_GNUC_UNUSED,
-                        AdwAlertDialog *dialog)
+update_prompt_editor (AdwAlertDialog *dialog)
 {
+  GtkWidget *mode = g_object_get_data (G_OBJECT (dialog), "prompt-mode");
+  GtkTextView *view = g_object_get_data (G_OBJECT (dialog), "prompt-view");
+  GtkTextBuffer *buffer = g_object_get_data (G_OBJECT (dialog),
+                                             "prompt-buffer");
+  GtkTextBuffer *preview = g_object_get_data (G_OBJECT (dialog),
+                                              "preview-buffer");
+  GtkLabel *tokens_label = g_object_get_data (G_OBJECT (dialog),
+                                              "prompt-tokens");
+  PromptMode selected = selected_prompt_mode (dialog);
+  gboolean custom = selected == PROMPT_CUSTOM;
+
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds (buffer, &start, &end);
+  g_autofree gchar *custom_text =
+      gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  gboolean has_custom = text_has_nonspace (custom_text);
+
+  const gchar *effective = NULL;
+  if (custom)
+    {
+      gtk_text_view_set_buffer (view, buffer);
+      if (has_custom)
+        effective = custom_text;
+    }
+  else
+    {
+      const gchar *fallback = app->default_system_prompt;
+      gboolean has_default = text_has_nonspace (fallback);
+      const gchar *shown =
+          selected == PROMPT_OMIT
+              ? _ ("No system prompt will be sent for this chat")
+              : (has_default ? fallback : _ ("No default system prompt set"));
+      gtk_text_buffer_set_text (preview, shown, -1);
+      gtk_text_view_set_buffer (view, preview);
+      if (selected == PROMPT_INHERIT && has_default)
+        effective = fallback;
+    }
+
+  gtk_text_view_set_editable (view, custom);
+  gtk_text_view_set_cursor_visible (view, custom);
+  if (custom)
+    gtk_widget_remove_css_class (GTK_WIDGET (view), "dimmed");
+  else
+    gtk_widget_add_css_class (GTK_WIDGET (view), "dimmed");
+
+  guint tokens = effective != NULL ? (guint) (4 + estimate_text (effective))
+                                   : 0;
+  g_autofree gchar *token_info =
+      tokens > 0
+          ? g_strdup_printf (ngettext ("Approximately %u token",
+                                       "Approximately %u tokens", tokens),
+                             tokens)
+          : g_strdup (_ ("0 tokens"));
+  gtk_label_set_text (tokens_label, token_info);
+
+  adw_alert_dialog_set_response_enabled (dialog, "save",
+                                         mode == NULL || !custom || has_custom);
+}
+
+static void
+on_prompt_mode_toggled (GtkToggleButton *button,
+                        AdwAlertDialog  *dialog)
+{
+  if (!gtk_toggle_button_get_active (button))
+    return;
   update_prompt_editor (dialog);
+  if (selected_prompt_mode (dialog) == PROMPT_CUSTOM)
+    {
+      GtkWidget *view = g_object_get_data (G_OBJECT (dialog), "prompt-view");
+      gtk_widget_grab_focus (view);
+    }
 }
 
 static void
@@ -4285,6 +4418,22 @@ on_prompt_text_changed (GtkTextBuffer  *buffer G_GNUC_UNUSED,
                         AdwAlertDialog *dialog)
 {
   update_prompt_editor (dialog);
+}
+
+static void
+refresh_default_prompt_row (AdwActionRow *row)
+{
+  if (row == NULL)
+    return;
+  if (!text_has_nonspace (app->default_system_prompt))
+    {
+      adw_action_row_set_subtitle (row, _ ("Not set"));
+      return;
+    }
+  g_autofree gchar *preview = g_strdup (app->default_system_prompt);
+  g_strdelimit (preview, "\r\n\t", ' ');
+  g_strstrip (preview);
+  adw_action_row_set_subtitle (row, preview);
 }
 
 static void
@@ -4296,9 +4445,8 @@ on_prompt_response (AdwAlertDialog *dialog,
     return;
   GtkTextBuffer *buffer = g_object_get_data (G_OBJECT (dialog),
                                              "prompt-buffer");
-  GtkDropDown *mode = g_object_get_data (G_OBJECT (dialog), "prompt-mode");
   gboolean global = GPOINTER_TO_INT (data);
-  guint selected = global ? PROMPT_CUSTOM : gtk_drop_down_get_selected (mode);
+  PromptMode selected = global ? PROMPT_CUSTOM : selected_prompt_mode (dialog);
   g_autofree gchar *prompt = NULL;
   if (selected == PROMPT_CUSTOM)
     {
@@ -4311,10 +4459,12 @@ on_prompt_response (AdwAlertDialog *dialog,
 
   if (global)
     {
+      if (!text_has_nonspace (prompt))
+        g_clear_pointer (&prompt, g_free);
+      GtkWidget *settings = g_object_get_data (G_OBJECT (dialog),
+                                               "settings-parent");
       if (!config_set ("default_system_prompt", prompt))
         {
-          GtkWidget *settings = g_object_get_data (G_OBJECT (dialog),
-                                                   "settings-parent");
           if (settings != NULL)
             settings_toast (settings, _ ("Failed to save setting"));
           else
@@ -4323,6 +4473,11 @@ on_prompt_response (AdwAlertDialog *dialog,
         }
       g_free (app->default_system_prompt);
       app->default_system_prompt = g_steal_pointer (&prompt);
+      if (settings != NULL)
+        {
+          refresh_default_prompt_row (
+              g_object_get_data (G_OBJECT (settings), "default-prompt-row"));
+        }
     }
   else
     {
@@ -4344,6 +4499,7 @@ present_prompt_editor (gboolean global)
   const gchar *body = global ? _ ("Leave blank to omit the default prompt")
                              : _ ("Applies to future replies in this chat");
   AdwDialog *alert = adw_alert_dialog_new (title, body);
+  gtk_widget_add_css_class (GTK_WIDGET (alert), "prompt-dialog");
   AdwAlertDialog *dialog = ADW_ALERT_DIALOG (alert);
   AdwDialog *visible = adw_application_window_get_visible_dialog (
       ADW_APPLICATION_WINDOW (app->window));
@@ -4354,9 +4510,13 @@ present_prompt_editor (gboolean global)
   GtkWidget *scroll = prompt_scroller (value, &view);
   gtk_accessible_update_property (GTK_ACCESSIBLE (view),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
-  g_object_set_data (G_OBJECT (dialog), "prompt-buffer", buffer);
+  g_object_set_data (G_OBJECT (dialog), "prompt-view", view);
+  g_object_set_data_full (G_OBJECT (dialog), "prompt-buffer",
+                          g_object_ref (buffer), g_object_unref);
+  g_object_set_data_full (G_OBJECT (dialog), "preview-buffer",
+                          gtk_text_buffer_new (NULL), g_object_unref);
   adw_alert_dialog_add_responses (dialog, "cancel", _ ("Cancel"), "save",
                                   _ ("Save"), NULL);
   adw_alert_dialog_set_close_response (dialog, "cancel");
@@ -4365,29 +4525,53 @@ present_prompt_editor (gboolean global)
   if (!global)
     {
       const gchar *options[] = { _ ("Inherit default"), _ ("Custom prompt"),
-                                 _ ("No system prompt"), NULL };
-      GtkWidget *mode = gtk_drop_down_new_from_strings (options);
+                                 _ ("No system prompt") };
+      GtkWidget *mode = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
+      gtk_box_set_homogeneous (GTK_BOX (mode), TRUE);
+      gtk_widget_set_margin_bottom (mode, 8);
+      gtk_widget_add_css_class (mode, "linked");
       PromptMode initial = PROMPT_INHERIT;
       if (value != NULL)
         initial = *value ? PROMPT_CUSTOM : PROMPT_OMIT;
-      gtk_drop_down_set_selected (GTK_DROP_DOWN (mode), initial);
+      GtkToggleButton *group = NULL;
+      for (guint i = 0; i < G_N_ELEMENTS (options); i++)
+        {
+          GtkWidget *button = gtk_toggle_button_new_with_label (options[i]);
+          if (group != NULL)
+            gtk_toggle_button_set_group (GTK_TOGGLE_BUTTON (button), group);
+          else
+            group = GTK_TOGGLE_BUTTON (button);
+          if (i == (guint) initial)
+            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
+          g_signal_connect_object (button, "toggled",
+                                   G_CALLBACK (on_prompt_mode_toggled), dialog,
+                                   0);
+          gtk_box_append (GTK_BOX (mode), button);
+        }
       gtk_accessible_update_property (GTK_ACCESSIBLE (mode),
                                       GTK_ACCESSIBLE_PROPERTY_LABEL,
                                       _ ("System prompt mode"), -1);
       gtk_box_append (GTK_BOX (box), mode);
       g_object_set_data (G_OBJECT (dialog), "prompt-mode", mode);
       g_object_set_data (G_OBJECT (dialog), "prompt-scroll", scroll);
-      g_signal_connect_object (mode, "notify::selected",
-                               G_CALLBACK (on_prompt_mode_changed), dialog, 0);
-      g_signal_connect_object (buffer, "changed",
-                               G_CALLBACK (on_prompt_text_changed), dialog, 0);
-      update_prompt_editor (dialog);
     }
   gtk_box_append (GTK_BOX (box), scroll);
+  GtkWidget *tokens_label = gtk_label_new (NULL);
+  gtk_label_set_xalign (GTK_LABEL (tokens_label), 1);
+  gtk_widget_add_css_class (tokens_label, "caption");
+  gtk_widget_add_css_class (tokens_label, "dimmed");
+  gtk_widget_add_css_class (tokens_label, "numeric");
+  gtk_box_append (GTK_BOX (box), tokens_label);
+  g_object_set_data (G_OBJECT (dialog), "prompt-tokens", tokens_label);
+  g_signal_connect_object (buffer, "changed",
+                           G_CALLBACK (on_prompt_text_changed), dialog, 0);
+  update_prompt_editor (dialog);
   adw_alert_dialog_set_extra_child (dialog, box);
   g_signal_connect (dialog, "response", G_CALLBACK (on_prompt_response),
                     GINT_TO_POINTER (global));
   adw_dialog_present (alert, app->window);
+  if (selected_prompt_mode (dialog) == PROMPT_CUSTOM)
+    gtk_widget_grab_focus (view);
 }
 
 static void
@@ -4402,25 +4586,11 @@ on_prompt_clicked (GtkButton *button G_GNUC_UNUSED,
   present_prompt_editor (global);
 }
 
-static guint
-manual_compression_boundary (void)
-{
-  Chat *chat = app->chat;
-  if (app->busy || chat->edit_from != G_MAXUINT)
-    return 0;
-  guint turns = json_array_get_length (chat->messages);
-  ContextPrefix prefix = context_prefix (chat, turns);
-  guint until = compression_boundary (prefix, turns);
-  return until > prefix.until ? until : 0;
-}
-
 static void
 on_context_popover_show (GtkWidget *popover G_GNUC_UNUSED,
                          gpointer   data G_GNUC_UNUSED)
 {
   refresh_context ();
-  gtk_widget_set_sensitive (app->compress_button,
-                            manual_compression_boundary () > 0);
 }
 
 static void
@@ -5813,6 +5983,11 @@ on_settings_clicked (GtkButton *button G_GNUC_UNUSED,
   setup_uint_preference (builder, "context_threshold", &app->context_threshold);
   setup_uint_preference (builder, "context_keep_turns",
                          &app->context_keep_turns);
+  AdwActionRow *default_prompt_row = ADW_ACTION_ROW (
+      gtk_builder_get_object (builder, "default_prompt_row"));
+  refresh_default_prompt_row (default_prompt_row);
+  g_object_set_data (G_OBJECT (dialog), "default-prompt-row",
+                     default_prompt_row);
   g_signal_connect (gtk_builder_get_object (builder, "default_system_prompt"),
                     "clicked", G_CALLBACK (on_prompt_clicked),
                     GINT_TO_POINTER (TRUE));

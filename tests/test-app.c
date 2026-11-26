@@ -840,6 +840,10 @@ context_ui (void)
   GtkWidget *entries = gtk_popover_get_child (popover);
   GtkWidget *prompt_button = gtk_widget_get_prev_sibling (app->compress_button);
   g_assert_true (GTK_IS_BUTTON (prompt_button));
+  g_assert_false (gtk_widget_has_css_class (prompt_button, "flat"));
+  g_assert_false (gtk_widget_has_css_class (app->compress_button, "flat"));
+  g_assert_true (gtk_widget_has_css_class (app->context_percent, "dimmed"));
+  g_assert_true (gtk_widget_has_css_class (app->context_percent, "numeric"));
   GtkWidget *actions = gtk_widget_get_parent (app->compress_button);
   g_assert_true (gtk_widget_get_parent (actions) == entries);
   g_assert_cmpint (gtk_orientable_get_orientation (GTK_ORIENTABLE (actions)),
@@ -852,9 +856,19 @@ context_ui (void)
        child = gtk_widget_get_next_sibling (child))
     g_assert_false (GTK_IS_SEPARATOR (child));
   g_assert_null (gtk_widget_get_next_sibling (app->compress_button));
+  GtkWidget *spinner = gtk_widget_get_first_child (app->context_status);
+  g_assert_true (GTK_IS_SPINNER (spinner));
+  g_assert_false (gtk_spinner_get_spinning (GTK_SPINNER (spinner)));
+  gtk_widget_set_visible (app->context_status, TRUE);
+  g_assert_true (gtk_spinner_get_spinning (GTK_SPINNER (spinner)));
+  gtk_widget_set_visible (app->context_status, FALSE);
+  g_assert_false (gtk_spinner_get_spinning (GTK_SPINNER (spinner)));
 
+  g_assert_cmpint (estimate_prompt ((ContextPrefix){ 0 }, 0, NULL), ==, 0);
   on_context_popover_show (NULL, NULL);
   g_assert_false (gtk_widget_get_sensitive (app->compress_button));
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->compress_button), ==,
+                   "Needs more than 2 active turns to compress");
   ContextUsage initial = context_usage ();
   g_assert_cmpuint (initial.messages, ==, 2);
   g_assert_cmpuint (initial.turns, ==, 1);
@@ -883,8 +897,11 @@ context_ui (void)
   ContextUsage calibrated = context_usage ();
   g_assert_cmpint (calibrated.estimate, ==, 500);
   app->chat->edit_from = 1;
+  refresh_context ();
   g_assert_cmpint (calibrated_prompt (100), ==, 100);
   g_assert_cmpuint (context_usage ().messages, ==, 1);
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->compress_button), ==,
+                   "Finish or cancel editing before compressing");
   app->chat->edit_from = G_MAXUINT;
   g_free (app->model);
   app->model = g_strdup ("deepseek-v4-pro");
@@ -894,9 +911,11 @@ context_ui (void)
   app->context_threshold = 625;
   refresh_context ();
   g_assert_true (gtk_widget_has_css_class (app->context_ring, "warning"));
+  g_assert_true (gtk_widget_has_css_class (app->context_progress, "warning"));
   app->context_threshold = 400;
   refresh_context ();
   g_assert_true (gtk_widget_has_css_class (app->context_ring, "danger"));
+  g_assert_true (gtk_widget_has_css_class (app->context_progress, "danger"));
   cairo_surface_t *surface = cairo_recording_surface_create (
       CAIRO_CONTENT_COLOR_ALPHA, NULL);
   cairo_t *cr = cairo_create (surface);
@@ -924,11 +943,13 @@ context_ui (void)
   g_assert_cmpuint (summarized.summarized, ==, 2);
   g_assert_cmpuint (summarized.messages, ==, 0);
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_summary_info)),
-                   ==, "Summary: 2 messages compressed");
+                   ==, "2 messages compressed");
+  g_assert_cmpstr (gtk_widget_get_tooltip_text (app->compress_button), ==,
+                   "No earlier messages to compress");
   app->auto_compact = TRUE;
   refresh_context ();
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_auto_info)),
-                   ==, "Automatic compression: on · keep 2 turns");
+                   ==, "On · keep 2 turns");
   g_assert_true (gtk_widget_get_last_child (entries) == actions);
   on_prompt_clicked (NULL, NULL);
   AdwAlertDialog *editor = ADW_ALERT_DIALOG (
@@ -937,18 +958,43 @@ context_ui (void)
   g_assert_nonnull (editor);
   g_assert_cmpstr (adw_alert_dialog_get_body (editor), ==,
                    "Applies to future replies in this chat");
-  GtkDropDown *mode = g_object_get_data (G_OBJECT (editor), "prompt-mode");
+  GtkWidget *mode = g_object_get_data (G_OBJECT (editor), "prompt-mode");
+  GtkWidget *scroll = g_object_get_data (G_OBJECT (editor), "prompt-scroll");
+  GtkTextView *view = g_object_get_data (G_OBJECT (editor), "prompt-view");
   GtkTextBuffer *buffer = g_object_get_data (G_OBJECT (editor),
                                              "prompt-buffer");
-  g_assert_cmpuint (gtk_drop_down_get_selected (mode), ==, PROMPT_INHERIT);
-  gtk_drop_down_set_selected (mode, PROMPT_CUSTOM);
+  GtkLabel *tokens = g_object_get_data (G_OBJECT (editor), "prompt-tokens");
+  g_assert_true (gtk_widget_has_css_class (mode, "linked"));
+  g_assert_cmpuint (selected_prompt_mode (editor), ==, PROMPT_INHERIT);
+  g_assert_true (gtk_widget_get_visible (scroll));
+  g_assert_false (gtk_text_view_get_editable (view));
+  g_assert_true (gtk_widget_has_css_class (GTK_WIDGET (view), "dimmed"));
+  g_assert_cmpstr (gtk_label_get_text (tokens), ==, "0 tokens");
+  GtkWidget *inherit_btn = gtk_widget_get_first_child (mode);
+  GtkWidget *custom_btn = gtk_widget_get_next_sibling (inherit_btn);
+  GtkWidget *omit_btn = gtk_widget_get_next_sibling (custom_btn);
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (custom_btn), TRUE);
+  g_assert_cmpuint (selected_prompt_mode (editor), ==, PROMPT_CUSTOM);
+  g_assert_true (gtk_text_view_get_editable (view));
+  g_assert_false (gtk_widget_has_css_class (GTK_WIDGET (view), "dimmed"));
   g_assert_false (adw_alert_dialog_get_response_enabled (editor, "save"));
+  gtk_text_buffer_set_text (buffer, " \n\t ", -1);
+  g_assert_false (adw_alert_dialog_get_response_enabled (editor, "save"));
+  g_assert_cmpstr (gtk_label_get_text (tokens), ==, "0 tokens");
   gtk_text_buffer_set_text (buffer, "第一行\n第二行", -1);
   g_assert_true (adw_alert_dialog_get_response_enabled (editor, "save"));
+  g_assert_cmpstr (gtk_label_get_text (tokens), ==,
+                   "Approximately 11 tokens");
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (omit_btn), TRUE);
+  g_assert_cmpuint (selected_prompt_mode (editor), ==, PROMPT_OMIT);
+  g_assert_false (gtk_text_view_get_editable (view));
+  g_assert_cmpstr (gtk_label_get_text (tokens), ==, "0 tokens");
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (custom_btn), TRUE);
+  g_assert_true (gtk_text_view_get_buffer (view) == buffer);
   g_signal_emit_by_name (editor, "response::save", "save");
   g_assert_cmpstr (app->chat->system_prompt, ==, "第一行\n第二行");
   g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (app->context_prompt_info)),
-                   ==, "System prompt: Custom prompt");
+                   ==, "Custom prompt");
   adw_dialog_close (ADW_DIALOG (editor));
   on_prompt_clicked (NULL, GINT_TO_POINTER (TRUE));
   editor = ADW_ALERT_DIALOG (adw_application_window_get_visible_dialog (
@@ -969,6 +1015,15 @@ context_ui (void)
           gtk_builder_get_object (builder, rows[i]));
       g_assert_cmpstr (adw_action_row_get_subtitle (setting), ==, "");
     }
+  AdwActionRow *prompt_row = ADW_ACTION_ROW (
+      gtk_builder_get_object (builder, "default_prompt_row"));
+  refresh_default_prompt_row (prompt_row);
+  g_assert_cmpstr (adw_action_row_get_subtitle (prompt_row), ==, "Not set");
+  app->default_system_prompt = g_strdup ("默认第一行\n默认第二行");
+  refresh_default_prompt_row (prompt_row);
+  g_assert_cmpstr (adw_action_row_get_subtitle (prompt_row), ==,
+                   "默认第一行 默认第二行");
+  g_clear_pointer (&app->default_system_prompt, g_free);
   GtkButton *edit = GTK_BUTTON (
       gtk_builder_get_object (builder, "default_system_prompt"));
   g_assert_cmpstr (gtk_button_get_label (edit), ==, "Edit");
@@ -1071,6 +1126,8 @@ context_marker (void)
   GtkWidget *header = gtk_button_get_child (GTK_BUTTON (toggle));
   GtkWidget *title = gtk_widget_get_first_child (header);
   g_assert_true (GTK_IS_LABEL (title));
+  g_assert_cmpstr (gtk_label_get_text (GTK_LABEL (title)), ==,
+                   "Context compressed · 2 messages");
   GtkWidget *chevron = gtk_widget_get_next_sibling (title);
   g_assert_true (GTK_IS_IMAGE (chevron));
   g_assert_null (gtk_widget_get_next_sibling (chevron));

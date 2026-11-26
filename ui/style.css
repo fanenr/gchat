@@ -89,9 +89,16 @@
   padding: 8px 12px;
 }
 .context-summary-text, .context-summary-text text { background: transparent; }
+.prompt-scroll { border-radius: 10px; }
+.prompt-editor, .prompt-editor text { background: transparent; }
+.prompt-editor { line-height: 1.45; }
+dialog.prompt-dialog .message-area { padding-bottom: 0; }
+dialog.prompt-dialog .response-area { padding-top: 8px; }
 .context-ring { color: @accent_color; }
 .context-ring.warning { color: @warning_color; }
 .context-ring.danger { color: @error_color; }
+progressbar.warning > trough > progress { background-color: @warning_color; }
+progressbar.danger > trough > progress { background-color: @error_color; }
 .msg-text, .chat-input { background: transparent; }
 .msg-text { line-height: 1.5; }
 .chat-input {

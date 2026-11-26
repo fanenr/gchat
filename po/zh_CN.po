@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gchat\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 19:36+0800\n"
+"POT-Creation-Date: 2026-11-26 17:53+0800\n"
 "PO-Revision-Date: 2026-11-13 21:20+0800\n"
 "Last-Translator: gchat contributors\n"
 "Language-Team: Simplified Chinese\n"
@@ -13,7 +13,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: main.c:151
+#: main.c:151 main.c:3863
 msgid "Off"
 msgstr "关闭"
 
@@ -29,7 +29,7 @@ msgstr "高"
 msgid "Max"
 msgstr "最高"
 
-#: main.c:339 main.c:4708
+#: main.c:339 main.c:4878
 msgid "Image exceeds the 8 MiB limit"
 msgstr "图片超过 8 MiB 的上限"
 
@@ -37,7 +37,7 @@ msgstr "图片超过 8 MiB 的上限"
 msgid "Unsupported image format"
 msgstr "不支持的图片格式"
 
-#: main.c:439 main.c:4917
+#: main.c:439 main.c:5087
 msgid "Image dimensions are too large"
 msgstr "图片尺寸过大"
 
@@ -113,393 +113,422 @@ msgstr "分叉"
 msgid "Fork conversation"
 msgstr "分叉会话"
 
-#: main.c:1909
-msgid "Context compressed"
-msgstr "上下文已压缩"
+#: main.c:1910
+#, c-format
+msgid "Context compressed · %u message"
+msgid_plural "Context compressed · %u messages"
+msgstr[0] "上下文已压缩 · %u 条消息"
 
-#: main.c:1932
+#: main.c:1935
 msgid "Context summary"
 msgstr "上下文摘要"
 
-#: main.c:1970
+#: main.c:1973
 msgid "Edit and resend"
 msgstr "编辑后重发"
 
-#: main.c:1992 main.c:2918
+#: main.c:1995 main.c:2921
 msgid "Regenerate"
 msgstr "重新生成"
 
-#: main.c:1998 main.c:2923
+#: main.c:2001 main.c:2926
 msgid "Delete message"
 msgstr "删除这条消息"
 
-#: main.c:2056
+#: main.c:2059
 #, c-format
 msgid "Stop compressing (%s+.)"
 msgstr "停止压缩 (%s+.)"
 
-#: main.c:2057
+#: main.c:2060
 #, c-format
 msgid "Stop generating (%s+.)"
 msgstr "停止生成 (%s+.)"
 
-#: main.c:2061 ui/content.blp:377
+#: main.c:2064 ui/content.blp:449
 msgid "Send"
 msgstr "发送"
 
-#: main.c:2090
+#: main.c:2093
 msgid "Earlier"
 msgstr "更早"
 
-#: main.c:2094
+#: main.c:2097
 msgid "Today"
 msgstr "今天"
 
-#: main.c:2096
+#: main.c:2099
 msgid "Yesterday"
 msgstr "昨天"
 
-#: main.c:2133 main.c:2393 main.c:2418 ui/sidebar.blp:45
+#: main.c:2136 main.c:2396 main.c:2421 ui/sidebar.blp:45
 msgid "New chat"
 msgstr "新对话"
 
-#: main.c:2250
+#: main.c:2253
 msgid "Rename conversation"
 msgstr "重命名会话"
 
-#: main.c:2258 main.c:2396 main.c:4360 ui/content.blp:163
+#: main.c:2261 main.c:2399 main.c:4520 ui/content.blp:176
 msgid "Cancel"
 msgstr "取消"
 
-#: main.c:2258 main.c:2716 main.c:4361
+#: main.c:2261 main.c:2719 main.c:4521
 msgid "Save"
 msgstr "保存"
 
-#: main.c:2290
+#: main.c:2293
 #, c-format
 msgid "%s (Copy)"
 msgstr "%s（副本）"
 
-#: main.c:2291 main.c:2326
+#: main.c:2294 main.c:2329
 msgid "Copy"
 msgstr "复制"
 
-#: main.c:2325
+#: main.c:2328
 msgid "Unpin"
 msgstr "取消置顶"
 
-#: main.c:2325
+#: main.c:2328
 msgid "Pin"
 msgstr "置顶"
 
-#: main.c:2326
+#: main.c:2329
 msgid "Rename"
 msgstr "重命名"
 
-#: main.c:2392
+#: main.c:2395
 #, c-format
 msgid "Delete “%s” and all its messages and drafts? This cannot be undone"
 msgstr "要删除“%s”及其全部消息和草稿吗？此操作无法撤销"
 
-#: main.c:2395
+#: main.c:2398
 msgid "Delete conversation?"
 msgstr "删除对话？"
 
-#: main.c:2397
+#: main.c:2400
 msgid "Delete"
 msgstr "删除"
 
-#: main.c:2424
+#: main.c:2427
 msgid "Delete conversation"
 msgstr "删除对话"
 
-#: main.c:2451
+#: main.c:2454
 msgid "Right-click for conversation menu"
 msgstr "右键打开会话菜单"
 
-#: main.c:2505
+#: main.c:2508
 msgid "Pinned"
 msgstr "置顶"
 
-#: main.c:2558 main.c:4319 main.c:4321 main.c:5463 main.c:5528
+#: main.c:2561 main.c:4469 main.c:4471 main.c:5633 main.c:5698
 msgid "Failed to save setting"
 msgstr "无法保存设置"
 
-#: main.c:2644
+#: main.c:2647
 msgid "Model"
 msgstr "模型"
 
-#: main.c:2655
+#: main.c:2658
 msgid "Reasoning level"
 msgstr "推理级别"
 
-#: main.c:2698 main.c:5558
+#: main.c:2701 main.c:5728
 msgid "API key saved"
 msgstr "API 密钥已保存"
 
-#: main.c:2700 main.c:5560
+#: main.c:2703 main.c:5730
 msgid "Failed to save API key"
 msgstr "API 密钥保存失败"
 
-#: main.c:2708
+#: main.c:2711
 #, c-format
 msgid "Your key is saved in %s for future use"
 msgstr "填写后保存在 %s，之后无需再输入"
 
-#: main.c:2710
+#: main.c:2713
 msgid "DeepSeek API key required"
 msgstr "需要 DeepSeek API Key"
 
-#: main.c:2716
+#: main.c:2719
 msgid "Later"
 msgstr "稍后"
 
-#: main.c:2838 main.c:5166
+#: main.c:2841 main.c:5336
 msgid "Failed to save conversation"
 msgstr "会话保存失败"
 
-#: main.c:2891
+#: main.c:2894
 msgid "No response received"
 msgstr "没有收到回复"
 
-#: main.c:2976
+#: main.c:2979
 msgid "Reading links…"
 msgstr "正在阅读链接…"
 
-#: main.c:2978
+#: main.c:2981
 msgid "Searching the web…"
 msgstr "正在搜索网页…"
 
-#: main.c:2980 main.c:3034
+#: main.c:2983 main.c:3037
 msgid "Thinking…"
 msgstr "思考中…"
 
-#: main.c:3084
+#: main.c:3087
 msgid "Connection interrupted. The response may be incomplete"
 msgstr "连接中断，回复可能不完整"
 
-#: main.c:3192 main.c:4080
+#: main.c:3195 main.c:4124
 msgid "Request failed"
 msgstr "请求失败"
 
-#: main.c:3241 main.c:4831 main.c:4967
+#: main.c:3244 main.c:5001 main.c:5137
 msgid "A request can contain at most 600 images"
 msgstr "单次请求最多包含 600 张图片"
 
-#: main.c:3248
+#: main.c:3251
 msgid "Invalid image reference"
 msgstr "图片引用无效"
 
-#: main.c:3265
+#: main.c:3268
 msgid "With 15 or more images, each side must be at most 4096 pixels"
 msgstr "请求包含 15 张或更多图片时，每张图片的最长边不得超过 4096 像素"
 
-#: main.c:3274 main.c:3368
+#: main.c:3277 main.c:3371
 msgid "The conversation is too large to send"
 msgstr "对话内容过大，无法发送"
 
-#: main.c:3427
+#: main.c:3430
 msgid "Images require the DeepSeek-Flash model"
 msgstr "图片需要使用 DeepSeek-Flash 模型"
 
-#: main.c:3814
+#: main.c:3834
 #, c-format
 msgid "Approximately %s / %u tokens (compression threshold, not model limit)"
 msgstr "约 %s / %u token（压缩阈值，并非模型上限）"
 
-#: main.c:3818
+#: main.c:3838
 #, c-format
 msgid "Conversation context: %s, %s. The threshold is not a model limit"
 msgstr "会话上下文：%s，%s。此阈值不是模型上限"
 
-#: main.c:3825 main.c:4367
+#: main.c:3845 main.c:4527
 msgid "Inherit default"
 msgstr "继承默认"
 
-#: main.c:3826 main.c:4367
+#: main.c:3846 main.c:4527
 msgid "Custom prompt"
 msgstr "自定义提示词"
 
-#: main.c:3827 main.c:4368
+#: main.c:3847 main.c:4528
 msgid "No system prompt"
 msgstr "不发送系统提示词"
 
-#: main.c:3828
+#: main.c:3851
 #, c-format
-msgid "System prompt: %s"
-msgstr "系统提示词：%s"
+msgid "%u message compressed"
+msgid_plural "%u messages compressed"
+msgstr[0] "已压缩 %u 条消息"
 
-#: main.c:3832
+#: main.c:3855
+msgid "None"
+msgstr "无"
+
+#: main.c:3858
 #, c-format
-msgid "Summary: %u message compressed"
-msgid_plural "Summary: %u messages compressed"
-msgstr[0] "历史摘要：已压缩 %u 条消息"
+msgid "%u messages · %u user turns"
+msgstr "%u 条消息 · %u 轮提问"
 
-#: main.c:3835
-msgid "Summary: none"
-msgstr "历史摘要：无"
-
-#: main.c:3838
+#: main.c:3862
 #, c-format
-msgid "Active history: %u messages · %u user turns"
-msgstr "活跃历史：%u 条消息 · %u 轮提问"
+msgid "On · keep %u turns"
+msgstr "开启 · 保留 %u 轮"
 
-#: main.c:3842
+#: main.c:3874
+msgid "Finish or cancel editing before compressing"
+msgstr "正在编辑，发送或取消编辑后再压缩"
+
+#: main.c:3878
+msgid "No earlier messages to compress"
+msgstr "没有可压缩的较早消息"
+
+#: main.c:3883
 #, c-format
-msgid "Automatic compression: on · keep %u turns"
-msgstr "自动压缩：开启 · 保留 %u 轮"
+msgid "Needs more than %u active turn to compress"
+msgid_plural "Needs more than %u active turns to compress"
+msgstr[0] "需要超过 %u 轮活跃提问才能压缩"
 
-#: main.c:3844
-msgid "Automatic compression: off"
-msgstr "自动压缩：关闭"
-
-#: main.c:4018
+#: main.c:4062
 #, c-format
 msgid "Could not compress context: %s"
 msgstr "无法压缩上下文：%s"
 
-#: main.c:4075
+#: main.c:4119
 msgid "Context compression cancelled"
 msgstr "已取消上下文压缩"
 
-#: main.c:4094
+#: main.c:4138
 msgid "DeepSeek did not return a complete summary"
 msgstr "DeepSeek 未返回完整摘要"
 
-#: main.c:4148 main.c:4441 main.c:4885 main.c:5066
+#: main.c:4192 main.c:4611 main.c:5055 main.c:5236
 msgid "Wait for images to finish loading"
 msgstr "请等待图片加载完成"
 
-#: main.c:4199
+#: main.c:4243
 msgid "Finish or cancel editing before regenerating"
 msgstr "正在编辑，发送或取消编辑后再重新生成"
 
-#: main.c:4342 ui/settings.blp:49
+#: main.c:4373
+msgid "No system prompt will be sent for this chat"
+msgstr "此会话不发送系统提示词"
+
+#: main.c:4374
+msgid "No default system prompt set"
+msgstr "未设置默认系统提示词"
+
+#: main.c:4392
+#, c-format
+msgid "Approximately %u token"
+msgid_plural "Approximately %u tokens"
+msgstr[0] "约 %u token"
+
+#: main.c:4395
+msgid "0 tokens"
+msgstr "0 token"
+
+#: main.c:4430
+msgid "Not set"
+msgstr "未设置"
+
+#: main.c:4497 ui/settings.blp:49
 msgid "Default system prompt"
 msgstr "默认系统提示词"
 
-#: main.c:4343
+#: main.c:4498
 msgid "Conversation system prompt"
 msgstr "会话系统提示词"
 
-#: main.c:4344
+#: main.c:4499
 msgid "Leave blank to omit the default prompt"
 msgstr "留空则不发送默认提示词"
 
-#: main.c:4345
+#: main.c:4500
 msgid "Applies to future replies in this chat"
 msgstr "适用于此会话的后续回复"
 
-#: main.c:4376
+#: main.c:4553
 msgid "System prompt mode"
 msgstr "系统提示词模式"
 
-#: main.c:4543
+#: main.c:4713
 msgid "Compressing context. Click ■ to stop"
 msgstr "正在压缩上下文，点 ■ 可停止"
 
-#: main.c:4544 main.c:5012 main.c:5061
+#: main.c:4714 main.c:5182 main.c:5231
 msgid "Generating. Click ■ to stop"
 msgstr "正在生成，点 ■ 可停止"
 
-#: main.c:4890
+#: main.c:5060
 msgid "Select images"
 msgstr "选择图片"
 
-#: main.c:4892
+#: main.c:5062
 msgid "Images"
 msgstr "图片"
 
-#: main.c:4929
+#: main.c:5099
 msgid "Unable to encode clipboard image"
 msgstr "无法编码剪贴板图片"
 
-#: main.c:5042
+#: main.c:5212
 msgid "Only local image files can be pasted"
 msgstr "只能粘贴本地图片文件"
 
-#: main.c:5325
+#: main.c:5495
 msgid "System default"
 msgstr "跟随系统"
 
-#: main.c:5326
+#: main.c:5496
 msgid "Light"
 msgstr "浅色"
 
-#: main.c:5327
+#: main.c:5497
 msgid "Dark"
 msgstr "深色"
 
-#: main.c:5328
+#: main.c:5498
 msgid "System language"
 msgstr "跟随系统"
 
-#: main.c:5392
+#: main.c:5562
 msgid "Failed to save theme"
 msgstr "主题保存失败"
 
-#: main.c:5405
+#: main.c:5575
 msgid "Failed to save language"
 msgstr "语言保存失败"
 
-#: main.c:5408
+#: main.c:5578
 msgid "Restart the app to apply language changes"
 msgstr "重启应用后语言设置生效"
 
-#: main.c:5554
+#: main.c:5724
 msgid "API key cannot be empty"
 msgstr "API 密钥不能为空"
 
-#: main.c:5660 main.c:5698
+#: main.c:5830 main.c:5868
 msgid "Failed to save font"
 msgstr "字体保存失败"
 
-#: main.c:5682
+#: main.c:5852
 msgid "Failed to save font size"
 msgstr "字号保存失败"
 
-#: main.c:5797
+#: main.c:5967
 msgid "DEEPSEEK_API_KEY environment variable (overrides this setting)"
 msgstr "环境变量 DEEPSEEK_API_KEY（优先级高于这里）"
 
-#: main.c:5799
+#: main.c:5969
 #, c-format
 msgid "Local configuration file: %s"
 msgstr "本机配置文件：%s"
 
-#: main.c:5924
+#: main.c:6099
 #, c-format
 msgid "New chat (%s+N)"
 msgstr "新对话 (%s+N)"
 
-#: main.c:5925
+#: main.c:6100
 #, c-format
 msgid "Search conversations (%s+F)"
 msgstr "搜索对话 (%s+F)"
 
-#: main.c:5926
+#: main.c:6101
 #, c-format
 msgid "Settings (%s+,)"
 msgstr "设置 (%s+,)"
 
-#: main.c:5933 ui/sidebar.blp:52
+#: main.c:6108 ui/sidebar.blp:52
 msgid "Search conversations"
 msgstr "搜索对话"
 
-#: main.c:5939
+#: main.c:6114
 msgid "No conversations found"
 msgstr "未找到对话"
 
-#: main.c:6022
+#: main.c:6197
 #, c-format
 msgid "Enter to send · Shift+Enter for a new line · %s+N for a new chat"
 msgstr "Enter 发送 · Shift+Enter 换行 · %s+N 新对话"
 
-#: main.c:6078
+#: main.c:6253
 msgid "Message DeepSeek. Enter to send, Shift+Enter for a new line"
 msgstr "给 DeepSeek 发消息，Enter 发送，Shift+Enter 换行"
 
-#: main.c:6352
+#: main.c:6527
 #, c-format
 msgid "Unable to open conversation database: %s\n"
 msgstr "无法打开会话数据库：%s\n"
@@ -528,55 +557,67 @@ msgstr "跳到最新消息"
 msgid "Start a conversation with DeepSeek"
 msgstr "开始和 DeepSeek 对话"
 
-#: ui/content.blp:144
+#: ui/content.blp:155
 msgid "Compressing context…"
 msgstr "正在压缩上下文…"
 
-#: ui/content.blp:157
+#: ui/content.blp:170
 msgid "Editing message"
 msgstr "正在编辑消息"
 
-#: ui/content.blp:164
+#: ui/content.blp:177
 msgid "Cancel editing (Esc)"
 msgstr "取消编辑 (Esc)"
 
-#: ui/content.blp:215
+#: ui/content.blp:228
 msgid "Message DeepSeek"
 msgstr "给 DeepSeek 发消息"
 
-#: ui/content.blp:239 ui/content.blp:247
+#: ui/content.blp:252 ui/content.blp:260
 msgid "Conversation context"
 msgstr "会话上下文"
 
-#: ui/content.blp:269
+#: ui/content.blp:282
 msgid "Context usage"
 msgstr "上下文用量"
 
-#: ui/content.blp:304
+#: ui/content.blp:300 ui/content.blp:378
 msgid "System prompt"
 msgstr "系统提示词"
 
-#: ui/content.blp:309
+#: ui/content.blp:318
+msgid "Summary"
+msgstr "历史摘要"
+
+#: ui/content.blp:337
+msgid "Active history"
+msgstr "活跃历史"
+
+#: ui/content.blp:356
+msgid "Automatic compression"
+msgstr "自动压缩"
+
+#: ui/content.blp:382
 msgid "Compress context"
 msgstr "压缩上下文"
 
-#: ui/content.blp:319
+#: ui/content.blp:391
 msgid "Attach images"
 msgstr "添加图片"
 
-#: ui/content.blp:334
+#: ui/content.blp:406
 msgid "Web"
 msgstr "联网"
 
-#: ui/content.blp:335
+#: ui/content.blp:407
 msgid "Search the web and read links"
 msgstr "搜索网页和阅读链接"
 
-#: ui/content.blp:344
+#: ui/content.blp:416
 msgid "Model and reasoning level"
 msgstr "模型与推理级别"
 
-#: ui/content.blp:392
+#: ui/content.blp:464
 msgid "AI-generated content. Please verify important information"
 msgstr "内容由 AI 生成，请仔细甄别"
 
@@ -616,75 +657,75 @@ msgstr "删除会话前确认"
 msgid "Context"
 msgstr "上下文"
 
-#: ui/settings.blp:54
+#: ui/settings.blp:56
 msgid "Edit"
 msgstr "编辑"
 
-#: ui/settings.blp:60
+#: ui/settings.blp:62
 msgid "Automatically compress context"
 msgstr "自动压缩上下文"
 
-#: ui/settings.blp:64
+#: ui/settings.blp:66
 msgid "Compression threshold"
 msgstr "压缩阈值"
 
-#: ui/settings.blp:75
+#: ui/settings.blp:77
 msgid "Recent turns to keep"
 msgstr "保留原文轮数"
 
-#: ui/settings.blp:89
+#: ui/settings.blp:91
 msgid "Language"
 msgstr "语言"
 
-#: ui/settings.blp:96
+#: ui/settings.blp:98
 msgid "Appearance"
 msgstr "外观"
 
-#: ui/settings.blp:101
+#: ui/settings.blp:103
 msgid "Theme"
 msgstr "主题"
 
-#: ui/settings.blp:106
+#: ui/settings.blp:108
 msgid "Reading"
 msgstr "阅读"
 
-#: ui/settings.blp:109 ui/settings.blp:117
+#: ui/settings.blp:111 ui/settings.blp:119
 msgid "Message font"
 msgstr "正文字体"
 
-#: ui/settings.blp:126 ui/settings.blp:169
+#: ui/settings.blp:128 ui/settings.blp:171
 msgid "Use default font"
 msgstr "使用默认字体"
 
-#: ui/settings.blp:132
+#: ui/settings.blp:134
 msgid "Message font size"
 msgstr "正文字号"
 
-#: ui/settings.blp:146 ui/settings.blp:189
+#: ui/settings.blp:148 ui/settings.blp:191
 msgid "Use default font size"
 msgstr "使用默认字号"
 
-#: ui/settings.blp:152 ui/settings.blp:160
+#: ui/settings.blp:154 ui/settings.blp:162
 msgid "Code block font"
 msgstr "代码块字体"
 
-#: ui/settings.blp:175
+#: ui/settings.blp:177
 msgid "Code block font size"
 msgstr "代码块字号"
 
-#: ui/settings.blp:198
+#: ui/settings.blp:200
 msgid "Other"
 msgstr "其他"
 
-#: ui/settings.blp:202
+#: ui/settings.blp:204
 msgid "About"
 msgstr "关于"
 
-#: ui/settings.blp:210
+#: ui/settings.blp:212
 msgid "Conversation data"
 msgstr "会话数据"
 
-#: ui/settings.blp:215
+#: ui/settings.blp:217
 msgid "Source code"
 msgstr "源代码"
 

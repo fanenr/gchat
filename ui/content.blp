@@ -140,12 +140,25 @@ Adw.ToolbarView content {
         margin-start: 16;
         margin-end: 16;
 
-        Gtk.Label context_status {
-          label: _("Compressing context…");
-          xalign: 0;
+        Gtk.Box context_status {
+          orientation: horizontal;
+          spacing: 6;
           margin-bottom: 4;
           visible: false;
-          styles [ "dim-label" ]
+
+          Gtk.Spinner {
+            spinning: bind context_status.visible;
+            valign: center;
+          }
+
+          Gtk.Label {
+            label: _("Compressing context…");
+            xalign: 0;
+
+            styles [
+              "dimmed",
+            ]
+          }
         }
 
         Gtk.Box edit_bar {
@@ -257,7 +270,7 @@ Adw.ToolbarView content {
                   child: Gtk.Box {
                     orientation: vertical;
                     spacing: 8;
-                    width-request: 260;
+                    width-request: 280;
                     margin-top: 6;
                     margin-bottom: 6;
                     margin-start: 6;
@@ -271,43 +284,102 @@ Adw.ToolbarView content {
                         hexpand: true;
                         styles [ "heading" ]
                       }
-                      Gtk.Label context_percent {}
+                      Gtk.Label context_percent {
+                        styles [ "dimmed", "numeric" ]
+                      }
                     }
 
                     Gtk.ProgressBar context_progress {
-                      margin-bottom: 10;
+                      margin-bottom: 4;
                     }
 
-                    Gtk.Label context_prompt_info {
-                      xalign: 0;
-                      wrap: true;
+                    Gtk.Box {
+                      spacing: 12;
+
+                      Gtk.Label {
+                        label: _("System prompt");
+                        xalign: 0;
+                        valign: start;
+                        styles [ "dimmed" ]
+                      }
+
+                      Gtk.Label context_prompt_info {
+                        xalign: 1;
+                        justify: right;
+                        hexpand: true;
+                        wrap: true;
+                      }
                     }
-                    Gtk.Label context_summary_info {
-                      xalign: 0;
-                      wrap: true;
+
+                    Gtk.Box {
+                      spacing: 12;
+
+                      Gtk.Label {
+                        label: _("Summary");
+                        xalign: 0;
+                        valign: start;
+                        styles [ "dimmed" ]
+                      }
+
+                      Gtk.Label context_summary_info {
+                        xalign: 1;
+                        justify: right;
+                        hexpand: true;
+                        wrap: true;
+                        styles [ "numeric" ]
+                      }
                     }
-                    Gtk.Label context_messages_info {
-                      xalign: 0;
-                      wrap: true;
+
+                    Gtk.Box {
+                      spacing: 12;
+
+                      Gtk.Label {
+                        label: _("Active history");
+                        xalign: 0;
+                        valign: start;
+                        styles [ "dimmed" ]
+                      }
+
+                      Gtk.Label context_messages_info {
+                        xalign: 1;
+                        justify: right;
+                        hexpand: true;
+                        wrap: true;
+                        styles [ "numeric" ]
+                      }
                     }
-                    Gtk.Label context_auto_info {
-                      xalign: 0;
-                      wrap: true;
+
+                    Gtk.Box {
+                      spacing: 12;
+
+                      Gtk.Label {
+                        label: _("Automatic compression");
+                        xalign: 0;
+                        valign: start;
+                        styles [ "dimmed" ]
+                      }
+
+                      Gtk.Label context_auto_info {
+                        xalign: 1;
+                        justify: right;
+                        hexpand: true;
+                        wrap: true;
+                        styles [ "numeric" ]
+                      }
                     }
 
                     Gtk.Box {
                       orientation: horizontal;
                       homogeneous: true;
                       spacing: 8;
+                      margin-top: 4;
 
                       Gtk.Button system_prompt {
                         label: _("System prompt");
-                        styles [ "flat" ]
                       }
 
                       Gtk.Button compress_context {
                         label: _("Compress context");
-                        styles [ "flat" ]
                       }
                     }
                   };
