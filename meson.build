@@ -57,12 +57,15 @@ store_deps = [
   dependency('json-glib-1.0', version: '>=1.6'),
   dependency('sqlite3', version: '>=3.37'),
 ]
+cc = meson.get_compiler('c')
+math_dep = cc.find_library('m', required: false)
 md_deps = [
   dependency('gtk4', version: '>=4.12'),
   dependency('libadwaita-1', version: '>=1.5'),
   dependency('md4c'),
   dependency('gtksourceview-5'),
   dependency('libsoup-3.0'),
+  math_dep,
 ]
 app_deps = store_deps + md_deps
 

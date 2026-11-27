@@ -19,12 +19,17 @@
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
+#include <math.h>
 #include <string.h>
 #include <unistd.h>
 
 #define API_URL "https://api.deepseek.com/chat/completions"
 
 #define CHAT_BAR_FADE_MS 1200
+#define SURFACE_SCROLL_SCALE 1.5
+#define SURFACE_SCROLL_FRICTION 4.8
+#define SURFACE_SCROLL_STOP_VELOCITY 60.0
+#define SURFACE_SCROLL_IDLE_MS 100
 #define INPUT_MIN_HEIGHT 92
 #define INPUT_MAX_HEIGHT 210
 #define ATTACHMENT_THUMB_SIZE 64
@@ -283,13 +288,20 @@ web_tools_supported (void)
 }
 
 static gboolean
-uses_command_shortcuts (void)
+uses_macos_display (void)
 {
 #ifdef GDK_WINDOWING_MACOS
-  return GDK_IS_MACOS_DISPLAY (gtk_widget_get_display (app->window));
+  return app->window != NULL &&
+         GDK_IS_MACOS_DISPLAY (gtk_widget_get_display (app->window));
 #else
   return FALSE;
 #endif
+}
+
+static gboolean
+uses_command_shortcuts (void)
+{
+  return uses_macos_display ();
 }
 
 /* Return an owned hint formatted with the platform shortcut modifier. */
@@ -683,6 +695,273 @@ on_value_changed (GtkAdjustment *adj)
 {
   update_chat_bar (adj);
   stick_on_value_changed (&chat_stick);
+}
+
+/* GTK multiplies macOS trackpad deltas by 2.5 and leaks compressed stop events
+   through GtkEventControllerScroll. Handle vertical surface scroll directly
+   with legacy controllers for moderated tracking and crisp decay. */
+typedef struct
+{
+  GtkWidget     *widget; /* Borrowed; owns this struct via object data. */
+  GtkAdjustment *adj;    /* Owned; keeps the adjustment alive until free. */
+
+  gulong         value_changed_id;
+  guint          tick_id;
+
+  gboolean       active;
+  gboolean       applying;
+
+  guint32        last_time;
+  gdouble        velocity;
+
+  gint64         decel_start;
+  gdouble        decel_origin;
+} SurfaceScroll;
+
+static void
+surface_scroll_stop (SurfaceScroll *scroll)
+{
+  if (scroll->tick_id != 0)
+    {
+      gtk_widget_remove_tick_callback (scroll->widget, scroll->tick_id);
+      scroll->tick_id = 0;
+    }
+}
+
+static gboolean
+surface_scroll_apply (SurfaceScroll *scroll,
+                      gdouble        value)
+{
+  gdouble lower = gtk_adjustment_get_lower (scroll->adj);
+  gdouble max = MAX (lower, gtk_adjustment_get_upper (scroll->adj) -
+                                gtk_adjustment_get_page_size (scroll->adj));
+  gdouble clamped = CLAMP (value, lower, max);
+  scroll->applying = TRUE;
+  gtk_adjustment_set_value (scroll->adj, clamped);
+  scroll->applying = FALSE;
+  return clamped == value;
+}
+
+static gboolean
+surface_scroll_step (SurfaceScroll *scroll,
+                     gint64         now)
+{
+  gdouble elapsed = MAX (0.0, (now - scroll->decel_start) /
+                                  (gdouble) G_USEC_PER_SEC);
+  gdouble decay = exp (-SURFACE_SCROLL_FRICTION * elapsed);
+  gdouble target = scroll->decel_origin +
+                   (scroll->velocity / SURFACE_SCROLL_FRICTION) * (1.0 - decay);
+  gboolean within = surface_scroll_apply (scroll, target);
+  return within && fabs (scroll->velocity * decay) >=
+                       SURFACE_SCROLL_STOP_VELOCITY;
+}
+
+static gboolean
+surface_scroll_tick (GtkWidget     *widget G_GNUC_UNUSED,
+                     GdkFrameClock *clock,
+                     gpointer       data)
+{
+  SurfaceScroll *scroll = data;
+  if (surface_scroll_step (scroll, gdk_frame_clock_get_frame_time (clock)))
+    return G_SOURCE_CONTINUE;
+  scroll->tick_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+surface_scroll_move (SurfaceScroll *scroll,
+                     guint32        time,
+                     gdouble        delta_y)
+{
+  gdouble lower = gtk_adjustment_get_lower (scroll->adj);
+  if (gtk_adjustment_get_upper (scroll->adj) -
+          gtk_adjustment_get_page_size (scroll->adj) <=
+      lower)
+    {
+      return FALSE;
+    }
+
+  surface_scroll_stop (scroll);
+  scroll->active = TRUE;
+  gdouble step = delta_y * SURFACE_SCROLL_SCALE;
+  if (scroll->last_time == 0 || time < scroll->last_time ||
+      time - scroll->last_time > SURFACE_SCROLL_IDLE_MS ||
+      (step > 0.0) != (scroll->velocity > 0.0))
+    {
+      scroll->velocity = step * (1000.0 / 16.0);
+    }
+  else
+    {
+      gdouble dt = CLAMP ((gdouble) (time - scroll->last_time), 8.0, 50.0);
+      scroll->velocity = 0.5 * scroll->velocity + 0.5 * (step * 1000.0 / dt);
+    }
+  scroll->last_time = time;
+  surface_scroll_apply (scroll, gtk_adjustment_get_value (scroll->adj) + step);
+  return TRUE;
+}
+
+static void
+surface_scroll_decelerate (SurfaceScroll *scroll,
+                           guint32        stop_time)
+{
+  gboolean active = scroll->active;
+  scroll->active = FALSE;
+  if (!active ||
+      (stop_time != 0 && stop_time >= scroll->last_time &&
+       stop_time - scroll->last_time > SURFACE_SCROLL_IDLE_MS) ||
+      fabs (scroll->velocity) < SURFACE_SCROLL_STOP_VELOCITY)
+    {
+      return;
+    }
+
+  gdouble lower = gtk_adjustment_get_lower (scroll->adj);
+  gdouble max = MAX (lower, gtk_adjustment_get_upper (scroll->adj) -
+                                gtk_adjustment_get_page_size (scroll->adj));
+  gdouble origin = gtk_adjustment_get_value (scroll->adj);
+  if (max <= lower || (scroll->velocity < 0.0 && origin <= lower) ||
+      (scroll->velocity > 0.0 && origin >= max) ||
+      !gtk_widget_get_mapped (scroll->widget))
+    {
+      return;
+    }
+  GdkFrameClock *clock = gtk_widget_get_frame_clock (scroll->widget);
+  if (clock == NULL)
+    return;
+
+  surface_scroll_stop (scroll);
+  scroll->decel_start = gdk_frame_clock_get_frame_time (clock);
+  scroll->decel_origin = origin;
+  scroll->tick_id = gtk_widget_add_tick_callback (
+      scroll->widget, surface_scroll_tick, scroll, NULL);
+}
+
+static gboolean
+on_surface_scroll_event (SurfaceScroll *scroll,
+                         GdkEvent      *event,
+                         gboolean       capture)
+{
+  GdkEventType type = gdk_event_get_event_type (event);
+  if (type == GDK_BUTTON_PRESS)
+    {
+      if (capture)
+        surface_scroll_stop (scroll);
+      return GDK_EVENT_PROPAGATE;
+    }
+  if (type != GDK_SCROLL)
+    return GDK_EVENT_PROPAGATE;
+  if (gdk_scroll_event_get_direction (event) != GDK_SCROLL_SMOOTH ||
+      gdk_scroll_event_get_unit (event) != GDK_SCROLL_UNIT_SURFACE ||
+      (gdk_event_get_modifier_state (event) & GDK_SHIFT_MASK) != 0)
+    {
+      if (capture)
+        scroll->active = FALSE;
+      return GDK_EVENT_PROPAGATE;
+    }
+
+  gdouble dx = 0.0, dy = 0.0;
+  gdk_scroll_event_get_deltas (event, &dx, &dy);
+  gboolean is_stop = gdk_scroll_event_is_stop (event);
+  guint32 time = gdk_event_get_time (event);
+
+  if (capture)
+    {
+      if (!scroll->active)
+        {
+          if (is_stop && dx == 0.0 && dy == 0.0)
+            surface_scroll_stop (scroll);
+          return GDK_EVENT_PROPAGATE;
+        }
+      if (dy != 0.0)
+        surface_scroll_move (scroll, time, dy);
+      if (is_stop)
+        surface_scroll_decelerate (scroll, time);
+      return GDK_EVENT_STOP;
+    }
+
+  if (scroll->active || dy == 0.0)
+    return GDK_EVENT_PROPAGATE;
+  scroll->last_time = 0;
+  scroll->velocity = 0.0;
+  if (!surface_scroll_move (scroll, time, dy))
+    return GDK_EVENT_PROPAGATE;
+  if (is_stop)
+    surface_scroll_decelerate (scroll, time);
+  return GDK_EVENT_STOP;
+}
+
+static gboolean
+on_surface_scroll_capture (GtkEventControllerLegacy *controller G_GNUC_UNUSED,
+                           GdkEvent                 *event,
+                           SurfaceScroll            *scroll)
+{
+  return on_surface_scroll_event (scroll, event, TRUE);
+}
+
+static gboolean
+on_surface_scroll_bubble (GtkEventControllerLegacy *controller G_GNUC_UNUSED,
+                          GdkEvent                 *event,
+                          SurfaceScroll            *scroll)
+{
+  return on_surface_scroll_event (scroll, event, FALSE);
+}
+
+static void
+on_surface_scroll_adj_changed (GtkAdjustment *adj G_GNUC_UNUSED,
+                               SurfaceScroll *scroll)
+{
+  if (!scroll->applying)
+    surface_scroll_stop (scroll);
+}
+
+static void
+on_surface_scroll_unmap (GtkWidget     *widget G_GNUC_UNUSED,
+                         SurfaceScroll *scroll)
+{
+  scroll->active = FALSE;
+  surface_scroll_stop (scroll);
+}
+
+static void
+surface_scroll_free (gpointer data)
+{
+  SurfaceScroll *scroll = data;
+  g_clear_signal_handler (&scroll->value_changed_id, scroll->adj);
+  g_clear_object (&scroll->adj);
+  g_free (scroll);
+}
+
+static void
+attach_macos_surface_scroll (GtkScrolledWindow *scroller)
+{
+  if (!uses_macos_display ())
+    return;
+  GtkWidget *child = gtk_scrolled_window_get_child (scroller);
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroller);
+  if (child == NULL || adj == NULL)
+    return;
+
+  SurfaceScroll *scroll = g_new0 (SurfaceScroll, 1);
+  scroll->widget = child;
+  scroll->adj = g_object_ref (adj);
+  scroll->value_changed_id =
+      g_signal_connect (adj, "value-changed",
+                        G_CALLBACK (on_surface_scroll_adj_changed), scroll);
+  g_signal_connect (child, "unmap", G_CALLBACK (on_surface_scroll_unmap),
+                    scroll);
+
+  GtkEventController *capture = gtk_event_controller_legacy_new ();
+  gtk_event_controller_set_propagation_phase (capture, GTK_PHASE_CAPTURE);
+  g_signal_connect (capture, "event", G_CALLBACK (on_surface_scroll_capture),
+                    scroll);
+  gtk_widget_add_controller (child, capture);
+
+  GtkEventController *bubble = gtk_event_controller_legacy_new ();
+  g_signal_connect (bubble, "event", G_CALLBACK (on_surface_scroll_bubble),
+                    scroll);
+  gtk_widget_add_controller (child, bubble);
+
+  g_object_set_data_full (G_OBJECT (child), "macos-surface-scroll", scroll,
+                          surface_scroll_free);
 }
 
 static void
@@ -4311,6 +4590,7 @@ prompt_scroller (const gchar *text,
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (*view));
   gtk_text_buffer_set_text (buffer, text != NULL ? text : "", -1);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroller), *view);
+  attach_macos_surface_scroll (GTK_SCROLLED_WINDOW (scroller));
   return scroller;
 }
 
@@ -6117,6 +6397,10 @@ build_sidebar (void)
   gtk_list_box_set_placeholder (GTK_LIST_BOX (app->sidebar_list), no_results);
   g_signal_connect (app->sidebar_list, "row-selected",
                     G_CALLBACK (on_row_selected), NULL);
+  GtkWidget *sidebar_scroller =
+      gtk_widget_get_ancestor (app->sidebar_list, GTK_TYPE_SCROLLED_WINDOW);
+  if (sidebar_scroller != NULL)
+    attach_macos_surface_scroll (GTK_SCROLLED_WINDOW (sidebar_scroller));
 
   return floating_builder_widget (g_steal_pointer (&builder), view);
 }
@@ -6234,6 +6518,9 @@ build_content (void)
   gtk_viewport_set_scroll_to_focus (GTK_VIEWPORT (viewport), FALSE);
   g_signal_connect_object (app->window, "notify::focus-widget",
                            G_CALLBACK (on_chat_focus_changed), viewport, 0);
+  attach_macos_surface_scroll (scroller);
+  attach_macos_surface_scroll (GTK_SCROLLED_WINDOW (app->message_nav_scroller));
+  attach_macos_surface_scroll (GTK_SCROLLED_WINDOW (app->input_frame));
 
   /* The external scrollbar floats above the content without shifting it. */
   GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment (scroller);

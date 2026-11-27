@@ -1729,6 +1729,73 @@ message_navigation_jump (void)
   teardown ();
 }
 
+static void
+macos_surface_scroll (void)
+{
+  if (!setup_ui ())
+    return;
+
+  GtkWidget *viewport = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (app->scroller));
+  SurfaceScroll *attached =
+      g_object_get_data (G_OBJECT (viewport), "macos-surface-scroll");
+  g_assert_cmpint (attached != NULL, ==, uses_macos_display ());
+
+  SurfaceScroll local = {
+    .widget = viewport,
+    .adj = chat_stick.adj,
+  };
+  SurfaceScroll *scroll = attached != NULL ? attached : &local;
+
+  gtk_adjustment_configure (chat_stick.adj, 0.0, 0.0, 200.0, 10.0, 100.0,
+                            200.0);
+  g_assert_false (surface_scroll_move (scroll, 1000, 20.0));
+
+  gtk_adjustment_configure (chat_stick.adj, 800.0, 0.0, 1000.0, 10.0, 180.0,
+                            200.0);
+  chat_stick.follow = TRUE;
+  scroll->last_time = 0;
+  scroll->velocity = 0.0;
+  g_assert_true (surface_scroll_move (scroll, 1000, -10.0));
+  g_assert_true (surface_scroll_move (scroll, 1010, -10.0));
+  g_assert_true (scroll->active);
+  g_assert_false (chat_stick.follow);
+  g_assert_cmpfloat_with_epsilon (gtk_adjustment_get_value (chat_stick.adj),
+                                  800.0 - 20.0 * SURFACE_SCROLL_SCALE, 1e-6);
+  g_assert_cmpfloat (scroll->velocity, <, -1000.0);
+
+  /* Clamping stops cleanly at both bounds. */
+  g_assert_true (surface_scroll_move (scroll, 1020, -2000.0));
+  g_assert_cmpfloat_with_epsilon (gtk_adjustment_get_value (chat_stick.adj),
+                                  0.0, 1e-6);
+  g_assert_true (surface_scroll_move (scroll, 1030,
+                                      400.0 / SURFACE_SCROLL_SCALE));
+  g_assert_cmpfloat_with_epsilon (gtk_adjustment_get_value (chat_stick.adj),
+                                  400.0, 1e-6);
+
+  /* Exponential deceleration moves smoothly and stops below threshold. */
+  scroll->decel_start = 1000000;
+  scroll->decel_origin = 400.0;
+  scroll->velocity = -480.0;
+  g_assert_true (surface_scroll_step (scroll, 1250000));
+  gdouble expected = 400.0 - (480.0 / SURFACE_SCROLL_FRICTION) *
+                                 (1.0 - exp (-SURFACE_SCROLL_FRICTION * 0.25));
+  g_assert_cmpfloat_with_epsilon (gtk_adjustment_get_value (chat_stick.adj),
+                                  expected, 1e-6);
+  g_assert_false (surface_scroll_step (scroll, 2500000));
+
+  /* Decelerating into the bottom clamps and restores bottom following. */
+  scroll->decel_start = 1000000;
+  scroll->decel_origin = 790.0;
+  scroll->velocity = 480.0;
+  g_assert_false (surface_scroll_step (scroll, 1250000));
+  g_assert_cmpfloat_with_epsilon (gtk_adjustment_get_value (chat_stick.adj),
+                                  800.0, 1e-6);
+  g_assert_true (chat_stick.follow);
+
+  teardown ();
+}
+
 static gboolean
 widget_contains_label (GtkWidget   *widget,
                        const gchar *text)
@@ -2077,6 +2144,7 @@ main (int    argc,
   g_test_add_func ("/app/history-search", history_search);
   g_test_add_func ("/app/message-navigation/rows", message_navigation_rows);
   g_test_add_func ("/app/message-navigation/jump", message_navigation_jump);
+  g_test_add_func ("/app/macos-surface-scroll", macos_surface_scroll);
   g_test_add_func ("/app/settings/language-toast", settings_language_toast);
   g_test_add_func ("/app/settings/deferred-toasts", deferred_window_toasts);
   g_test_add_func ("/app/settings/discard-deferred-on-close",
