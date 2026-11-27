@@ -964,6 +964,728 @@ attach_macos_surface_scroll (GtkScrolledWindow *scroller)
                           surface_scroll_free);
 }
 
+static gboolean
+is_selectable_chat_widget (GtkWidget *widget)
+{
+  if (GTK_IS_TEXT_VIEW (widget))
+    return gtk_text_buffer_get_char_count (
+               gtk_text_view_get_buffer (GTK_TEXT_VIEW (widget))) > 0;
+  if (GTK_IS_LABEL (widget) && gtk_label_get_selectable (GTK_LABEL (widget)))
+    return *gtk_label_get_text (GTK_LABEL (widget)) != '\0';
+  return FALSE;
+}
+
+static gboolean
+widget_visible_in (GtkWidget *widget,
+                   GtkWidget *ancestor)
+{
+  for (GtkWidget *w = widget; w != NULL; w = gtk_widget_get_parent (w))
+    {
+      if (!gtk_widget_get_visible (w))
+        return FALSE;
+      if (w == ancestor)
+        return TRUE;
+    }
+  return FALSE;
+}
+
+static gboolean
+selectable_widget_bounds (GtkWidget       *widget,
+                          GtkWidget       *content,
+                          graphene_rect_t *bounds)
+{
+  if (!widget_visible_in (widget, content) ||
+      !gtk_widget_compute_bounds (widget, content, bounds))
+    {
+      return FALSE;
+    }
+
+  for (GtkWidget *parent = gtk_widget_get_parent (widget);
+       parent != NULL && parent != content;
+       parent = gtk_widget_get_parent (parent))
+    {
+      if (!GTK_IS_SCROLLED_WINDOW (parent))
+        continue;
+      graphene_rect_t clip;
+      if (!gtk_widget_compute_bounds (parent, content, &clip) ||
+          !graphene_rect_intersection (bounds, &clip, bounds))
+        {
+          return FALSE;
+        }
+    }
+
+  return bounds->size.width > 0 && bounds->size.height > 0;
+}
+
+static void
+clear_widget_selection (GtkWidget *widget)
+{
+  if (GTK_IS_TEXT_VIEW (widget))
+    {
+      GtkTextBuffer *buffer =
+          gtk_text_view_get_buffer (GTK_TEXT_VIEW (widget));
+      GtkTextIter iter;
+      if (gtk_text_buffer_get_selection_bounds (buffer, &iter, NULL))
+        gtk_text_buffer_place_cursor (buffer, &iter);
+    }
+  else if (GTK_IS_LABEL (widget) &&
+           gtk_label_get_selectable (GTK_LABEL (widget)))
+    {
+      if (gtk_label_get_selection_bounds (GTK_LABEL (widget), NULL, NULL))
+        gtk_label_select_region (GTK_LABEL (widget), 0, 0);
+    }
+}
+
+static void
+clear_chat_selections (GtkWidget *root)
+{
+  clear_widget_selection (root);
+  for (GtkWidget *child = gtk_widget_get_first_child (root); child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      clear_chat_selections (child);
+    }
+}
+
+/* Allow starting text selection by dragging from blank margins and gaps
+   around chat messages, without intercepting clicks on interactive controls. */
+typedef struct
+{
+  GtkWidget       *viewport; /* Borrowed; owns this struct via object data. */
+  GtkWidget       *messages; /* Borrowed chat message box. */
+  GWeakRef         target;
+
+  gboolean         active;
+  gboolean         target_locked;
+  gboolean         extending;
+  graphene_point_t anchor;   /* Stored in viewport child coordinates. */
+  graphene_point_t pointer;  /* Stored in viewport coordinates. */
+
+  guint            scroll_tick;
+  gint64           scroll_time;
+} ChatSelection;
+
+typedef struct
+{
+  GtkWidget      *widget; /* Borrowed during one selection update. */
+  graphene_rect_t bounds;
+} SelectableTarget;
+
+static void
+collect_selectable_targets (GtkWidget *root,
+                            GtkWidget *content,
+                            GArray    *targets)
+{
+  if (!gtk_widget_get_visible (root))
+    return;
+
+  if (is_selectable_chat_widget (root))
+    {
+      graphene_rect_t bounds;
+      if (selectable_widget_bounds (root, content, &bounds))
+        {
+          SelectableTarget item = { root, bounds };
+          g_array_append_val (targets, item);
+        }
+      return;
+    }
+
+  for (GtkWidget *child = gtk_widget_get_first_child (root); child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      collect_selectable_targets (child, content, targets);
+    }
+}
+
+static float
+rect_horizontal_distance (const graphene_rect_t *rect,
+                          float                  x)
+{
+  if (x < rect->origin.x)
+    return rect->origin.x - x;
+  float right = rect->origin.x + rect->size.width;
+  if (x > right)
+    return x - right;
+  return 0.0f;
+}
+
+static GtkWidget *
+find_target_at_y (GtkWidget              *messages,
+                  GtkWidget              *content,
+                  const graphene_point_t *point)
+{
+  g_autoptr (GArray) targets =
+      g_array_new (FALSE, FALSE, sizeof (SelectableTarget));
+  collect_selectable_targets (messages, content, targets);
+
+  GtkWidget *best = NULL;
+  float best_dx = G_MAXFLOAT;
+  for (guint i = 0; i < targets->len; i++)
+    {
+      const SelectableTarget *t = &g_array_index (targets, SelectableTarget, i);
+      float top = t->bounds.origin.y;
+      float bottom = top + t->bounds.size.height;
+      if (point->y < top || point->y > bottom)
+        continue;
+      float dx = rect_horizontal_distance (&t->bounds, point->x);
+      if (best == NULL || dx < best_dx)
+        {
+          best = t->widget;
+          best_dx = dx;
+        }
+    }
+  return best;
+}
+
+static GtkWidget *
+find_target_for_gap_drag (GtkWidget              *messages,
+                          GtkWidget              *content,
+                          const graphene_point_t *anchor,
+                          const graphene_point_t *current)
+{
+  if (current->y == anchor->y)
+    return NULL;
+
+  g_autoptr (GArray) targets =
+      g_array_new (FALSE, FALSE, sizeof (SelectableTarget));
+  collect_selectable_targets (messages, content, targets);
+
+  gboolean downward = current->y > anchor->y;
+  gboolean found = FALSE;
+  float best_edge = downward ? G_MAXFLOAT : -G_MAXFLOAT;
+  for (guint i = 0; i < targets->len; i++)
+    {
+      const SelectableTarget *t = &g_array_index (targets, SelectableTarget, i);
+      float top = t->bounds.origin.y;
+      float bottom = top + t->bounds.size.height;
+      if (downward)
+        {
+          if (top >= anchor->y && top <= current->y &&
+              (!found || top < best_edge))
+            {
+              best_edge = top;
+              found = TRUE;
+            }
+        }
+      else
+        {
+          if (bottom <= anchor->y && bottom >= current->y &&
+              (!found || bottom > best_edge))
+            {
+              best_edge = bottom;
+              found = TRUE;
+            }
+        }
+    }
+  if (!found)
+    return NULL;
+
+  GtkWidget *best = NULL;
+  float best_dx = G_MAXFLOAT;
+  for (guint i = 0; i < targets->len; i++)
+    {
+      const SelectableTarget *t = &g_array_index (targets, SelectableTarget, i);
+      float top = t->bounds.origin.y;
+      float bottom = top + t->bounds.size.height;
+      if (downward)
+        {
+          if (top < anchor->y || top > current->y || top > best_edge + 1.0f)
+            continue;
+        }
+      else
+        {
+          if (bottom > anchor->y || bottom < current->y ||
+              bottom < best_edge - 1.0f)
+            continue;
+        }
+      float dx = rect_horizontal_distance (&t->bounds, current->x);
+      if (best == NULL || dx < best_dx)
+        {
+          best = t->widget;
+          best_dx = dx;
+        }
+    }
+  return best;
+}
+
+static void
+text_view_iter_at_point (GtkTextView            *view,
+                         GtkWidget              *content,
+                         const graphene_point_t *doc_pt,
+                         GtkTextIter            *iter)
+{
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  graphene_rect_t bounds;
+  if (!gtk_widget_compute_bounds (GTK_WIDGET (view), content, &bounds))
+    {
+      gtk_text_buffer_get_start_iter (buffer, iter);
+      return;
+    }
+
+  if (doc_pt->y < bounds.origin.y)
+    {
+      gtk_text_buffer_get_start_iter (buffer, iter);
+      return;
+    }
+  if (doc_pt->y >= bounds.origin.y + bounds.size.height)
+    {
+      gtk_text_buffer_get_end_iter (buffer, iter);
+      return;
+    }
+
+  graphene_point_t local;
+  if (!gtk_widget_compute_point (content, GTK_WIDGET (view), doc_pt, &local))
+    {
+      gtk_text_buffer_get_start_iter (buffer, iter);
+      return;
+    }
+
+  int width = gtk_widget_get_width (GTK_WIDGET (view));
+  int local_x = CLAMP ((int) local.x, 0, width);
+  int bx, by;
+  gtk_text_view_window_to_buffer_coords (view, GTK_TEXT_WINDOW_WIDGET, local_x,
+                                         (int) local.y, &bx, &by);
+  gtk_text_view_get_iter_at_location (view, iter, bx, by);
+}
+
+static int
+label_offset_at_point (GtkLabel               *label,
+                       GtkWidget              *content,
+                       const graphene_point_t *doc_pt)
+{
+  const gchar *text = gtk_label_get_text (label);
+  int len = (int) g_utf8_strlen (text, -1);
+  graphene_rect_t bounds;
+  if (!gtk_widget_compute_bounds (GTK_WIDGET (label), content, &bounds))
+    return 0;
+
+  if (doc_pt->y < bounds.origin.y)
+    return 0;
+  if (doc_pt->y >= bounds.origin.y + bounds.size.height)
+    return len;
+
+  graphene_point_t local;
+  if (!gtk_widget_compute_point (content, GTK_WIDGET (label), doc_pt, &local))
+    return 0;
+
+  int lx = 0, ly = 0;
+  gtk_label_get_layout_offsets (label, &lx, &ly);
+  PangoLayout *layout = gtk_label_get_layout (label);
+  int index = 0, trailing = 0;
+  pango_layout_xy_to_index (layout, (int) ((local.x - lx) * PANGO_SCALE),
+                            (int) ((local.y - ly) * PANGO_SCALE), &index,
+                            &trailing);
+  int offset = (int) g_utf8_pointer_to_offset (text, text + index) + trailing;
+  return CLAMP (offset, 0, len);
+}
+
+static void
+apply_widget_selection (GtkWidget              *widget,
+                        GtkWidget              *content,
+                        const graphene_point_t *anchor_pt,
+                        const graphene_point_t *cursor_pt,
+                        gboolean                extending)
+{
+  if (GTK_IS_TEXT_VIEW (widget))
+    {
+      GtkTextView *view = GTK_TEXT_VIEW (widget);
+      GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+      GtkTextIter cursor;
+      text_view_iter_at_point (view, content, cursor_pt, &cursor);
+
+      if (extending)
+        {
+          if (!gtk_widget_has_focus (widget))
+            gtk_widget_grab_focus (widget);
+          gtk_text_buffer_move_mark (buffer,
+                                     gtk_text_buffer_get_insert (buffer),
+                                     &cursor);
+          return;
+        }
+
+      GtkTextIter anchor;
+      text_view_iter_at_point (view, content, anchor_pt, &anchor);
+      if (!gtk_text_iter_equal (&anchor, &cursor))
+        {
+          if (!gtk_widget_has_focus (widget))
+            gtk_widget_grab_focus (widget);
+          gtk_text_buffer_select_range (buffer, &cursor, &anchor);
+        }
+      else if (gtk_text_buffer_get_has_selection (buffer))
+        {
+          gtk_text_buffer_place_cursor (buffer, &cursor);
+        }
+      return;
+    }
+
+  if (GTK_IS_LABEL (widget) && gtk_label_get_selectable (GTK_LABEL (widget)))
+    {
+      GtkLabel *label = GTK_LABEL (widget);
+      int anchor = label_offset_at_point (label, content, anchor_pt);
+      int cursor = label_offset_at_point (label, content, cursor_pt);
+      if (anchor != cursor)
+        {
+          /* Focusing a selectable label selects all text; grab focus first. */
+          if (!gtk_widget_has_focus (widget))
+            gtk_widget_grab_focus (widget);
+          gtk_label_select_region (label, anchor, cursor);
+        }
+      else if (gtk_label_get_selection_bounds (label, NULL, NULL))
+        {
+          gtk_label_select_region (label, cursor, cursor);
+        }
+    }
+}
+
+static void
+chat_selection_stop_scroll (ChatSelection *state)
+{
+  if (state->scroll_tick != 0)
+    {
+      gtk_widget_remove_tick_callback (state->viewport, state->scroll_tick);
+      state->scroll_tick = 0;
+    }
+}
+
+static void
+chat_selection_reset (ChatSelection *state)
+{
+  chat_selection_stop_scroll (state);
+  state->active = FALSE;
+  state->target_locked = FALSE;
+  state->extending = FALSE;
+  g_weak_ref_set (&state->target, NULL);
+}
+
+static void
+chat_selection_update_doc (ChatSelection          *state,
+                           const graphene_point_t *current)
+{
+  GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (state->viewport));
+  if (content == NULL)
+    return;
+
+  g_autoptr (GtkWidget) previous = g_weak_ref_get (&state->target);
+  GtkWidget *target = previous;
+  if (target != NULL &&
+      (!widget_visible_in (target, state->messages) ||
+       !is_selectable_chat_widget (target)))
+    {
+      g_weak_ref_set (&state->target, NULL);
+      target = NULL;
+      if (!state->extending)
+        state->target_locked = FALSE;
+    }
+
+  if (!state->target_locked)
+    {
+      GtkWidget *picked = find_target_for_gap_drag (
+          state->messages, content, &state->anchor, current);
+      if (picked != target)
+        {
+          if (target != NULL)
+            clear_widget_selection (target);
+          g_weak_ref_set (&state->target, picked);
+          target = picked;
+        }
+    }
+
+  if (target == NULL)
+    return;
+
+  apply_widget_selection (target, content, &state->anchor, current,
+                          state->extending);
+}
+
+static gboolean
+chat_selection_scroll (ChatSelection *state,
+                       double         distance)
+{
+  GtkWidget *viewport = state->viewport;
+  int height = gtk_widget_get_height (viewport);
+  if (state->pointer.y >= 0 && state->pointer.y < height)
+    return FALSE;
+
+  GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+  if (content == NULL)
+    return FALSE;
+
+  gboolean above = state->pointer.y < 0;
+  double remaining = distance;
+  g_autoptr (GtkWidget) target = g_weak_ref_get (&state->target);
+  if (target != NULL && widget_visible_in (target, state->messages))
+    {
+      graphene_rect_t bounds;
+      if (!gtk_widget_compute_bounds (target, viewport, &bounds))
+        return FALSE;
+      remaining = above ? -bounds.origin.y
+                        : bounds.origin.y + bounds.size.height - height;
+      /* Leave a small margin beyond the text block. */
+      remaining += 48;
+      if (remaining <= 0)
+        return FALSE;
+    }
+
+  GtkAdjustment *adj =
+      gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (viewport));
+  double old = gtk_adjustment_get_value (adj);
+  double delta = MIN (distance, remaining) * (above ? -1 : 1);
+  gtk_adjustment_set_value (adj, old + delta);
+  delta = gtk_adjustment_get_value (adj) - old;
+  if (delta == 0)
+    return FALSE;
+
+  /* The viewport applies the new offset on its next allocation. */
+  graphene_point_t current;
+  if (!gtk_widget_compute_point (viewport, content, &state->pointer, &current))
+    return FALSE;
+  current.y += (float) delta;
+  chat_selection_update_doc (state, &current);
+  return TRUE;
+}
+
+static gboolean
+chat_selection_scroll_tick (GtkWidget     *widget G_GNUC_UNUSED,
+                            GdkFrameClock *clock,
+                            gpointer       data)
+{
+  ChatSelection *state = data;
+  gint64 now = gdk_frame_clock_get_frame_time (clock);
+  gint64 elapsed = MIN (now - state->scroll_time, 50 * G_TIME_SPAN_MILLISECOND);
+  double distance = elapsed * (600.0 / G_USEC_PER_SEC);
+  state->scroll_time = now;
+  if (state->active && (distance == 0 || chat_selection_scroll (state,
+                                                                distance)))
+    {
+      return G_SOURCE_CONTINUE;
+    }
+
+  state->scroll_tick = 0;
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+widget_blocks_blank_selection (GtkWidget *picked,
+                               GtkWidget *viewport)
+{
+  for (GtkWidget *w = picked; w != NULL && w != viewport;
+       w = gtk_widget_get_parent (w))
+    {
+      if (GTK_IS_TEXT_VIEW (w) || GTK_IS_BUTTON (w) || GTK_IS_SCROLLBAR (w) ||
+          GTK_IS_EDITABLE (w))
+        {
+          return TRUE;
+        }
+      if (GTK_IS_LABEL (w) &&
+          (gtk_label_get_selectable (GTK_LABEL (w)) ||
+           gtk_label_get_current_uri (GTK_LABEL (w)) != NULL))
+        {
+          return TRUE;
+        }
+    }
+  return FALSE;
+}
+
+static gboolean
+pick_blocks_blank_selection (GtkWidget *viewport,
+                             double     x,
+                             double     y)
+{
+  GtkWidget *picked = gtk_widget_pick (viewport, x, y, GTK_PICK_DEFAULT);
+  return widget_blocks_blank_selection (picked, viewport);
+}
+
+static gboolean
+chat_selection_begin (ChatSelection   *state,
+                      double           start_x,
+                      double           start_y,
+                      GdkModifierType  modifiers)
+{
+  chat_selection_reset (state);
+
+  GtkWidget *viewport = state->viewport;
+  GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+  if (content == NULL ||
+      pick_blocks_blank_selection (viewport, start_x, start_y))
+    {
+      return FALSE;
+    }
+
+  graphene_point_t vp_point =
+      GRAPHENE_POINT_INIT ((float) start_x, (float) start_y);
+  graphene_point_t doc_point;
+  if (!gtk_widget_compute_point (viewport, content, &vp_point, &doc_point))
+    return FALSE;
+
+  state->active = TRUE;
+  state->anchor = doc_point;
+  state->pointer = vp_point;
+
+  if ((modifiers & GDK_SHIFT_MASK) != 0)
+    {
+      GtkRoot *root = gtk_widget_get_root (viewport);
+      GtkWidget *focus = GTK_IS_WINDOW (root)
+                             ? gtk_window_get_focus (GTK_WINDOW (root))
+                             : NULL;
+      if (focus != NULL && GTK_IS_TEXT_VIEW (focus) &&
+          widget_visible_in (focus, state->messages) &&
+          is_selectable_chat_widget (focus))
+        {
+          state->extending = TRUE;
+          state->target_locked = TRUE;
+          g_weak_ref_set (&state->target, focus);
+          apply_widget_selection (focus, content, &state->anchor,
+                                  &state->anchor, TRUE);
+          return TRUE;
+        }
+    }
+
+  clear_chat_selections (state->messages);
+  GtkWidget *target = find_target_at_y (state->messages, content, &doc_point);
+  if (target != NULL)
+    {
+      g_weak_ref_set (&state->target, target);
+      state->target_locked = TRUE;
+    }
+  return TRUE;
+}
+
+static void
+chat_selection_update (ChatSelection *state,
+                       double         x,
+                       double         y)
+{
+  if (!state->active)
+    return;
+
+  GtkWidget *viewport = state->viewport;
+  GtkWidget *content = gtk_viewport_get_child (GTK_VIEWPORT (viewport));
+  if (content == NULL)
+    return;
+
+  state->pointer = GRAPHENE_POINT_INIT ((float) x, (float) y);
+  graphene_point_t current;
+  if (gtk_widget_compute_point (viewport, content, &state->pointer, &current))
+    chat_selection_update_doc (state, &current);
+
+  int height = gtk_widget_get_height (viewport);
+  if (state->pointer.y < 0 || state->pointer.y >= height)
+    {
+      if (state->scroll_tick == 0)
+        {
+          GdkFrameClock *clock = gtk_widget_get_frame_clock (viewport);
+          if (clock != NULL)
+            {
+              state->scroll_time = gdk_frame_clock_get_frame_time (clock);
+              state->scroll_tick = gtk_widget_add_tick_callback (
+                  viewport, chat_selection_scroll_tick, state, NULL);
+            }
+        }
+    }
+  else
+    {
+      chat_selection_stop_scroll (state);
+    }
+}
+
+static void
+on_chat_drag_begin (GtkGestureDrag *gesture,
+                    double          start_x,
+                    double          start_y,
+                    ChatSelection  *state)
+{
+  GdkEvent *event =
+      gtk_event_controller_get_current_event (GTK_EVENT_CONTROLLER (gesture));
+  GdkDevice *device = event != NULL ? gdk_event_get_device (event) : NULL;
+  if (event != NULL &&
+      (gdk_event_triggers_context_menu (event) ||
+       (device != NULL &&
+        gdk_device_get_source (device) == GDK_SOURCE_TOUCHSCREEN)))
+    {
+      gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_DENIED);
+      return;
+    }
+
+  GdkModifierType modifiers =
+      event != NULL ? gdk_event_get_modifier_state (event) : 0;
+  if (!chat_selection_begin (state, start_x, start_y, modifiers))
+    {
+      gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_DENIED);
+      return;
+    }
+
+  gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void
+on_chat_drag_update (GtkGestureDrag *gesture,
+                     double          offset_x,
+                     double          offset_y,
+                     ChatSelection  *state)
+{
+  double start_x = 0.0, start_y = 0.0;
+  if (!gtk_gesture_drag_get_start_point (gesture, &start_x, &start_y))
+    return;
+  chat_selection_update (state, start_x + offset_x, start_y + offset_y);
+}
+
+static void
+on_chat_drag_end (GtkGestureDrag *gesture G_GNUC_UNUSED,
+                  double          offset_x G_GNUC_UNUSED,
+                  double          offset_y G_GNUC_UNUSED,
+                  ChatSelection  *state)
+{
+  chat_selection_reset (state);
+}
+
+static void
+on_chat_drag_cancel (GtkGesture       *gesture G_GNUC_UNUSED,
+                     GdkEventSequence *sequence G_GNUC_UNUSED,
+                     ChatSelection    *state)
+{
+  chat_selection_reset (state);
+}
+
+static void
+on_chat_selection_unmap (GtkWidget     *widget G_GNUC_UNUSED,
+                         ChatSelection *state)
+{
+  chat_selection_reset (state);
+}
+
+static void
+chat_selection_free (gpointer data)
+{
+  ChatSelection *state = data;
+  g_weak_ref_clear (&state->target);
+  g_free (state);
+}
+
+static void
+attach_chat_blank_selection (GtkWidget *viewport,
+                             GtkWidget *messages)
+{
+  ChatSelection *state = g_new0 (ChatSelection, 1);
+  state->viewport = viewport;
+  state->messages = messages;
+  g_weak_ref_init (&state->target, NULL);
+
+  g_signal_connect (viewport, "unmap", G_CALLBACK (on_chat_selection_unmap),
+                    state);
+
+  GtkGesture *drag = gtk_gesture_drag_new ();
+  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (drag), GDK_BUTTON_PRIMARY);
+  g_signal_connect (drag, "drag-begin", G_CALLBACK (on_chat_drag_begin), state);
+  g_signal_connect (drag, "drag-update", G_CALLBACK (on_chat_drag_update),
+                    state);
+  g_signal_connect (drag, "drag-end", G_CALLBACK (on_chat_drag_end), state);
+  g_signal_connect (drag, "cancel", G_CALLBACK (on_chat_drag_cancel), state);
+  gtk_widget_add_controller (viewport, GTK_EVENT_CONTROLLER (drag));
+
+  g_object_set_data_full (G_OBJECT (viewport), "chat-blank-selection", state,
+                          chat_selection_free);
+}
+
 static void
 on_chat_focus_changed (GtkWindow  *window,
                        GParamSpec *pspec G_GNUC_UNUSED,
@@ -978,7 +1700,9 @@ on_chat_focus_changed (GtkWindow  *window,
 
   /* Keep visible text stationary while GTK starts selecting at the pointer. */
   graphene_rect_t bounds;
-  if (GTK_IS_TEXT_VIEW (focus) &&
+  if ((GTK_IS_TEXT_VIEW (focus) ||
+       (GTK_IS_LABEL (focus) &&
+        gtk_label_get_selectable (GTK_LABEL (focus)))) &&
       gtk_widget_compute_bounds (focus, viewport, &bounds) &&
       bounds.origin.y < gtk_widget_get_height (viewport) &&
       bounds.origin.y + bounds.size.height > 0)
@@ -6518,6 +7242,7 @@ build_content (void)
   gtk_viewport_set_scroll_to_focus (GTK_VIEWPORT (viewport), FALSE);
   g_signal_connect_object (app->window, "notify::focus-widget",
                            G_CALLBACK (on_chat_focus_changed), viewport, 0);
+  attach_chat_blank_selection (viewport, app->messages);
   attach_macos_surface_scroll (scroller);
   attach_macos_surface_scroll (GTK_SCROLLED_WINDOW (app->message_nav_scroller));
   attach_macos_surface_scroll (GTK_SCROLLED_WINDOW (app->input_frame));

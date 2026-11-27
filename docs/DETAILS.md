@@ -42,7 +42,7 @@ This document describes the code structure, core mechanisms, packaging, tests, a
 
 ### Markdown and media
 
-- **Native widget tree**: `md.c` parses CommonMark and GFM extensions via `md4c` into native GTK4 widgets (`GtkTextView` for prose, `GtkGrid` for tables, and `GtkSourceView` inside cards for code blocks).
+- **Native widget tree**: `md.c` parses CommonMark and GFM extensions via `md4c` into native GTK4 widgets (`GtkTextView` for prose, `GtkGrid` for tables, and `GtkSourceView` inside cards for code blocks). Dragging from blank margins or gaps in the chat viewport starts text selection in the corresponding text widget and clears existing selections on click.
 - **Remote images**: `gchat` fetches HTTPS images outside tables asynchronously without API credentials and without following redirects. External links open only `http`, `https`, and `mailto` URIs.
 - **Image input**: On `deepseek-flash`, users can attach PNG, JPEG, GIF, and WebP images via the file picker or clipboard paste. `gchat` copies accepted files into `attachments/` by UUID and removes unreferenced files after a successful database load at startup.
 

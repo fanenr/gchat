@@ -42,7 +42,7 @@
 
 ### Markdown 与媒体
 
-- **原生控件树**：`md.c` 通过 `md4c` 解析 CommonMark 与 GFM 扩展，生成原生 GTK4 控件（正文用 `GtkTextView`，表格用 `GtkGrid`，代码块用带 `GtkSourceView` 的卡片）。
+- **原生控件树**：`md.c` 通过 `md4c` 解析 CommonMark 与 GFM 扩展，生成原生 GTK4 控件（正文用 `GtkTextView`，表格用 `GtkGrid`，代码块用带 `GtkSourceView` 的卡片）。在消息区空白边距或间隙中拖动可直接开始选择对应文本控件中的内容，单击空白区域则清除已有选区。
 - **远程图片**：`gchat` 异步加载表格外的 HTTPS 图片，不附带 API 凭据，也不跟随重定向。外部链接仅打开 `http`、`https` 和 `mailto` 协议。
 - **图片输入**：在 `deepseek-flash` 下，可以通过文件选择器或剪贴板添加 PNG、JPEG、GIF 和 WebP 图片。`gchat` 按 UUID 将图片复制到 `attachments/`，并在启动成功加载数据库后删除未引用的文件。
 

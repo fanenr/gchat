@@ -1796,6 +1796,241 @@ macos_surface_scroll (void)
   teardown ();
 }
 
+static gchar *
+selected_text_view_string (GtkTextView *view)
+{
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (view);
+  GtkTextIter start, end;
+  if (!gtk_text_buffer_get_selection_bounds (buffer, &start, &end))
+    return NULL;
+  return gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+}
+
+static void
+layout_chat_scroller (int width,
+                      int height)
+{
+  gtk_widget_allocate (app->scroller, width, height, -1, NULL);
+  while (g_main_context_iteration (NULL, FALSE))
+    {
+    }
+  gtk_widget_allocate (app->scroller, width, height, -1, NULL);
+}
+
+static void
+chat_blank_selection (void)
+{
+  if (!setup_ui ())
+    return;
+
+  app->chat = chat_new ("blank-sel", "Selection");
+  g_ptr_array_add (app->chats, app->chat);
+  add_message ("user", "Hello question");
+  add_message ("assistant",
+               "First line of answer\n\n"
+               "Second line of answer\n\n"
+               "Third line of answer\n\n"
+               "```c\nint value = 42;\n```\n\n"
+               "| Left | Right |\n| --- | --- |\n| alpha | omega |");
+  render_chat ();
+  layout_chat_scroller (1000, 900);
+
+  GtkWidget *viewport = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (app->scroller));
+  ChatSelection *state =
+      g_object_get_data (G_OBJECT (viewport), "chat-blank-selection");
+  g_assert_nonnull (state);
+
+  GtkWidget *user_bubble = gtk_widget_get_first_child (app->messages);
+  GtkWidget *reply_bubble = gtk_widget_get_next_sibling (user_bubble);
+  GtkWidget *user_body = g_object_get_data (G_OBJECT (user_bubble), "body");
+  GtkWidget *reply_body = g_object_get_data (G_OBJECT (reply_bubble), "body");
+  GtkWidget *user_view = gtk_widget_get_first_child (user_body);
+  GtkWidget *prose_view = gtk_widget_get_first_child (reply_body);
+  GtkWidget *code_card = gtk_widget_get_next_sibling (prose_view);
+  GtkWidget *table_card = gtk_widget_get_next_sibling (code_card);
+  GtkWidget *copy_btn = g_object_get_data (G_OBJECT (reply_bubble), "copy");
+  g_assert_true (GTK_IS_TEXT_VIEW (user_view));
+  g_assert_true (GTK_IS_TEXT_VIEW (prose_view));
+
+  graphene_rect_t user_bounds, prose_bounds, table_bounds, omega_bounds;
+  g_assert_true (gtk_widget_compute_bounds (user_view, viewport, &user_bounds));
+  g_assert_true (
+      gtk_widget_compute_bounds (prose_view, viewport, &prose_bounds));
+  g_assert_true (
+      gtk_widget_compute_bounds (table_card, viewport, &table_bounds));
+  /* Wide window guarantees empty margins on both sides of the chat column. */
+  g_assert_cmpfloat (prose_bounds.origin.x, >, 40);
+  g_assert_cmpfloat (prose_bounds.origin.x + prose_bounds.size.width, <, 960);
+
+  /* Direct presses on interactive widgets are left to those widgets. */
+  GtkWidget *code_area = gtk_widget_get_last_child (code_card);
+  GtkWidget *code_scroll = gtk_widget_get_first_child (code_area);
+  GtkWidget *code_view =
+      gtk_scrolled_window_get_child (GTK_SCROLLED_WINDOW (code_scroll));
+  GtkWidget *table_scroll = gtk_widget_get_first_child (table_card);
+  GtkWidget *table_vp =
+      gtk_scrolled_window_get_child (GTK_SCROLLED_WINDOW (table_scroll));
+  GtkWidget *table_box = gtk_viewport_get_child (GTK_VIEWPORT (table_vp));
+  GtkWidget *grid = gtk_widget_get_first_child (table_box);
+  GtkWidget *omega_cell = gtk_grid_get_child_at (GTK_GRID (grid), 1, 2);
+  g_assert_true (GTK_IS_TEXT_VIEW (code_view));
+  g_assert_true (GTK_IS_LABEL (omega_cell));
+  g_assert_true (widget_blocks_blank_selection (prose_view, viewport));
+  g_assert_true (widget_blocks_blank_selection (copy_btn, viewport));
+  g_assert_true (widget_blocks_blank_selection (code_view, viewport));
+  g_assert_true (widget_blocks_blank_selection (omega_cell, viewport));
+  g_assert_false (widget_blocks_blank_selection (viewport, viewport));
+  g_assert_false (widget_blocks_blank_selection (app->messages, viewport));
+  g_assert_false (widget_blocks_blank_selection (reply_bubble, viewport));
+  g_assert_false (widget_blocks_blank_selection (code_card, viewport));
+
+  /* Dragging straight down in the left margin selects across prose lines. */
+  g_assert_true (
+      chat_selection_begin (state, 10, prose_bounds.origin.y + 5, 0));
+  chat_selection_update (state, 10,
+                         prose_bounds.origin.y + prose_bounds.size.height - 4);
+  chat_selection_reset (state);
+  g_autofree gchar *left_sel =
+      selected_text_view_string (GTK_TEXT_VIEW (prose_view));
+  g_assert_nonnull (left_sel);
+  g_assert_true (g_str_has_prefix (left_sel, "First line of answer"));
+  g_assert_true (strstr (left_sel, "Second line of answer") != NULL);
+
+  /* Shift+click in the right margin extends the focused text view selection. */
+  gtk_window_set_focus (GTK_WINDOW (app->window), prose_view);
+  g_assert_true (chat_selection_begin (
+      state, 990, prose_bounds.origin.y + prose_bounds.size.height - 4,
+      GDK_SHIFT_MASK));
+  chat_selection_reset (state);
+  g_autofree gchar *shift_sel =
+      selected_text_view_string (GTK_TEXT_VIEW (prose_view));
+  g_assert_nonnull (shift_sel);
+  g_assert_true (g_str_has_prefix (shift_sel, "First line of answer"));
+  g_assert_true (g_str_has_suffix (shift_sel, "Third line of answer"));
+
+  /* Clicking empty margin without dragging clears the existing selection. */
+  g_assert_true (
+      chat_selection_begin (state, 10, prose_bounds.origin.y + 5, 0));
+  chat_selection_reset (state);
+  g_assert_null (selected_text_view_string (GTK_TEXT_VIEW (prose_view)));
+
+  /* Dragging from the right margin selects backward from line end. */
+  g_assert_true (chat_selection_begin (state, 990, prose_bounds.origin.y + 5,
+                                       0));
+  chat_selection_update (state, prose_bounds.origin.x + 1,
+                         prose_bounds.origin.y + 5);
+  chat_selection_reset (state);
+  g_autofree gchar *right_sel =
+      selected_text_view_string (GTK_TEXT_VIEW (prose_view));
+  g_assert_nonnull (right_sel);
+  g_assert_true (g_str_has_suffix (right_sel, "First line of answer"));
+
+  /* Dragging in the gap between messages picks the widget in drag direction
+     and switches cleanly if the drag reverses across the anchor. */
+  float gap_y =
+      (user_bounds.origin.y + user_bounds.size.height + prose_bounds.origin.y) *
+      0.5f;
+  g_assert_true (chat_selection_begin (state, 10, gap_y, 0));
+  chat_selection_update (state, user_bounds.origin.x + 1,
+                         user_bounds.origin.y + 5);
+  g_autofree gchar *up_sel =
+      selected_text_view_string (GTK_TEXT_VIEW (user_view));
+  g_assert_nonnull (up_sel);
+  g_assert_true (g_str_has_suffix (up_sel, "Hello question"));
+
+  chat_selection_update (state, prose_bounds.origin.x + prose_bounds.size.width,
+                         prose_bounds.origin.y + 5);
+  chat_selection_reset (state);
+  g_assert_null (selected_text_view_string (GTK_TEXT_VIEW (user_view)));
+  g_autofree gchar *down_sel =
+      selected_text_view_string (GTK_TEXT_VIEW (prose_view));
+  g_assert_nonnull (down_sel);
+  g_assert_true (g_str_has_prefix (down_sel, "First line of answer"));
+
+  /* Dragging from the left margin of a code block selects its source view. */
+  graphene_rect_t cv_bounds;
+  g_assert_true (gtk_widget_compute_bounds (code_view, viewport, &cv_bounds));
+  g_assert_true (chat_selection_begin (
+      state, 10, cv_bounds.origin.y + cv_bounds.size.height * 0.5f, 0));
+  chat_selection_update (state, 990,
+                         cv_bounds.origin.y + cv_bounds.size.height * 0.5f);
+  chat_selection_reset (state);
+  g_autofree gchar *code_sel =
+      selected_text_view_string (GTK_TEXT_VIEW (code_view));
+  g_assert_cmpstr (code_sel, ==, "int value = 42;");
+
+  /* Dragging up from empty space below the table selects its rightmost cell. */
+  g_assert_true (
+      gtk_widget_compute_bounds (omega_cell, viewport, &omega_bounds));
+  g_assert_true (chat_selection_begin (
+      state, 990, table_bounds.origin.y + table_bounds.size.height + 40, 0));
+  chat_selection_update (state, omega_bounds.origin.x + 2,
+                         omega_bounds.origin.y +
+                             omega_bounds.size.height * 0.5f);
+  chat_selection_reset (state);
+  gint start_off = 0, end_off = 0;
+  g_assert_true (gtk_label_get_selection_bounds (GTK_LABEL (omega_cell),
+                                                 &start_off, &end_off));
+  g_assert_cmpint (end_off, >, start_off);
+
+  teardown ();
+}
+
+static void
+chat_blank_selection_scroll (void)
+{
+  if (!setup_ui ())
+    return;
+
+  app->chat = chat_new ("blank-scroll", "Scroll");
+  g_ptr_array_add (app->chats, app->chat);
+  g_autoptr (GString) reply = g_string_new (NULL);
+  for (guint i = 0; i < 50; i++)
+    g_string_append_printf (reply, "- Line item %u in a long reply\n", i);
+  add_message ("assistant", reply->str);
+  render_chat ();
+  layout_chat_scroller (1000, 240);
+
+  GtkWidget *viewport = gtk_scrolled_window_get_child (
+      GTK_SCROLLED_WINDOW (app->scroller));
+  ChatSelection *state =
+      g_object_get_data (G_OBJECT (viewport), "chat-blank-selection");
+  g_assert_nonnull (state);
+  GtkAdjustment *adj =
+      gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (viewport));
+  gtk_adjustment_set_value (adj, 0);
+  layout_chat_scroller (1000, 240);
+
+  GtkWidget *bubble = gtk_widget_get_first_child (app->messages);
+  GtkWidget *body = g_object_get_data (G_OBJECT (bubble), "body");
+  GtkWidget *view = gtk_widget_get_first_child (body);
+  g_assert_true (GTK_IS_TEXT_VIEW (view));
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+
+  graphene_rect_t bounds;
+  g_assert_true (gtk_widget_compute_bounds (view, viewport, &bounds));
+  g_assert_true (chat_selection_begin (state, 10, bounds.origin.y + 5, 0));
+  chat_selection_update (state, 10, 250);
+  GtkTextIter start, end;
+  g_assert_true (gtk_text_buffer_get_selection_bounds (buffer, &start, &end));
+  gint before_end = gtk_text_iter_get_offset (&end);
+
+  g_assert_true (chat_selection_scroll (state, 80));
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 80);
+  g_assert_true (gtk_text_buffer_get_selection_bounds (buffer, &start, &end));
+  g_assert_cmpint (gtk_text_iter_get_offset (&start), ==, 0);
+  g_assert_cmpint (gtk_text_iter_get_offset (&end), >, before_end);
+
+  layout_chat_scroller (1000, 240);
+  chat_selection_update (state, 10, -10);
+  g_assert_true (chat_selection_scroll (state, 100));
+  g_assert_cmpfloat (gtk_adjustment_get_value (adj), ==, 0);
+  chat_selection_reset (state);
+
+  teardown ();
+}
+
 static gboolean
 widget_contains_label (GtkWidget   *widget,
                        const gchar *text)
@@ -2145,6 +2380,10 @@ main (int    argc,
   g_test_add_func ("/app/message-navigation/rows", message_navigation_rows);
   g_test_add_func ("/app/message-navigation/jump", message_navigation_jump);
   g_test_add_func ("/app/macos-surface-scroll", macos_surface_scroll);
+  g_test_add_func ("/app/blank-selection/margins-and-gaps",
+                   chat_blank_selection);
+  g_test_add_func ("/app/blank-selection/edge-scroll",
+                   chat_blank_selection_scroll);
   g_test_add_func ("/app/settings/language-toast", settings_language_toast);
   g_test_add_func ("/app/settings/deferred-toasts", deferred_window_toasts);
   g_test_add_func ("/app/settings/discard-deferred-on-close",
