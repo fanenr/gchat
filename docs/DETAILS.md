@@ -2,65 +2,68 @@
 
 **English** | [简体中文](DETAILS.zh-CN.md)
 
-This document describes the codebase structure, core runtime mechanisms, packaging, and known limitations of `gchat`. For file locations, database schema, and migrations, see [Storage](STORAGE.md).
+This document describes the code structure, core mechanisms, packaging, tests, and known limits of `gchat`. For file paths, database schema, and migrations, see [Storage](STORAGE.md).
 
 ## Code structure
 
 | Path | Responsibility |
 | --- | --- |
 | `meson.build` | Project version, build targets, and dependencies |
-| `main.c` | Application window, sidebar, message list, settings dialog, HTTP/SSE lifecycle, and quit handling |
-| `md.c` / `md.h` | Markdown parser (`md4c`) to native GTK4 widget builder, code cards, tables, and remote image loader |
+| `main.c` | Window, sidebar, message list, settings dialog, HTTP/SSE lifecycle, and quit flow |
+| `md.c` / `md.h` | `md4c` Markdown parser, native GTK4 widget renderer, code cards, tables, and remote image loader |
 | `store.c` / `store.h` | SQLite session storage, schema migrations, process lock, and atomic `config.json` writes |
-| `i18n.c` / `i18n.h` | Locale matching and `gettext` initialization at startup |
+| `i18n.c` / `i18n.h` | Startup locale matching and `gettext` setup |
 | `macos-bundle.c` / `macos-bundle.h` | Resource, locale, icon, and TLS trust store setup inside a macOS `.app` bundle |
 | `ui/` | Blueprint UI definitions, CSS styles, and `GResource` manifest |
 | `po/` | `gettext` template (`POTFILES`) and Simplified Chinese catalog (`zh_CN.po`) |
-| `packaging/` | macOS DMG assembly scripts and Linux Flatpak manifest / metadata |
-| `tests/` | Regression test suites (`test-app.c`, `test-store.c`, `test-md.c`, `test-i18n.c`) |
+| `packaging/` | macOS DMG assembly script and Linux Flatpak manifest and metadata |
+| `tests/` | Regression suites (`test-app.c`, `test-store.c`, `test-md.c`, `test-i18n.c`) |
 
 ## Core mechanisms
 
 ### Requests and streaming
 
-- **SSE pipeline**: `main.c` streams responses asynchronously over `libsoup3`, joining multi-line `data:` fields and dispatching events on blank lines. Incoming text and reasoning deltas are coalesced and flushed to the UI at most once per GTK frame clock tick.
-- **History payload**: Requests send the effective system prompt, any context summary, and the remaining user and assistant messages (including attached images) in order. Without a summary, requests send the full history up to the turn being sent. The client excludes unsent drafts and saved reasoning blocks (`reasoning_content`).
-- **User metadata**: The optional, default-off setting adds a `latest_reminder` before each newly sent user message with the local date and weekday, `App`, and the active interface language. Location is empty. The marker is stored with the message and replayed unchanged when the setting is enabled; disabling it suppresses all markers. Older messages without markers are not backfilled, including when regenerated.
-- **Web search and link reading**: Available on `deepseek-flash`. When enabled, DeepSeek can invoke server-side search and page-reading tools. The client displays tool progress during streaming, renders deduplicated HTTP/HTTPS source citations below the reply, and replays `server_tool_calls` in subsequent Flash turns so previously read user links remain in context.
-- **Automatic titles**: On the first turn of an untitled `deepseek-flash` session, the client sets a provisional title from the first line of user text and replaces it if the stream finishes with a server-generated title.
+- **SSE streaming**: `main.c` reads SSE streams asynchronously over `libsoup3`. It joins multi-line `data:` fields and dispatches each event on a blank line. Text and reasoning deltas coalesce and flush to the UI at most once per GTK frame clock tick.
+- **History payload**: Each request sends the effective system prompt, any summary, and all uncovered user and assistant messages (including images) in order. Without a summary, `gchat` sends the full history up to the current turn. Requests exclude unsent drafts and saved `reasoning_content`.
+- **User metadata**: This setting is off by default. When enabled, `gchat` stores a `latest_reminder` string with each new user message and sends it before that message. The string contains the local date, weekday, `App`, and active interface language, with an empty location. When disabled, `gchat` omits all `latest_reminder` entries. Older messages without `latest_reminder` stay empty, including when regenerated.
+- **Web search and page reading**: Available on `deepseek-flash` only. When enabled, DeepSeek can run server-side search and page-reading tools. During streaming, `gchat` shows tool progress and renders deduplicated HTTP/HTTPS citations below the reply. Subsequent `deepseek-flash` requests replay `server_tool_calls` to keep previously read pages in context.
+- **Automatic titles**: On the first turn of an untitled `deepseek-flash` session, `gchat` sets a provisional title from the first line of user text. If the stream finishes with a server-generated title, `gchat` replaces the provisional title.
 
 ### Context management
 
-- A conversation inherits the global system prompt unless it overrides or explicitly omits it. A nonempty effective prompt is sent as the first `system` message, including on regeneration.
-- Manual and automatic compression keep the configured number of recent user turns as they are (default 2). A pending new message in automatic compression does not count toward that number and is always sent as written. Changing the setting leaves existing summaries unchanged.
-- A separate non-streaming Flash request with thinking and web tools disabled summarizes the older messages, attached images and any prior summary. It does not use the conversation's system prompt, saved reasoning or web tool records.
-- The client stores the summary and the number of original messages it covers. Future requests replay that summary as historical context, not as a system prompt. The transcript and attachments remain intact. A fork inherits the summary only if it includes all covered messages.
-- The collapsed marker records where compression happened, independently of how much history the summary covers. A manual compression appends it and scrolls to the bottom. An automatic compression places it before the pending new message. Expand the marker to read the summary.
-- All messages before the marker are read-only, even when the summary does not cover them. The client hides their edit, delete, and regenerate actions and blocks retrying a turn before the marker. Copy and fork remain available.
-- Automatic compression is off by default. Before sending, it compares an input token estimate with the configured threshold. Streaming chat requests ask for usage via `stream_options.include_usage`. If DeepSeek returns `usage.prompt_tokens`, the client uses that session's latest measurement for the same model to calibrate the estimate in memory. The threshold is not an API context limit.
-- The context ring and its popover estimate the next request, including the effective system prompt, summary, active history and the current draft and images. In edit mode they use only the history before the edited message. Images are estimated at 1,024 tokens each. The ring uses the configured compression threshold even when automatic compression is off; its arc stops at 100% while the displayed percentage can exceed it. Orange starts at 80%, red at 100%. Calibration is unavailable in edit mode and after a model change until that model returns usage.
-- If compression fails or is cancelled, the previous summary, transcript and unsent draft remain unchanged. The client makes at most one compression attempt per send. The resulting chat request is still subject to request-size and model limits.
+- **System prompt**: A session inherits the default system prompt unless it overrides or omits it. If the effective prompt is nonempty, `gchat` sends it as the first `system` message, including on regeneration.
+- **Compression scope**: Manual and automatic compression keep the configured number of recent user turns verbatim (default 2). During automatic compression, the pending new message does not count toward kept turns and is sent as written. Changing this setting does not alter existing summaries.
+- **Summary request**: `gchat` sends a separate non-streaming `deepseek-flash` request to compress older messages, attached images, and any prior summary. This request disables reasoning and web tools. It excludes the session's system prompt, saved reasoning, and `server_tool_calls`.
+- **Storage and replay**: `gchat` stores the summary text and the count of original messages it covers. Later requests replay the summary as historical context, not as a system prompt. Original messages and attachments stay intact. A forked session inherits the summary only if the fork includes all covered messages.
+- **Marker and read-only boundary**: The collapsed **Context compressed** marker records where compression happened, independent of the covered message count. Manual compression appends the marker and scrolls to the bottom. Automatic compression inserts the marker before the pending new message. Click the marker to show or hide the summary. All messages before the marker are read-only, even if the summary does not cover them: `gchat` hides edit, delete, and regenerate actions and blocks retries before the marker. Copy and fork remain available.
+- **Automatic trigger and calibration**: Automatic compression is off by default. When enabled, `gchat` compares the estimated input tokens with the configured threshold before sending. Streaming chat requests set `stream_options.include_usage`. When DeepSeek returns `usage.prompt_tokens`, `gchat` calibrates in-memory estimates using that session's latest reading for the same model. Calibration is disabled in edit mode and resets on model change until the new model returns usage. The threshold is not a model context limit.
+- **Context ring**: The ring and popover estimate the next request size, covering the effective system prompt, summary, active history, current draft, and attached images (1,024 tokens per image). In edit mode, they count only the history before the edited message. The ring compares against the compression threshold even when automatic compression is off. The arc caps at 100%, while the percentage label can exceed 100%. The ring turns orange at 80% and red at 100%.
+- **Failure and cancellation**: If compression fails or is cancelled, `gchat` keeps the prior summary, history, and draft unchanged. Each send attempts compression at most once. The final chat request remains subject to request-size and model limits.
 
 ### Markdown and media
 
-- **Native widget tree**: `md.c` parses CommonMark and GFM extensions via `md4c` into native GTK widgets (`GtkTextView` for prose, `GtkGrid` for tables, and `GtkSourceView` inside custom cards for syntax-highlighted code blocks).
-- **Reading layout**: Prose uses generous line spacing and restrained heading sizes. Lists use compact item spacing, quotes retain the normal text color, and table edges align with surrounding text.
-- **Remote images**: HTTPS images outside tables are fetched asynchronously without API credentials. Requests do not follow redirects, time out after 20 seconds, and enforce limits of 8 MiB and 16 megapixels (displayed within 320 × 240 logical pixels). Only `http`, `https`, and `mailto` links are opened externally.
-- **Image input**: `deepseek-flash` supports attaching PNG, JPEG, GIF, and WebP images via the file picker or clipboard paste. Each image is capped at 8 MiB, 8192 pixels per side (4096 pixels when a request carries 15 or more images), and 16 megapixels; a single request supports up to 600 images and a 48 MiB body including Base64 history. Accepted files are copied to `attachments/` by UUID and unreferenced files are cleaned up after a successful database load at startup.
+- **Native widget tree**: `md.c` parses CommonMark and GFM extensions via `md4c` into native GTK4 widgets (`GtkTextView` for prose, `GtkGrid` for tables, and `GtkSourceView` inside cards for code blocks).
+- **Remote images**: `gchat` fetches HTTPS images outside tables asynchronously without API credentials and without following redirects. External links open only `http`, `https`, and `mailto` URIs.
+- **Image input**: On `deepseek-flash`, users can attach PNG, JPEG, GIF, and WebP images via the file picker or clipboard paste. `gchat` copies accepted files into `attachments/` by UUID and removes unreferenced files after a successful database load at startup.
+
+| Scope | Limits |
+| --- | --- |
+| Remote image | 20 s total timeout, 8 MiB max size, 16 megapixels max, displayed within 320 × 240 logical pixels |
+| Single uploaded image | 8 MiB max size, 8,192 px per side (4,096 px when a request carries 15 or more images), 16 megapixels max |
+| Single request payload | 600 images max, 48 MiB body max including Base64 image history |
 
 ### Sessions and drafts
 
-- Each session maintains its own message list, reasoning history, normal draft, and edit draft (used when editing a prior user message before resending).
-- Typing triggers a debounced save after 750 ms; switching sessions, sending a message, or closing the window flushes changes immediately in a single SQLite transaction.
-- Editing or forking a message preserves image references without modifying existing history until the edited message is sent.
-- The message navigator lists the user messages currently shown in the transcript, in order. Its search matches the full text of each user message, not just the preview. Jumping to an earlier message pauses auto-follow; **Jump to latest** restores it.
-- If a search in the message navigator finds no results, the list shows **No matching messages**.
+- Each session stores its own message list, reasoning history, normal draft, and edit draft.
+- Typing triggers a debounced save after 750 ms. Switching sessions, sending a message, or closing the window flushes changes immediately in one SQLite transaction.
+- Editing or forking a message preserves image references. `gchat` leaves prior history unchanged until the edited message is sent.
+- The message navigator lists the user messages currently shown in the session in order. Search matches the full text of each message. Jumping to an earlier turn pauses auto-follow; **Jump to latest** resumes it.
 
 ### Localization
 
-- The interface supports English and Simplified Chinese (`system`, `en`, or `zh_CN` in `config.json`, applied on restart).
-- `i18n.c` maps `zh_CN`, `zh_SG`, `zh-Hans`, and generic `zh` to Simplified Chinese; other locales (including Traditional Chinese) fall back to English.
-- To refresh translation catalogs after changing UI strings:
+- `gchat` supports English and Simplified Chinese (`system`, `en`, or `zh_CN` in `config.json`, applied on restart).
+- `i18n.c` maps `zh_CN`, `zh_SG`, `zh-Hans`, and generic `zh` to Simplified Chinese. Other locales, including Traditional Chinese, fall back to English.
+- After changing UI strings, refresh the translation catalog:
 
   ```sh
   meson compile -C build gchat-update-po
@@ -70,28 +73,28 @@ This document describes the codebase structure, core runtime mechanisms, packagi
 
 ### macOS app bundle
 
-The `macos-arm64` build target assembles `gchat.app` in a staging directory, copies non-system dylibs and GIO/gdk-pixbuf modules into `Contents/Frameworks`, rewrites Mach-O load commands to bundle-relative paths, and verifies dependency closure before code signing. The minimum macOS deployment target is derived from the highest target among the binary and bundled libraries.
+The `macos-arm64` target assembles `gchat.app` in a staging directory and copies non-system dylibs plus GIO and gdk-pixbuf modules into `Contents/Frameworks`. It rewrites Mach-O load commands to bundle-relative paths and verifies dependency closure before signing. The minimum macOS deployment target equals the highest target across the binary and bundled libraries.
 
-### Flatpak packaging
+### Flatpak
 
-The [Flatpak manifest](../packaging/flatpak/io.github.fanenr.gchat.yml) builds against GNOME SDK 51 with `-Dflatpak=true` and prefix `/app`, compiling `md4c` from a checksummed archive. The sandbox allows network access, Wayland/X11 display, desktop portals for file selection and URI opening, and host paths `xdg-data/gchat` and `xdg-config/gchat` so Flatpak and native builds share the same database and configuration.
+The [Flatpak manifest](../packaging/flatpak/io.github.fanenr.gchat.yml) builds against GNOME SDK 51 with `-Dflatpak=true` and prefix `/app`, compiling `md4c` from a checksummed archive. The sandbox allows network access, Wayland/X11 display, desktop portals for file picking and URI opening, and host paths `xdg-data/gchat` and `xdg-config/gchat`. Flatpak and native builds therefore share the same database and configuration.
 
 ## Tests
 
-The regression suite in `tests/` runs against temporary directories without external network access:
+The regression suite in `tests/` runs against temporary directories with no external network access:
 
-- `test-app.c`: SSE framing, streaming lifecycle, request payload generation, web search / auto-title flows, image validation, and conversation state transitions.
-- `test-store.c`: SQLite schema initialization, migrations, transactional saves, process locking, attachment garbage collection, and `config.json` handling.
+- `test-app.c`: SSE framing, streaming lifecycle, request payload generation, web search, auto-title, image validation, and session state transitions.
+- `test-store.c`: SQLite initialization, migrations, transactional saves, process lock, attachment cleanup, and `config.json` handling.
 - `test-md.c`: Markdown widget rendering, code blocks, table markup, link filtering, and image helpers.
-- `test-i18n.c`: Locale resolution, fallback behavior, and catalog loading.
+- `test-i18n.c`: Locale resolution, fallback rules, and catalog loading.
 
 ## Known limits
 
-- Table cells support inline code and styles, but not multi-line code blocks or embedded images (which render as `[alt text]`).
-- LaTeX math expressions (`$…$`) are displayed as raw source text.
-- Text selection is bound to a single GTK text widget and cannot span across code blocks, tables, or multiple messages.
-- Code highlighting matches `GtkSourceView` language IDs and a fixed alias map (such as `javascript` → `js`, `csharp` → `c-sharp`); unknown languages render as plain text.
-- The SSE parser is tailored to DeepSeek's JSON stream and `[DONE]` sentinel rather than arbitrary SSE streams.
+- Table cells support inline styles and inline code, not multi-line code blocks or embedded images (which render as `[alt text]`).
+- LaTeX math (`$…$`) displays as raw text.
+- Text selection stays within one GTK text widget and cannot span code blocks, tables, or multiple messages.
+- Syntax highlighting matches `GtkSourceView` language IDs and a fixed alias map (such as `javascript` → `js` and `csharp` → `c-sharp`). Unknown languages render as plain text.
+- The SSE parser targets DeepSeek's JSON stream and `[DONE]` sentinel rather than arbitrary SSE streams.
 - HTML entity decoding covers numeric entities and a fixed table of common named entities.
-- Drag-and-drop image import is not implemented, and encoding large image histories runs on the UI thread.
-- Because draft autosave is debounced by 750 ms, an abnormal process termination (`SIGKILL` or crash) loses uncommitted edits or in-flight stream output.
+- Drag-and-drop image import is not implemented. Encoding large image histories runs on the UI thread.
+- Because draft autosave uses a 750 ms debounce, a crash or `SIGKILL` loses uncommitted edits and in-flight stream output.
